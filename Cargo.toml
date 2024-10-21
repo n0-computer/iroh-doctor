@@ -1,0 +1,35 @@
+[package]
+name = "iroh-doctor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.90"
+async-channel = "2.3.1"
+clap = { version = "4.5.20", features = ["derive"] }
+console = "0.15.8"
+crossterm = "0.28.1"
+derive_more = { version = "1.0.0", features = ["display"] }
+dirs-next = "2.0.0"
+futures-lite = "2.3.0"
+hex = "0.4.3"
+indicatif = { version = "0.17.8", features = ["tokio"] }
+iroh = { version = "0.26.0", features = ["metrics"] }
+iroh-metrics = "0.26.0"
+pkarr = "2.2.0"
+portable-atomic = "1.9.0"
+postcard = "1.0.10"
+rand = "0.8.5"
+ratatui = "0.29.0"
+reqwest = "0.12.8"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_with = "3.11.0"
+tokio = "1.40.0"
+tokio-util = "0.7.12"
+toml = "0.8.19"
+tracing = "0.1.40"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+
+[dev-dependencies]
+url = "2.5.2"
