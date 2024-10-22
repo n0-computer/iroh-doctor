@@ -1,138 +1,74 @@
-name: CI
+name: tests
 
 on:
-  pull_request:
   push:
+    branches:
+      # This helps fill the caches properly, caches are not shared between PRs.
+      - main
+  pull_request:
     branches:
       - main
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 env:
+  MSRV: "1.76"
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
-  RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.76"
-  SCCACHE_CACHE_SIZE: "50G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build_and_test_nix:
-    timeout-minutes: 30
-    name: "Tests"
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, macOS-arm-latest]
-        rust: [ 'stable' ]
-        include:
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      RUSTC_WRAPPER: "sccache"
+  lint:
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features
 
-    - name: Install ${{ matrix.rust }} rust
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-
-    - name: Install cargo-nextest
-      uses: taiki-e/install-action@v2
-      with:
-        tool: nextest
-
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
-
-    - name: build tests
-      run: |
-        cargo nextest run --workspace --all-features --lib --bins --tests --no-run
-
-    - name: list ignored tests
-      run: |
-        cargo nextest list --workspace --all-features --lib --bins --tests --run-ignored ignored-only
-
-    - name: run tests
-      run: |
-        cargo nextest run --workspace --all-features --lib --bins --tests --profile ci --no-fail-fast
-      env:
-        RUST_LOG: DEBUG
-
-    - name: doctests
-      run: cargo test --workspace --all-features --doc
-
-  build_and_test_windows:
-    timeout-minutes: 30
-    name: "Tests"
-    runs-on: ${{ matrix.runner }}
+  test:
+    runs-on: ${{ matrix.target.os }}
     strategy:
       fail-fast: false
       matrix:
-        name: [windows-latest]
-        rust: [ 'stable' ]
         target:
-          - x86_64-pc-windows-msvc
-        include:
-          - name: windows-latest
-            os: windows
-            runner: [self-hosted, windows, x64]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      RUSTC_WRAPPER: "sccache"
+          - os: "ubuntu-latest"
+            toolchain: "x86_64-unknown-linux-gnu"
+            name: "Linux GNU"
+          - os: "macOS-latest"
+            toolchain: "aarch64-apple-darwin"
+            name: "macOS"
+          - os: "windows-latest"
+            toolchain: "x86_64-pc-windows-msvc"
+            name: "Windows MSVC"
+          - os: "windows-latest"
+            toolchain: "x86_64-pc-windows-gnu"
+            name: "Windows GNU"
+        channel:
+          - "stable"
+          - "beta"
+          - "nightly"
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ inputs.git-ref }}
+      - uses: actions/checkout@v2
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.channel }}
+          targets: ${{ matrix.target.toolchain }}
+      - uses: swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --locked --workspace --all-features --bins --tests --examples
 
-    - name: Install ${{ matrix.rust }}
-      run: |
-        rustup toolchain install ${{ matrix.rust }}
-        rustup toolchain default ${{ matrix.rust }}
-        rustup target add ${{ matrix.target }}
-        rustup set default-host ${{ matrix.target }}
-
-    - name: Install cargo-nextest
-      shell: powershell
-      run: |
-        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-        Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
-        $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
-        $tmp | Expand-Archive -DestinationPath $outputDir -Force
-        $tmp | Remove-Item
-
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
-
-    - uses: msys2/setup-msys2@v2
-
-    - name: build tests
-      run: |
-        cargo nextest run --workspace --all-features --lib --bins --tests --target ${{ matrix.target }} --no-run
-
-    - name: list ignored tests
-      run: |
-        cargo nextest list --workspace --all-features --lib --bins --tests --target ${{ matrix.target }} --run-ignored ignored-only
-
-    - name: tests
-      run: |
-        cargo nextest run --workspace --all-features --lib --bins --tests --profile ci --target ${{ matrix.target }} --no-fail-fast
-      env:
-        RUST_LOG: 'DEBUG'
+  # Checks correct runtime deps and features are requested by not including dev-dependencies.
+  check-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - name: cargo check
+        run: cargo check --workspace --all-features --bins
