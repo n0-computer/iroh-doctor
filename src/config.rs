@@ -1,4 +1,4 @@
-//! Configuration for the iroh CLI.
+//! Configuration for the iroh doctor CLI.
 
 use std::{
     env,
@@ -6,55 +6,26 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
-use iroh::{
-    client::Iroh,
-    docs::{AuthorId, NamespaceId},
-    net::relay::{RelayMap, RelayNode},
-    node::GcPolicy,
-};
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
-use tracing::warn;
+use anyhow::{anyhow, Result};
+use iroh::net::relay::{RelayMap, RelayNode};
+use serde::Deserialize;
 
-const ENV_AUTHOR: &str = "IROH_AUTHOR";
-const ENV_DOC: &str = "IROH_DOC";
 const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
 const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, strum::AsRefStr, strum::EnumString, strum::Display)]
-pub(crate) enum ConsolePaths {
-    #[strum(serialize = "current-author")]
-    CurrentAuthor,
-    #[strum(serialize = "history")]
-    History,
-}
-
-impl ConsolePaths {
-    fn root(iroh_data_dir: impl AsRef<Path>) -> PathBuf {
-        PathBuf::from(iroh_data_dir.as_ref()).join("console")
-    }
-    pub fn with_iroh_data_dir(self, iroh_data_dir: impl AsRef<Path>) -> PathBuf {
-        Self::root(iroh_data_dir).join(self.as_ref())
-    }
-}
-
 /// The configuration for an iroh node.
 // Please note that this is documented in the `iroh.computer` repository under
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(PartialEq, Eq, Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct NodeConfig {
+pub struct NodeConfig {
     /// The nodes for relay to use.
     pub(crate) relay_nodes: Vec<RelayNode>,
-    /// How often to run garbage collection.
-    pub(crate) gc_policy: GcPolicyConfig,
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
     /// Configuration for the logfile.
@@ -72,7 +43,6 @@ impl Default for NodeConfig {
             .collect();
         Self {
             relay_nodes,
-            gc_policy: GcPolicyConfig::default(),
             metrics_addr: None,
             file_logs: Default::default(),
             metrics_dump_path: None,
@@ -86,7 +56,7 @@ impl NodeConfig {
     /// If the *file* is `Some` the configuration will be read from it.  Otherwise the
     /// default config file will be loaded.  If that is not present the default config will
     /// be used.
-    pub(crate) async fn load(file: Option<&Path>) -> Result<NodeConfig> {
+    pub async fn load(file: Option<&Path>) -> Result<NodeConfig> {
         let default_config = iroh_config_path(CONFIG_FILE_NAME)?;
 
         let config_file = match file {
@@ -125,216 +95,6 @@ impl NodeConfig {
         }
         Some(RelayMap::from_nodes(self.relay_nodes.iter().cloned())).transpose()
     }
-}
-
-/// Serde-compatible configuration for [`GcPolicy`].
-///
-/// The [`GcPolicy`] struct is not amenable to TOML serialisation, this covers this gap.
-#[derive(PartialEq, Eq, Debug, Default, Deserialize, Clone)]
-#[serde(default, deny_unknown_fields, rename = "gc_policy")]
-pub(crate) struct GcPolicyConfig {
-    enabled: bool,
-    interval: Option<u64>,
-}
-
-impl From<GcPolicyConfig> for GcPolicy {
-    fn from(source: GcPolicyConfig) -> Self {
-        if source.enabled {
-            match source.interval {
-                Some(interval) => Self::Interval(Duration::from_secs(interval)),
-                None => Self::default(),
-            }
-        } else {
-            Self::Disabled
-        }
-    }
-}
-
-/// Environment for CLI and REPL
-///
-/// This is cheaply cloneable and has interior mutability. If not running in the console
-/// environment, [Self::set_doc] and [Self::set_author] will lead to an error, as changing the
-/// environment is only supported within the console.
-#[derive(Clone, Debug)]
-pub(crate) struct ConsoleEnv(Arc<RwLock<ConsoleEnvInner>>);
-
-#[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
-struct ConsoleEnvInner {
-    /// Active author. Read from IROH_AUTHOR env variable.
-    /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
-    /// Defaults to the node's default author if both are empty.
-    author: AuthorId,
-    /// Active doc. Read from IROH_DOC env variable. Not persisted.
-    doc: Option<NamespaceId>,
-    is_console: bool,
-    iroh_data_dir: PathBuf,
-}
-
-impl ConsoleEnv {
-    /// Read from environment variables and the console config file.
-    pub(crate) async fn for_console(iroh_data_dir: PathBuf, iroh: &Iroh) -> Result<Self> {
-        let console_data_dir = ConsolePaths::root(&iroh_data_dir);
-        tokio::fs::create_dir_all(&console_data_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to create console data directory at `{}`",
-                    console_data_dir.to_string_lossy()
-                )
-            })?;
-
-        Self::migrate_console_files_016_017(&iroh_data_dir).await?;
-
-        let configured_author = Self::get_console_default_author(&iroh_data_dir)?;
-        let author = env_author(configured_author, iroh).await?;
-        let env = ConsoleEnvInner {
-            author,
-            doc: env_doc()?,
-            is_console: true,
-            iroh_data_dir,
-        };
-        Ok(Self(Arc::new(RwLock::new(env))))
-    }
-
-    /// Read only from environment variables.
-    pub(crate) async fn for_cli(iroh_data_dir: PathBuf, iroh: &Iroh) -> Result<Self> {
-        let author = env_author(None, iroh).await?;
-        let env = ConsoleEnvInner {
-            author,
-            doc: env_doc()?,
-            is_console: false,
-            iroh_data_dir,
-        };
-        Ok(Self(Arc::new(RwLock::new(env))))
-    }
-
-    fn get_console_default_author(iroh_data_root: &Path) -> anyhow::Result<Option<AuthorId>> {
-        let author_path = ConsolePaths::CurrentAuthor.with_iroh_data_dir(iroh_data_root);
-        if let Ok(s) = std::fs::read_to_string(&author_path) {
-            let author = AuthorId::from_str(&s).with_context(|| {
-                format!(
-                    "Failed to parse author file at {}",
-                    author_path.to_string_lossy()
-                )
-            })?;
-            Ok(Some(author))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// True if running in a Iroh console session, false for a CLI command
-    pub(crate) fn is_console(&self) -> bool {
-        self.0.read().is_console
-    }
-
-    /// Return the iroh data directory
-    pub(crate) fn iroh_data_dir(&self) -> PathBuf {
-        self.0.read().iroh_data_dir.clone()
-    }
-
-    /// Set the active author.
-    ///
-    /// Will error if not running in the Iroh console.
-    /// Will persist to a file in the Iroh data dir otherwise.
-    pub(crate) fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
-        let author_path = ConsolePaths::CurrentAuthor.with_iroh_data_dir(self.iroh_data_dir());
-        let mut inner = self.0.write();
-        if !inner.is_console {
-            bail!("Switching the author is only supported within the Iroh console, not on the command line");
-        }
-        inner.author = author;
-        std::fs::write(author_path, author.to_string().as_bytes())?;
-        Ok(())
-    }
-
-    /// Set the active document.
-    ///
-    /// Will error if not running in the Iroh console.
-    /// Will not persist, only valid for the current console session.
-    pub(crate) fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
-        let mut inner = self.0.write();
-        if !inner.is_console {
-            bail!("Switching the document is only supported within the Iroh console, not on the command line");
-        }
-        inner.doc = Some(doc);
-        Ok(())
-    }
-
-    /// Get the active document.
-    pub(crate) fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
-        let inner = self.0.read();
-        let doc_id = arg.or(inner.doc).ok_or_else(|| {
-            anyhow!(
-                "Missing document id. Set the active document with the `IROH_DOC` environment variable or the `-d` option.\n\
-                In the console, you can also set the active document with `doc switch`."
-            )
-        })?;
-        Ok(doc_id)
-    }
-
-    /// Get the active author.
-    ///
-    /// This is either the node's default author, or in the console optionally the author manually
-    /// switched to.
-    pub(crate) fn author(&self) -> AuthorId {
-        let inner = self.0.read();
-        inner.author
-    }
-
-    pub(crate) async fn migrate_console_files_016_017(iroh_data_dir: &Path) -> Result<()> {
-        // In iroh up to 0.16, we stored console settings directly in the data directory. Starting
-        // from 0.17, they live in a subdirectory and have new paths.
-        let old_current_author = iroh_data_dir.join("default_author.pubkey");
-        if old_current_author.is_file() {
-            if let Err(err) = tokio::fs::rename(
-                &old_current_author,
-                ConsolePaths::CurrentAuthor.with_iroh_data_dir(iroh_data_dir),
-            )
-            .await
-            {
-                warn!(path=%old_current_author.to_string_lossy(), "failed to migrate the console's current author file: {err}");
-            }
-        }
-        let old_history = iroh_data_dir.join("history");
-        if old_history.is_file() {
-            if let Err(err) = tokio::fs::rename(
-                &old_history,
-                ConsolePaths::History.with_iroh_data_dir(iroh_data_dir),
-            )
-            .await
-            {
-                warn!(path=%old_history.to_string_lossy(), "failed to migrate the console's history file: {err}");
-            }
-        }
-        Ok(())
-    }
-}
-
-async fn env_author(from_config: Option<AuthorId>, iroh: &Iroh) -> Result<AuthorId> {
-    if let Some(author) = env::var(ENV_AUTHOR)
-        .ok()
-        .map(|s| {
-            s.parse()
-                .context("Failed to parse IROH_AUTHOR environment variable")
-        })
-        .transpose()?
-        .or(from_config)
-    {
-        Ok(author)
-    } else {
-        iroh.authors().default().await
-    }
-}
-
-fn env_doc() -> Result<Option<NamespaceId>> {
-    env::var(ENV_DOC)
-        .ok()
-        .map(|s| {
-            s.parse()
-                .context("Failed to parse IROH_DOC environment variable")
-        })
-        .transpose()
 }
 
 /// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
@@ -469,44 +229,6 @@ mod tests {
             stun_port: 123,
         };
         assert_eq!(config.relay_nodes, vec![expected]);
-    }
-
-    #[test]
-    fn test_toml_gc_policy() {
-        let source = r#"
-          [gc_policy]
-          enabled = false
-        "#;
-        let config = NodeConfig::load_toml(source).unwrap();
-        assert_eq!(GcPolicy::from(config.gc_policy), GcPolicy::Disabled);
-
-        // Default interval should be used.
-        let source = r#"
-          [gc_policy]
-          enabled = true
-        "#;
-        let config = NodeConfig::load_toml(source).unwrap();
-        let gc_policy = GcPolicy::from(config.gc_policy);
-        assert!(matches!(gc_policy, GcPolicy::Interval(_)));
-        assert_eq!(gc_policy, GcPolicy::default());
-
-        let source = r#"
-          [gc_policy]
-          enabled = true
-          interval = 1234
-        "#;
-        let config = NodeConfig::load_toml(source).unwrap();
-        assert_eq!(
-            GcPolicy::from(config.gc_policy),
-            GcPolicy::Interval(Duration::from_secs(1234))
-        );
-
-        let source = r#"
-            [gc_policy]
-            not_a_field = true
-        "#;
-        let res = NodeConfig::load_toml(source);
-        assert!(res.is_err());
     }
 
     #[test]

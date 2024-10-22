@@ -1,48 +1,41 @@
-[workspace]
-members = [
-  "iroh",
-  "iroh-blobs",
-  "iroh-base",
-  "iroh-dns-server",
-  "iroh-gossip",
-  "iroh-metrics",
-  "iroh-net",
-  "iroh-docs",
-  "iroh-test",
-  "iroh-net/bench",
-  "iroh-cli",
-]
-resolver = "2"
+[package]
+name = "iroh-doctor"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+description = "Diagnose and test iroh in your network configuration"
+license = "MIT OR Apache-2.0"
+authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["networking", "p2p", "holepunching"]
 
-[profile.release]
-debug = true
+[dependencies]
+anyhow = "1.0.90"
+async-channel = "2.3.1"
+clap = { version = "4.5.20", features = ["derive"] }
+console = "0.15.8"
+crossterm = "0.28.1"
+derive_more = { version = "1.0.0", features = ["display"] }
+dirs-next = "2.0.0"
+futures-lite = "2.3.0"
+hex = "0.4.3"
+indicatif = { version = "0.17.8", features = ["tokio"] }
+iroh = { version = "0.26.0", features = ["metrics"] }
+iroh-metrics = "0.26.0"
+pkarr = "2.2.0"
+portable-atomic = "1.9.0"
+postcard = "1.0.10"
+rand = "0.8.5"
+ratatui = "0.29.0"
+reqwest = "0.12.8"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_with = "3.11.0"
+tokio = "1.40.0"
+tokio-util = "0.7.12"
+toml = "0.8.19"
+tracing = "0.1.40"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
-[profile.dev-ci]
-inherits = 'dev'
-opt-level = 1 
-
-[profile.optimized-release]
-inherits = 'release'
-debug = false
-lto = true
-debug-assertions = false
-opt-level = 3
-panic = 'abort'
-incremental = false
-
-
-[workspace.lints.rust]
-missing_debug_implementations = "warn"
-
-# We use this --cfg for documenting the cargo features on which an API
-# is available.  To preview this locally use: RUSTFLAGS="--cfg
-# iroh_docsrs cargo +nightly doc --all-features".  We use our own
-# iroh_docsrs instead of the common docsrs to avoid also enabling this
-# feature in any dependencies, because some indirect dependencies
-# require a feature enabled when using `--cfg docsrs` which we can not
-# do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
-# feature(doc_cfg))]` in the crate.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
-
-[workspace.lints.clippy]
-unused-async = "warn"
+[dev-dependencies]
+url = "2.5.2"

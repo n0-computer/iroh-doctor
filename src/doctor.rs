@@ -1111,7 +1111,17 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
-    let metrics_fut = super::start::start_metrics_server(config.metrics_addr);
+    // doesn't start the server if the address is None
+    let metrics_fut = config.metrics_addr.map(|metrics_addr| {
+        // metrics are initilaized in iroh::node::Node::spawn
+        // here we only start the server
+        tokio::task::spawn(async move {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
+            }
+        })
+    });
+    tracing::info!("Metrics server not started, no address provided");
     let cmd_res = match command {
         Commands::Report {
             stun_host,
@@ -1311,7 +1321,7 @@ fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
 
 /// Draws the [`Frame`] given a [`PlotterApp`].
 fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
-    let area = f.size();
+    let area = f.area();
 
     let metrics_cnt = app.metrics.len();
     let areas = generate_layout_chunks(area, metrics_cnt);

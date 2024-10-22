@@ -82,21 +82,6 @@ pub(crate) fn init_terminal_and_file_logging(
     Ok(guard)
 }
 
-/// Initialize logging in the terminal.
-///
-/// This will:
-/// - use the default [`fmt::format::Format`].
-/// - log to [`std::io::Stderr`]
-pub(crate) fn init_terminal_logging() -> anyhow::Result<()> {
-    let terminal_layer = fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
-    tracing_subscriber::registry()
-        .with(terminal_layer)
-        .try_init()?;
-    Ok(())
-}
-
 /// Configuration for the logfiles.
 // Please note that this is documented in the `iroh.computer` repository under
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
