@@ -22,17 +22,17 @@ hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 iroh = { version = "0.26.0", features = ["metrics"] }
 iroh-metrics = "0.26.0"
-pkarr = "2.2.0"
+pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
 rand = "0.8.5"
 ratatui = "0.29.0"
-reqwest = "0.12.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"
 tokio = "1.40.0"
 tokio-util = "0.7.12"
-toml = "0.8.19"
+toml = { version = "0.8.19", features = ["preserve_order"] }
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
