@@ -23,7 +23,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: cargo fmt
@@ -54,7 +54,7 @@ jobs:
           - "beta"
           - "nightly"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.channel }}
@@ -67,7 +67,7 @@ jobs:
   check-deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: cargo check
