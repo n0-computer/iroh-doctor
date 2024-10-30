@@ -719,20 +719,20 @@ async fn accept(
         .join(" ");
     println!("Connect to this node using one of the following commands:\n");
     println!(
-        "\tUsing the relay url and direct connections:\niroh doctor connect {} {}\n",
+        "\tUsing the relay url and direct connections:\niroh-doctor connect {} {}\n",
         secret_key.public(),
         remote_addrs,
     );
     if let Some(relay_url) = endpoint.home_relay() {
         println!(
-            "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
+            "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
             relay_url,
         );
     }
     if endpoint.discovery().is_some() {
         println!(
-            "\tUsing just the node id:\niroh doctor connect {}\n",
+            "\tUsing just the node id:\niroh-doctor connect {}\n",
             secret_key.public(),
         );
     }
