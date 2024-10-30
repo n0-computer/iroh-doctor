@@ -20,8 +20,8 @@ dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
-iroh = { version = "0.26.0", features = ["metrics"] }
-iroh-metrics = "0.26.0"
+iroh = { version = "0.27.0", features = ["metrics"] }
+iroh-metrics = { version = "0.27.0" }
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
@@ -39,3 +39,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dev-dependencies]
 url = "2.5.2"
+
+[patch.crates-io]
+iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+iroh-metrics = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+iroh-router = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
