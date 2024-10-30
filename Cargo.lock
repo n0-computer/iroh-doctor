@@ -5212,18 +5212,3 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
-
-[[patch.unused]]
-name = "iroh-blobs"
-version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-blobs.git?branch=main#378fc0fd8257c0beeb3a655a8378226a630b2d73"
-
-[[patch.unused]]
-name = "iroh-gossip"
-version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-gossip.git?branch=main#77d392cc68a06024addb4b4162d18f0709bab3ab"
-
-[[patch.unused]]
-name = "iroh-router"
-version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#fad3e24b3f2698ce6c1fa3fdad54201bec668298"
