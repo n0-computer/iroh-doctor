@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use iroh::net::relay::{RelayMap, RelayNode};
+use iroh_net::relay::{RelayMap, RelayNode};
 use serde::Deserialize;
 
 const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
@@ -36,7 +36,7 @@ pub struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        let relay_map = iroh::net::endpoint::default_relay_mode().relay_map();
+        let relay_map = iroh_net::endpoint::default_relay_mode().relay_map();
         let relay_nodes = relay_map
             .nodes()
             .map(|v| Arc::unwrap_or_clone(v.clone()))
