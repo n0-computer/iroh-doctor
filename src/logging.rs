@@ -27,7 +27,7 @@ pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
 /// - use the filtering defined by [`Self::rust_log`]. When not provided, the default
 ///   [`DEFAULT_FILE_RUST_LOG`] is used.
 /// - create log files with the name `iroh-<ROTATION_BASED_NAME>.log` (ex: iroh-2024-02-02.log)
-pub(crate) fn init_terminal_and_file_logging(
+pub fn init_terminal_and_file_logging(
     file_log_config: &FileLogging,
     logs_dir: &Path,
 ) -> anyhow::Result<non_blocking::WorkerGuard> {
@@ -87,7 +87,7 @@ pub(crate) fn init_terminal_and_file_logging(
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct FileLogging {
+pub struct FileLogging {
     /// RUST_LOG directive to filter file logs.
     pub(crate) rust_log: EnvFilter,
     /// Maximum number of files to keep.

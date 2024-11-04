@@ -26,15 +26,15 @@ pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 #[serde(default, deny_unknown_fields)]
 pub struct NodeConfig {
     /// The nodes for relay to use.
-    pub(crate) relay_nodes: Vec<RelayNode>,
+    pub relay_nodes: Vec<RelayNode>,
     /// Bind address on which to serve Prometheus metrics
-    pub(crate) metrics_addr: Option<SocketAddr>,
+    pub metrics_addr: Option<SocketAddr>,
     /// Configuration for the logfile.
-    pub(crate) file_logs: super::logging::FileLogging,
+    pub file_logs: super::logging::FileLogging,
     /// Path to dump metrics to in CSV format.
-    pub(crate) metrics_dump_path: Option<PathBuf>,
+    pub metrics_dump_path: Option<PathBuf>,
     /// Configuration for the metrics exporter.
-    pub(crate) metrics_exporter_config: Option<PushMetricsConfig>,
+    pub metrics_exporter_config: Option<PushMetricsConfig>,
 }
 
 impl Default for NodeConfig {
@@ -93,7 +93,7 @@ impl NodeConfig {
     }
 
     /// Constructs a `RelayMap` based on the current configuration.
-    pub(crate) fn relay_map(&self) -> Result<Option<RelayMap>> {
+    pub fn relay_map(&self) -> Result<Option<RelayMap>> {
         if self.relay_nodes.is_empty() {
             return Ok(None);
         }
@@ -153,7 +153,7 @@ pub(crate) fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
 /// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
-pub(crate) fn iroh_data_root() -> Result<PathBuf> {
+pub fn iroh_data_root() -> Result<PathBuf> {
     let path = if let Some(val) = env::var_os("IROH_DATA_DIR") {
         PathBuf::from(val)
     } else {
