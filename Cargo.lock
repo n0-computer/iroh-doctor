@@ -2001,6 +2001,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh",
+ "iroh-base",
  "iroh-metrics",
  "iroh-net-report",
  "pkarr",

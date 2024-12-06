@@ -40,6 +40,7 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dev-dependencies]
+iroh-base = "0.29.0"
 url = "2.5.2"
 
 # [patch.crates-io]
