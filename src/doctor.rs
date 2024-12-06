@@ -500,6 +500,13 @@ async fn active_side(
             let _d = echo_test(&connection, config, pb).await?;
         }
     }
+
+    // Close the connection gracefully.
+    // We're always the ones last receiving data, because
+    // `echo_test` waits for data on the connection as the last thing.
+    connection.close(0u32.into(), b"done");
+    connection.closed().await;
+
     Ok(())
 }
 
@@ -591,19 +598,34 @@ async fn recv_test(
 
 /// Accepts connections and answers requests (echo, drain or send) as passive side.
 async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
-    loop {
-        match connection.accept_bi().await {
-            Ok((send, recv)) => {
-                if let Err(cause) = handle_test_request(send, recv, &gui).await {
-                    eprintln!("Error handling test request {cause}");
+    let conn = connection.clone();
+    let accept_loop = async move {
+        let result = loop {
+            match conn.accept_bi().await {
+                Ok((send, recv)) => {
+                    if let Err(cause) = handle_test_request(send, recv, &gui).await {
+                        eprintln!("Error handling test request {cause}");
+                    }
                 }
-            }
-            Err(cause) => {
-                eprintln!("error accepting bidi stream {cause}");
-                break Err(cause.into());
-            }
+                Err(cause) => {
+                    eprintln!("error accepting bidi stream {cause}");
+                    break Err(cause.into());
+                }
+            };
         };
-    }
+
+        conn.close(0u32.into(), b"internal err");
+        conn.closed().await;
+        eprintln!("Connection closed.");
+
+        result
+    };
+    let conn_closed = async move {
+        connection.closed().await;
+        eprintln!("Connection closed.");
+        anyhow::Ok(())
+    };
+    futures_lite::future::race(conn_closed, accept_loop).await
 }
 
 /// Configures a relay map with some default values.
