@@ -20,18 +20,18 @@ use crossterm::{
 };
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh_metrics::core::Core;
-use iroh_net::{
+use iroh::{
     defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::default_resolver,
     endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
     key::{PublicKey, SecretKey},
     metrics::MagicsockMetrics,
-    netcheck,
-    relay::{RelayMap, RelayMode, RelayUrl},
-    Endpoint, NodeAddr, NodeId,
+    relay::RelayUrl,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode,
 };
+use iroh_metrics::core::Core;
+use iroh_net_report as netcheck;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -859,7 +859,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh_net::relay::HttpClientBuilder::new(node.url.clone())
+        let client = iroh::relay::HttpClientBuilder::new(node.url.clone())
             .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
