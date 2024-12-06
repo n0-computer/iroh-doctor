@@ -1010,41 +1010,17 @@ fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<B
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
-    tracing::info!(?data_dir, ?config, "Loaded config");
     // doesn't start the server if the address is None
-    let metrics_handle = match config.metrics_addr {
-        Some(metrics_addr) => {
-            // metrics are initialized in iroh::node::Node::spawn
-            // here we only start the server
-            Some(tokio::task::spawn(async move {
-                if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
-                    eprintln!("Failed to start metrics server: {e}");
-                }
-            }))
-        }
-        None => {
-            tracing::info!("Metrics server not started, no address provided");
-            None
-        }
-    };
-    let exporter_handle = match config.metrics_exporter_config.clone() {
-        Some(cfg) => {
-            tracing::info!(
-                cfg.endpoint,
-                cfg.instance_name,
-                cfg.service_name,
-                "Starting metrics exporter"
-            );
-            Some(tokio::task::spawn(
-                iroh_metrics::metrics::start_metrics_exporter(cfg),
-            ))
-        }
-        None => {
-            tracing::info!("Not starting metrics exporter, no config provided");
-            None
-        }
-    };
-
+    let metrics_fut = config.metrics_addr.map(|metrics_addr| {
+        // metrics are initilaized in iroh::node::Node::spawn
+        // here we only start the server
+        tokio::task::spawn(async move {
+            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+                eprintln!("Failed to start metrics server: {e}");
+            }
+        })
+    });
+    tracing::info!("Metrics server not started, no address provided");
     let cmd_res = match command {
         Commands::Report {
             stun_host,
@@ -1150,11 +1126,8 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             Ok(())
         }
     };
-    if let Some(metrics_handle) = metrics_handle {
-        metrics_handle.abort();
-    }
-    if let Some(exporter_handle) = exporter_handle {
-        exporter_handle.abort();
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
     }
     cmd_res
 }
