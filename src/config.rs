@@ -5,11 +5,10 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
-use iroh::net::relay::{RelayMap, RelayNode};
+use iroh::{RelayMap, RelayNode};
 use serde::Deserialize;
 
 const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
@@ -36,11 +35,8 @@ pub struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        let relay_map = iroh::net::endpoint::default_relay_mode().relay_map();
-        let relay_nodes = relay_map
-            .nodes()
-            .map(|v| Arc::unwrap_or_clone(v.clone()))
-            .collect();
+        let relay_map = iroh::endpoint::default_relay_mode().relay_map();
+        let relay_nodes = relay_map.nodes().map(|v| (**v).clone()).collect();
         Self {
             relay_nodes,
             metrics_addr: None,
@@ -227,6 +223,7 @@ mod tests {
             url: Url::parse("https://example.org./").unwrap().into(),
             stun_only: false,
             stun_port: 123,
+            quic: Some(iroh_base::relay_map::QuicConfig { port: 7842 }),
         };
         assert_eq!(config.relay_nodes, vec![expected]);
     }

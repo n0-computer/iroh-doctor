@@ -20,11 +20,13 @@ dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
-iroh = { version = "0.26.0", features = ["metrics"] }
-iroh-metrics = "0.26.0"
+iroh = { version = "0.29.0", features = ["metrics"] }
+iroh-net-report = "0.29.0"
+iroh-metrics = { version = "0.29.0" }
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
+portmapper = { version = "0.2.1" }
 rand = "0.8.5"
 ratatui = "0.29.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -38,4 +40,11 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dev-dependencies]
+iroh-base = "0.29.0"
 url = "2.5.2"
+
+# [patch.crates-io]
+# iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+# iroh-metrics = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+# portmapper = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
+# iroh-net-report = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}

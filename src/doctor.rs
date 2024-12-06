@@ -21,20 +21,17 @@ use crossterm::{
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    net::{
-        defaults::DEFAULT_STUN_PORT,
-        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
-        dns::default_resolver,
-        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
-        key::{PublicKey, SecretKey},
-        metrics::MagicsockMetrics,
-        netcheck, portmapper,
-        relay::{RelayMap, RelayMode, RelayUrl},
-        Endpoint, NodeAddr, NodeId,
-    },
-    util::{path::IrohPaths, progress::ProgressWriter},
+    defaults::DEFAULT_STUN_PORT,
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    dns::default_resolver,
+    endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
+    key::{PublicKey, SecretKey},
+    metrics::MagicsockMetrics,
+    relay::RelayUrl,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode,
 };
 use iroh_metrics::core::Core;
+use iroh_net_report as netcheck;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -44,7 +41,10 @@ use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
-use crate::config::{iroh_data_root, NodeConfig};
+use crate::{
+    config::{iroh_data_root, NodeConfig},
+    progress::ProgressWriter,
+};
 
 /// Options for the secret key usage.
 #[derive(Debug, Clone, derive_more::Display)]
@@ -719,20 +719,20 @@ async fn accept(
         .join(" ");
     println!("Connect to this node using one of the following commands:\n");
     println!(
-        "\tUsing the relay url and direct connections:\niroh doctor connect {} {}\n",
+        "\tUsing the relay url and direct connections:\niroh-doctor connect {} {}\n",
         secret_key.public(),
         remote_addrs,
     );
     if let Some(relay_url) = endpoint.home_relay() {
         println!(
-            "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
+            "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
             relay_url,
         );
     }
     if endpoint.discovery().is_some() {
         println!(
-            "\tUsing just the node id:\niroh doctor connect {}\n",
+            "\tUsing just the node id:\niroh-doctor connect {}\n",
             secret_key.public(),
         );
     }
@@ -859,7 +859,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::relay::HttpClientBuilder::new(node.url.clone())
+        let client = iroh::relay::HttpClientBuilder::new(node.url.clone())
             .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
@@ -977,7 +977,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
             SecretKey::try_from(&bytes[..])?
         }
         SecretKeyOption::Local => {
-            let path = IrohPaths::SecretKey.with_root(iroh_data_root()?);
+            let path = iroh_data_root()?.join("keypair");
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
                 SecretKey::try_from_openssh(bytes)?
