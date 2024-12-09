@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
-tauri-plugin-barcode-scanner = "2"
+tauri-plugin-barcode-scanner = "2.0.0-beta"
 tauri-plugin-os = "2"
 tauri-plugin-store = "2"
 tracing = "0.1"

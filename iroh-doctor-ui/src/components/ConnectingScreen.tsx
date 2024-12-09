@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { IconCamera } from '@tabler/icons-react';
 
 interface ConnectingScreenProps {
   onBack: () => void;
@@ -45,9 +44,8 @@ export function ConnectingScreen({ onBack }: ConnectingScreenProps) {
         </button>
 
         <button
-          className="w-full p-3 px-4 transition bg-white text-irohGray-800 uppercase hover:bg-irohGray-100 border border-irohGray-200 font-medium flex items-center justify-center gap-2"
+          className="w-full p-3 px-4 transition bg-white text-irohGray-800 uppercase hover:bg-irohGray-100 border border-irohGray-200 font-medium"
         >
-          <IconCamera size={16} stroke={1.5} />
           Scan QR Code Instead
         </button>
       </div>

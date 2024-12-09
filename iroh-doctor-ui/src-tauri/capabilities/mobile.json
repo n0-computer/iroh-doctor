@@ -1,0 +1,21 @@
+{
+    "$schema": "../gen/schemas/mobile-schema.json",
+    "identifier": "mobile-capability",
+    "windows": [
+        "main"
+    ],
+    "webviews": [
+        "main"
+    ],
+    "platforms": [
+        "iOS",
+        "android"
+    ],
+    "permissions": [
+        "os:allow-os-type",
+        "barcode-scanner:allow-check-permissions",
+        "barcode-scanner:allow-request-permissions",
+        "barcode-scanner:allow-scan",
+        "barcode-scanner:allow-cancel"
+    ]
+}

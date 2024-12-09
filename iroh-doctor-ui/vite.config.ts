@@ -29,4 +29,7 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  optimizeDeps: {
+    include: ['@tauri-apps/plugin-barcode-scanner', '@tauri-apps/api', '@tabler/icons-react']
+  },
 }));

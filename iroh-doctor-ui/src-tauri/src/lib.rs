@@ -102,9 +102,6 @@ async fn start_accepting_connections(
     .map_err(|e| e.to_string())?;
     let node_id = endpoint.node_id();
 
-    // Format the connection string
-    let connection_string = format!("iroh-doctor connect {node_id}");
-
     // Create TauriDoctorGui with the window
     let gui = TauriDoctorGui::new(window.clone());
 
@@ -120,7 +117,7 @@ async fn start_accepting_connections(
         task.abort();
     }
     *accept_task = Some(handle);
-    Ok(connection_string)
+    Ok(node_id.to_string())
 }
 
 async fn accept_connections(endpoint: iroh::Endpoint, gui: TauriDoctorGui) -> Result<()> {
@@ -173,7 +170,15 @@ pub fn run() {
 
     init_logging();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(mobile)]
+    {
+        tracing::info!("Installing barcode scanner plugin");
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init())
+    }
+
+    builder
         .setup(|app| {
             let handle = app.handle();
             // Initialize DoctorApp in an async context
