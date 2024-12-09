@@ -149,6 +149,11 @@ async fn accept_connections(endpoint: iroh::Endpoint) -> Result<()> {
     // Run the active side protocol
     protocol::active_side(connection, &config, Some(&TauriDoctorGui)).await?;
 
+    // Signal that all tests are complete
+    if let Some(window) = CURRENT_WINDOW.get() {
+        let _ = window.emit("test-complete", ());
+    }
+
     Ok(())
 }
 

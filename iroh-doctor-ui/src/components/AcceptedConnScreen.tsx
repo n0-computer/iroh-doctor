@@ -17,6 +17,7 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
   const [position, setPosition] = useState<number>(0);
   const [length, setLength] = useState<number>(0);
   const [stats, setStats] = useState<Stats>({ send: '', recv: '', echo: '' });
+  const [isComplete, setIsComplete] = useState(false);
 
   useEffect(() => {
     // Listen for progress bar updates
@@ -41,10 +42,18 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
       setStats(prev => ({ ...prev, [type]: value }));
     });
 
+    // Listen for test completion
+    const completeUnlisten = listen('test-complete', () => {
+      setIsComplete(true);
+      setLength(0); // Remove progress bar
+      setMessage('');
+    });
+
     // Cleanup listeners
     return () => {
       progressUnlisten.then(unlisten => unlisten());
       statsUnlisten.then(unlisten => unlisten());
+      completeUnlisten.then(unlisten => unlisten());
     };
   }, []);
 
@@ -76,7 +85,7 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
               <span className="font-spaceMono">{stats.recv}</span>
             ) : null}
           </div>
-          {length > 0 && message === 'recv' && (
+          {!isComplete && length > 0 && message === 'recv' && (
             <ProgressBar
               message={message}
               position={position}
@@ -95,7 +104,7 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
       </div>
       
       {/* Active progress bar for send/echo */}
-      {length > 0 && message !== 'recv' && (
+      {!isComplete && length > 0 && message !== 'recv' && (
         <div className="mt-4">
           <ProgressBar
             message={message}
