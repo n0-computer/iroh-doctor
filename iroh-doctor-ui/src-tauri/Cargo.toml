@@ -26,4 +26,6 @@ iroh = { workspace = true }
 iroh-doctor = { path = "../../iroh-doctor" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+iroh-node-util = "0.29.0"
+dirs-next = "2.0.0"
 

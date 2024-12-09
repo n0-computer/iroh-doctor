@@ -99,6 +99,18 @@ async fn accept_connections(endpoint: iroh::Endpoint) -> Result<()> {
             return Err(anyhow::anyhow!("Endpoint closed"));
         };
 
+        let Ok(mut connecting) = incoming.accept() else {
+            continue;
+        };
+
+        let Ok(alpn) = connecting.alpn().await else {
+            continue;
+        };
+
+        if alpn != iroh_doctor::doctor::DR_RELAY_ALPN {
+            continue;
+        }
+
         let Ok(conn) = incoming.await else {
             continue;
         };
