@@ -1,11 +1,11 @@
 import { useState } from 'react'
 
-interface ConnectionScreenProps {
+interface AcceptingConnScreenProps {
   connectionString: string;
   onBack: () => void;
 }
 
-export function ConnectionScreen({ connectionString, onBack }: ConnectionScreenProps) {
+export function AcceptingConnScreen({ connectionString, onBack }: AcceptingConnScreenProps) {
   const [copied, setCopied] = useState(false)
 
   const copyToClipboard = async () => {

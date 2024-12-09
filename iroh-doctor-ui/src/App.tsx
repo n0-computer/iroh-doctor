@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import './styles.css'
-import { ConnectionScreen } from './components/ConnectionScreen'
-import { AcceptedConnScreen } from './components/AcceptedConnScreen'
-import { startAcceptingConnections } from './bindings'
 import { listen } from '@tauri-apps/api/event'
+import './styles.css'
+import { AcceptingConnScreen } from './components/AcceptingConnScreen'
+import { ConnectingScreen } from './components/ConnectingScreen'
+import { startAcceptingConnections } from './bindings'
 
 function App() {
   const [screen, setScreen] = useState<'home' | 'accepting' | 'connecting'>('home')
@@ -55,12 +55,12 @@ function App() {
             </button>
           </div>
         ) : screen === 'accepting' ? (
-          <ConnectionScreen 
+          <AcceptingConnScreen 
             connectionString={connectionString}
             onBack={() => setScreen('home')}
           />
         ) : (
-          <AcceptedConnScreen onBack={() => setScreen('home')} />
+          <ConnectingScreen onBack={() => setScreen('home')} />
         )}
       </div>
     </div>
