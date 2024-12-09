@@ -51,8 +51,6 @@ pub trait ProgressBarExt: Clone + Send + Sync + 'static {
     fn set_message(&self, msg: String);
     fn set_position(&self, pos: u64);
     fn set_length(&self, len: u64);
-    fn set_style(&self, style: indicatif::ProgressStyle);
-    fn enable_steady_tick(&self, duration: Duration);
 }
 
 /// Trait for GUI functionality
@@ -229,7 +227,7 @@ enum TestStreamRequest {
 
 /// Configuration for testing.
 #[derive(Debug, Clone, Copy)]
-struct TestConfig {
+pub struct TestConfig {
     size: u64,
     iterations: Option<u64>,
 }
@@ -484,14 +482,6 @@ impl ProgressBarExt for ProgressBar {
     fn set_length(&self, len: u64) {
         self.set_length(len);
     }
-
-    fn set_style(&self, style: indicatif::ProgressStyle) {
-        self.set_style(style);
-    }
-
-    fn enable_steady_tick(&self, duration: Duration) {
-        self.enable_steady_tick(duration);
-    }
 }
 
 impl GuiExt for Gui {
@@ -660,7 +650,7 @@ fn configure_local_relay_map() -> RelayMap {
 const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 
 /// Creates an iroh net [`Endpoint`] from a [SecretKey`], a [`RelayMap`] and a [`Discovery`].
-async fn make_endpoint(
+pub async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
@@ -743,19 +733,19 @@ fn format_addr(addr: SocketAddr) -> String {
 }
 
 /// Accepts the connections.
-async fn accept(
+pub async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
-    let endpoints = endpoint
+    let direct_addresses = endpoint
         .direct_addresses()
         .next()
         .await
-        .context("no endpoints")?;
-    let remote_addrs = endpoints
+        .context("no direct addresses")?;
+    let addrs = direct_addresses
         .iter()
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
         .collect::<Vec<_>>()
@@ -764,7 +754,7 @@ async fn accept(
     println!(
         "\tUsing the relay url and direct connections:\niroh-doctor connect {} {}\n",
         secret_key.public(),
-        remote_addrs,
+        addrs,
     );
     if let Some(relay_url) = endpoint.home_relay() {
         println!(
