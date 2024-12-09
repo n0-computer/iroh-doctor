@@ -1,0 +1,50 @@
+[package]
+name = "iroh-doctor"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+description = "Diagnose and test iroh in your network configuration"
+license = "MIT OR Apache-2.0"
+authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["networking", "p2p", "holepunching"]
+
+[dependencies]
+anyhow = "1.0.90"
+async-channel = "2.3.1"
+clap = { version = "4.5.20", features = ["derive"] }
+console = "0.15.8"
+crossterm = "0.28.1"
+derive_more = { version = "1.0.0", features = ["display"] }
+dirs-next = "2.0.0"
+futures-lite = "2.3.0"
+hex = "0.4.3"
+indicatif = { version = "0.17.8", features = ["tokio"] }
+iroh = { version = "0.29.0", features = ["metrics"] }
+iroh-net-report = "0.29.0"
+iroh-metrics = { version = "0.29.0" }
+pkarr = { version = "2.2.0", default-features = false }
+portable-atomic = "1.9.0"
+postcard = "1.0.10"
+portmapper = { version = "0.2.1" }
+rand = "0.8.5"
+ratatui = "0.29.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0.210", features = ["derive"] }
+serde_with = "3.11.0"
+tokio = "1.40.0"
+tokio-util = "0.7.12"
+toml = { version = "0.8.19", features = ["preserve_order"] }
+tracing = "0.1.40"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+
+[dev-dependencies]
+iroh-base = "0.29.0"
+url = "2.5.2"
+
+# [patch.crates-io]
+# iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+# iroh-metrics = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+# portmapper = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
+# iroh-net-report = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
