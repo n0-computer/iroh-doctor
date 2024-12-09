@@ -365,7 +365,7 @@ impl Gui {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
-        let remote_info = mp.add(ProgressBar::hidden());
+        let remote_info_bar = mp.add(ProgressBar::hidden());
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
@@ -375,7 +375,7 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
-        remote_info.set_style(style.clone());
+        remote_info_bar.set_style(style.clone());
         counters.set_style(style);
         let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -386,7 +386,8 @@ impl Gui {
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_remote_info(&remote_info, &endpoint, &node_id);
+                let remote_info = endpoint.remote_info(node_id);
+                Self::update_remote_info(&remote_info_bar, remote_info);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -436,12 +437,12 @@ Ipv6:
         }
     }
 
-    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
+    fn update_remote_info(target: &ProgressBar, remote_info: Option<RemoteInfo>) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.remote_info(*node_id) {
+        let msg = match remote_info {
             Some(RemoteInfo {
                 relay_url,
                 conn_type,
