@@ -1,13 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './styles.css'
 import { ConnectionScreen } from './components/ConnectionScreen'
 import { AcceptedConnScreen } from './components/AcceptedConnScreen'
 import { startAcceptingConnections } from './bindings'
+import { listen } from '@tauri-apps/api/event'
 
 function App() {
   const [screen, setScreen] = useState<'home' | 'accepting' | 'connecting'>('home')
   const [connectionString, setConnectionString] = useState<string>('')
   
+  useEffect(() => {
+    // Listen for connection accepted event
+    const unlisten = listen('connection-accepted', () => {
+      setScreen('connecting');
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
+
   const handleAcceptConnections = async () => {
     try {
       const connString = await startAcceptingConnections();

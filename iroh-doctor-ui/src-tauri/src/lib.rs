@@ -1,11 +1,11 @@
 use anyhow::Result;
-use iroh::{discovery::pkarr::PkarrPublisher, key::SecretKey, RelayMap};
+use iroh::{discovery::pkarr::PkarrPublisher, key::SecretKey};
 use iroh_doctor::{
     doctor,
     protocol::{self, TestConfig},
 };
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::task::JoinHandle;
 
 #[derive(Default)]
@@ -13,49 +13,72 @@ pub struct DoctorApp {
     accept_task: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl protocol::GuiExt for DoctorApp {
+struct TauriDoctorGui;
+
+impl protocol::GuiExt for TauriDoctorGui {
     type ProgressBar = ProgressBar;
 
     fn pb(&self) -> &Self::ProgressBar {
-        todo!()
+        &ProgressBar
     }
 
     fn set_send(&self, bytes: u64, duration: std::time::Duration) {
-        todo!()
+        let speed = (bytes as f64) / (1024.0 * 1024.0) / duration.as_secs_f64();
+        if let Some(app) = CURRENT_WINDOW.get() {
+            let _ = app.emit("test-stats", ("send", format!("{:.2} MiB/s", speed)));
+        }
     }
 
     fn set_recv(&self, bytes: u64, duration: std::time::Duration) {
-        todo!()
+        let speed = (bytes as f64) / (1024.0 * 1024.0) / duration.as_secs_f64();
+        if let Some(app) = CURRENT_WINDOW.get() {
+            let _ = app.emit("test-stats", ("recv", format!("{:.2} MiB/s", speed)));
+        }
     }
 
     fn set_echo(&self, bytes: u64, duration: std::time::Duration) {
-        todo!()
+        let speed = (bytes as f64) / (1024.0 * 1024.0) / duration.as_secs_f64();
+        if let Some(app) = CURRENT_WINDOW.get() {
+            let _ = app.emit("test-stats", ("echo", format!("{:.2} MiB/s", speed)));
+        }
     }
 
-    fn clear(&self) {
-        todo!()
-    }
+    fn clear(&self) {}
 }
+
+use std::sync::OnceLock;
+static CURRENT_WINDOW: OnceLock<tauri::Window> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct ProgressBar;
 
 impl protocol::ProgressBarExt for ProgressBar {
     fn set_message(&self, msg: String) {
-        todo!()
+        if let Some(app) = CURRENT_WINDOW.get() {
+            let _ = app.emit("progress-update", ("message", msg));
+        }
     }
 
     fn set_position(&self, pos: u64) {
-        todo!()
+        if let Some(app) = CURRENT_WINDOW.get() {
+            let _ = app.emit("progress-update", ("position", pos));
+        }
     }
 
     fn set_length(&self, len: u64) {
-        todo!()
+        if let Some(app) = CURRENT_WINDOW.get() {
+            let _ = app.emit("progress-update", ("length", len));
+        }
     }
 }
 
 #[tauri::command]
-async fn start_accepting_connections(app: State<'_, DoctorApp>) -> Result<String, String> {
+async fn start_accepting_connections(
+    app: State<'_, DoctorApp>,
+    window: tauri::Window,
+) -> Result<String, String> {
+    let _ = CURRENT_WINDOW.set(window);
+
     let secret_key = SecretKey::generate();
 
     // Create the endpoint first to get the node id for the connection string
@@ -109,17 +132,22 @@ async fn accept_connections(endpoint: iroh::Endpoint) -> Result<()> {
 
         if alpn != iroh_doctor::doctor::DR_RELAY_ALPN {
             continue;
-        }
+        };
 
-        let Ok(conn) = incoming.await else {
+        let Ok(conn) = connecting.await else {
             continue;
         };
+
+        // Notify the UI that a connection was accepted
+        if let Some(window) = CURRENT_WINDOW.get() {
+            let _ = window.emit("connection-accepted", ());
+        }
 
         break conn;
     };
 
     // Run the active side protocol
-    protocol::active_side::<DoctorApp>(connection, &config, None).await?;
+    protocol::active_side(connection, &config, Some(&TauriDoctorGui)).await?;
 
     Ok(())
 }
