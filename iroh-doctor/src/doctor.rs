@@ -46,6 +46,25 @@ use crate::{
     progress::ProgressWriter,
 };
 
+/// Trait for progress bar functionality
+pub trait ProgressBarExt: Clone + Send + Sync + 'static {
+    fn set_message(&self, msg: String);
+    fn set_position(&self, pos: u64);
+    fn set_length(&self, len: u64);
+    fn set_style(&self, style: indicatif::ProgressStyle);
+    fn enable_steady_tick(&self, duration: Duration);
+}
+
+/// Trait for GUI functionality
+pub trait GuiExt {
+    type ProgressBar: ProgressBarExt;
+    fn pb(&self) -> &Self::ProgressBar;
+    fn set_send(&self, bytes: u64, duration: Duration);
+    fn set_recv(&self, bytes: u64, duration: Duration);
+    fn set_echo(&self, bytes: u64, duration: Duration);
+    fn clear(&self);
+}
+
 /// Options for the secret key usage.
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -218,12 +237,12 @@ struct TestConfig {
 /// Updates the progress bar.
 fn update_pb(
     task: &'static str,
-    pb: Option<ProgressBar>,
+    pb: Option<impl ProgressBarExt + Send + 'static>,
     total_bytes: u64,
     mut updates: sync::mpsc::Receiver<u64>,
 ) -> tokio::task::JoinHandle<()> {
     if let Some(pb) = pb {
-        pb.set_message(task);
+        pb.set_message(task.to_string());
         pb.set_position(0);
         pb.set_length(total_bytes);
         tokio::spawn(async move {
@@ -240,12 +259,12 @@ fn update_pb(
 async fn handle_test_request(
     mut send: SendStream,
     mut recv: RecvStream,
-    gui: &Gui,
+    gui: &impl GuiExt,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
     recv.read_exact(&mut buf).await?;
     let request: TestStreamRequest = postcard::from_bytes(&buf)?;
-    let pb = Some(gui.pb.clone());
+    let pb = Some(gui.pb().clone());
     match request {
         TestStreamRequest::Echo { bytes } => {
             // copy the stream back
@@ -382,7 +401,41 @@ impl Gui {
         }
     }
 
-    /// Updates the information of the target progress bar.
+    fn set_bench_speed(pb: &ProgressBar, text: &str, bytes: u64, duration: Duration) {
+        pb.set_message(format!(
+            "{}: {}/s",
+            text,
+            HumanBytes((bytes as f64 / duration.as_secs_f64()) as u64)
+        ));
+    }
+
+    fn update_counters(target: &ProgressBar) {
+        if let Some(core) = Core::get() {
+            let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
+            let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
+            let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
+            let send_relay = HumanBytes(metrics.send_relay.get());
+            let recv_data_relay = HumanBytes(metrics.recv_data_relay.get());
+            let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
+            let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
+            let text = format!(
+                r#"Counters
+
+Relay:
+  send: {send_relay}
+  recv: {recv_data_relay}
+Ipv4:
+  send: {send_ipv4}
+  recv: {recv_data_ipv4}
+Ipv6:
+  send: {send_ipv6}
+  recv: {recv_data_ipv6}
+"#,
+            );
+            target.set_message(text);
+        }
+    }
+
     fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
@@ -416,74 +469,63 @@ impl Gui {
         };
         target.set_message(msg);
     }
+}
 
-    /// Updates the counters for the target progress bar.
-    fn update_counters(target: &ProgressBar) {
-        if let Some(core) = Core::get() {
-            let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
-            let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
-            let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
-            let send_relay = HumanBytes(metrics.send_relay.get());
-            let recv_data_relay = HumanBytes(metrics.recv_data_relay.get());
-            let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
-            let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
-            let text = format!(
-                r#"Counters
-
-Relay:
-  send: {send_relay}
-  recv: {recv_data_relay}
-Ipv4:
-  send: {send_ipv4}
-  recv: {recv_data_ipv4}
-Ipv6:
-  send: {send_ipv6}
-  recv: {recv_data_ipv6}
-"#,
-            );
-            target.set_message(text);
-        }
+impl ProgressBarExt for ProgressBar {
+    fn set_message(&self, msg: String) {
+        self.set_message(msg);
     }
 
-    /// Sets the "send" text and the speed for the progress bar.
+    fn set_position(&self, pos: u64) {
+        self.set_position(pos);
+    }
+
+    fn set_length(&self, len: u64) {
+        self.set_length(len);
+    }
+
+    fn set_style(&self, style: indicatif::ProgressStyle) {
+        self.set_style(style);
+    }
+
+    fn enable_steady_tick(&self, duration: Duration) {
+        self.enable_steady_tick(duration);
+    }
+}
+
+impl GuiExt for Gui {
+    type ProgressBar = ProgressBar;
+
+    fn pb(&self) -> &Self::ProgressBar {
+        &self.pb
+    }
+
     fn set_send(&self, bytes: u64, duration: Duration) {
         Self::set_bench_speed(&self.send_pb, "send", bytes, duration);
     }
 
-    /// Sets the "recv" text and the speed for the progress bar.
     fn set_recv(&self, bytes: u64, duration: Duration) {
         Self::set_bench_speed(&self.recv_pb, "recv", bytes, duration);
     }
 
-    /// Sets the "echo" text and the speed for the progress bar.
     fn set_echo(&self, bytes: u64, duration: Duration) {
         Self::set_bench_speed(&self.echo_pb, "echo", bytes, duration);
     }
 
-    /// Sets a text and the speed for the progress bar.
-    fn set_bench_speed(pb: &ProgressBar, text: &str, bytes: u64, duration: Duration) {
-        pb.set_message(format!(
-            "{}: {}/s",
-            text,
-            HumanBytes((bytes as f64 / duration.as_secs_f64()) as u64)
-        ));
-    }
-
-    /// Clears the [`MultiProgress`] field.
     fn clear(&self) {
         self.mp.clear().ok();
     }
 }
 
 /// Sends, receives and echoes data in a connection.
-async fn active_side(
+async fn active_side<G: GuiExt>(
     connection: Connection,
     config: &TestConfig,
-    gui: Option<&Gui>,
+    gui: Option<&G>,
 ) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
     if let Some(gui) = gui {
-        let pb = Some(&gui.pb);
+        let pb = Some(gui.pb());
         for _ in 0..n {
             let d = send_test(&connection, config, pb).await?;
             gui.set_send(config.size, d);
@@ -493,7 +535,7 @@ async fn active_side(
             gui.set_echo(config.size, d);
         }
     } else {
-        let pb = None;
+        let pb: Option<&G::ProgressBar> = None;
         for _ in 0..n {
             let _d = send_test(&connection, config, pb).await?;
             let _d = recv_test(&connection, config, pb).await?;
@@ -518,7 +560,7 @@ async fn send_test_request(
 async fn echo_test(
     connection: &Connection,
     config: &TestConfig,
-    pb: Option<&indicatif::ProgressBar>,
+    pb: Option<&impl ProgressBarExt>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -540,7 +582,7 @@ async fn echo_test(
 async fn send_test(
     connection: &Connection,
     config: &TestConfig,
-    pb: Option<&indicatif::ProgressBar>,
+    pb: Option<&impl ProgressBarExt>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -565,7 +607,7 @@ async fn send_test(
 async fn recv_test(
     connection: &Connection,
     config: &TestConfig,
-    pb: Option<&indicatif::ProgressBar>,
+    pb: Option<&impl ProgressBarExt>,
 ) -> anyhow::Result<Duration> {
     let size = config.size;
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -772,8 +814,9 @@ async fn accept(
                             eprintln!("Test finished after {dt}s",);
                         }
                     } else {
+                        let gui: Option<&Gui> = None;
                         // silent
-                        active_side(connection, &config, None).await.ok();
+                        active_side(connection, &config, gui).await.ok();
                     }
                 }
                 Err(cause) => {
