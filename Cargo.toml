@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "iroh-doctor",
+  "iroh-doctor-ui/src-tauri",
 ]
 resolver = "2"
 
