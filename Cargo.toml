@@ -26,3 +26,8 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[workspace.dependencies]
+iroh = "0.29.0"
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"

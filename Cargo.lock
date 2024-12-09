@@ -2830,11 +2830,15 @@ dependencies = [
 name = "iroh-doctor-ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "iroh",
+ "iroh-doctor",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
+ "tokio",
 ]
 
 [[package]]
@@ -6604,6 +6608,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
