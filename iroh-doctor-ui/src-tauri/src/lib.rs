@@ -1,11 +1,12 @@
 use anyhow::Result;
+use dirs_next::data_dir;
 use iroh::{discovery::pkarr::PkarrPublisher, key::SecretKey};
 use iroh_doctor::{
     doctor,
     protocol::{self, TestConfig},
 };
 use std::sync::Mutex;
-use tauri::{Emitter, State, Window};
+use tauri::{Emitter, Manager, State, Window};
 use tokio::task::JoinHandle;
 
 pub struct DoctorApp {
@@ -13,12 +14,24 @@ pub struct DoctorApp {
     secret_key: SecretKey,
 }
 
-impl Default for DoctorApp {
-    fn default() -> Self {
-        Self {
+impl DoctorApp {
+    pub async fn new() -> Result<Self> {
+        // Get the data directory for the app
+        let data_dir = data_dir()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get data directory"))?
+            .join("iroh-doctor-ui");
+
+        // Create the directory if it doesn't exist
+        std::fs::create_dir_all(&data_dir)?;
+
+        // Load or create the secret key
+        let secret_key_path = data_dir.join("secret.key");
+        let secret_key = iroh_node_util::load_secret_key(secret_key_path).await?;
+
+        Ok(Self {
             accept_task: Mutex::new(None),
-            secret_key: SecretKey::generate(),
-        }
+            secret_key,
+        })
     }
 }
 
@@ -167,7 +180,17 @@ async fn accept_connections(endpoint: iroh::Endpoint, gui: TauriDoctorGui) -> Re
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(DoctorApp::default())
+        .setup(|app| {
+            let handle = app.handle();
+            // Initialize DoctorApp in an async context
+            tauri::async_runtime::block_on(async {
+                let doctor_app = DoctorApp::new()
+                    .await
+                    .expect("Failed to initialize DoctorApp");
+                handle.manage(doctor_app);
+                Ok(())
+            })
+        })
         .invoke_handler(tauri::generate_handler![start_accepting_connections])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
