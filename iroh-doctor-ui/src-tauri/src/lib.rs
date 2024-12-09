@@ -5,7 +5,7 @@ use iroh_doctor::{
     protocol::{self, TestConfig},
 };
 use std::sync::Mutex;
-use tauri::{State, Window};
+use tauri::{Emitter, State, Window};
 use tokio::task::JoinHandle;
 
 pub struct DoctorApp {
@@ -22,6 +22,7 @@ impl Default for DoctorApp {
     }
 }
 
+#[derive(Clone)]
 struct TauriDoctorGui {
     window: Window,
 }
@@ -48,10 +49,10 @@ impl TauriDoctorGui {
 }
 
 impl protocol::GuiExt for TauriDoctorGui {
-    type ProgressBar = ProgressBar;
+    type ProgressBar = Self;
 
     fn pb(&self) -> &Self::ProgressBar {
-        &ProgressBar::new(self.window.clone())
+        self
     }
 
     fn set_send(&self, bytes: u64, duration: std::time::Duration) {
@@ -69,18 +70,7 @@ impl protocol::GuiExt for TauriDoctorGui {
     fn clear(&self) {}
 }
 
-#[derive(Clone)]
-pub struct ProgressBar {
-    window: Window,
-}
-
-impl ProgressBar {
-    fn new(window: Window) -> Self {
-        Self { window }
-    }
-}
-
-impl protocol::ProgressBarExt for ProgressBar {
+impl protocol::ProgressBarExt for TauriDoctorGui {
     fn set_message(&self, msg: String) {
         let _ = self.window.emit("progress-update", ("message", msg));
     }
