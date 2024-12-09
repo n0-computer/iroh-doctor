@@ -1,3 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
-@tailwind utilities; 
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Koulen';
+  src: url('/fonts/Koulen-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --font-koulen-regular: 'Koulen';
+}
+
+body {
+  @apply bg-irohGray-50;
+} 
