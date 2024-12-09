@@ -10,7 +10,11 @@ interface Stats {
   echo: string;
 }
 
-export const AcceptedConnScreen: React.FC = () => {
+interface AcceptedConnScreenProps {
+  onBack: () => void;
+}
+
+export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }) => {
   const [message, setMessage] = useState<string>('');
   const [position, setPosition] = useState<number>(0);
   const [length, setLength] = useState<number>(0);
@@ -59,23 +63,60 @@ export const AcceptedConnScreen: React.FC = () => {
   }, []);
 
   return (
-    <div className="p-4">
-      <h2 className="text-xl font-bold mb-4">Connection Accepted</h2>
+    <div className="w-full">
+      <button 
+        onClick={onBack}
+        className="mb-8 text-irohGray-500 hover:text-irohGray-800 transition flex items-center gap-2"
+      >
+        ← Back
+      </button>
+
+      <h2 className="text-2xl font-koulen mb-8">Connection Accepted</h2>
       
       {/* Stats display */}
-      <div className="mb-4 space-y-2">
-        {stats.send && <div>Send: {stats.send}</div>}
-        {stats.recv && <div>Recv: {stats.recv}</div>}
-        {stats.echo && <div>Echo: {stats.echo}</div>}
+      <div className="space-y-4">
+        {stats.send && (
+          <div className="flex justify-between items-center">
+            <span className="text-sm uppercase text-irohGray-500">Send</span>
+            <span className="font-spaceMono">{stats.send}</span>
+          </div>
+        )}
+        
+        {/* Active progress bar or recv stats */}
+        <div className="space-y-2">
+          <div className="flex justify-between items-center">
+            <span className="text-sm uppercase text-irohGray-500">Recv</span>
+            {stats.recv ? (
+              <span className="font-spaceMono">{stats.recv}</span>
+            ) : null}
+          </div>
+          {length > 0 && message === 'recv' && (
+            <ProgressBar
+              message={message}
+              position={position}
+              length={length}
+            />
+          )}
+        </div>
+
+        {/* Echo stats */}
+        {stats.echo && (
+          <div className="flex justify-between items-center">
+            <span className="text-sm uppercase text-irohGray-500">Echo</span>
+            <span className="font-spaceMono">{stats.echo}</span>
+          </div>
+        )}
       </div>
       
-      {/* Active progress bar */}
-      {length > 0 && (
-        <ProgressBar
-          message={message}
-          position={position}
-          length={length}
-        />
+      {/* Active progress bar for send/echo */}
+      {length > 0 && message !== 'recv' && (
+        <div className="mt-4">
+          <ProgressBar
+            message={message}
+            position={position}
+            length={length}
+          />
+        </div>
       )}
     </div>
   );

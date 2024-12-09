@@ -16,7 +16,6 @@ function formatBytes(bytes: number): string {
     unitIndex++;
   }
   
-  // Format with up to 2 decimal places, but remove trailing zeros
   return `${value.toFixed(2).replace(/\.?0+$/, '')} ${units[unitIndex]}`;
 }
 
@@ -35,7 +34,6 @@ export class ProgressBarWrapper {
     this.setLength = setLength;
   }
 
-  // Implements ProgressBarExt trait methods
   set_message(msg: string) {
     this.setMessage(msg);
   }
@@ -53,18 +51,18 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ message, position, len
   const percentage = length > 0 ? (position / length) * 100 : 0;
   
   return (
-    <div className="w-full">
-      <div className="flex justify-between mb-1">
-        <span className="text-sm font-medium">{message}</span>
-        <span className="text-sm font-medium">
-          {`${formatBytes(position)} / ${formatBytes(length)}`}
-        </span>
-      </div>
-      <div className="w-full bg-gray-200 rounded-full h-2.5">
-        <div 
-          className="bg-cyan-500 h-2.5 rounded-full" 
-          style={{ width: `${percentage}%` }}
-        />
+    <div className="w-full bg-irohGray-100 p-4">
+      <div className="space-y-2">
+        <div className="w-full bg-irohGray-200 h-1 rounded-full overflow-hidden">
+          <div 
+            className="bg-irohPurple-500 h-full transition-none"
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-xs font-spaceMono text-irohGray-500">
+          <span>{message}</span>
+          <span>{`${formatBytes(position)} / ${formatBytes(length)}`}</span>
+        </div>
       </div>
     </div>
   );

@@ -38,7 +38,7 @@ function App() {
             onBack={() => setScreen('home')}
           />
         ) : (
-          <AcceptedConnScreen />
+          <AcceptedConnScreen onBack={() => setScreen('home')} />
         )}
       </div>
     </div>
