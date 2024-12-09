@@ -12,14 +12,14 @@ debug = true
 inherits = 'dev'
 opt-level = 1
 
-[profile.optimized-release]
-inherits = 'release'
-debug = false
-lto = true
-debug-assertions = false
-opt-level = 3
-panic = 'abort'
-incremental = false
+# [profile.optimized-release]
+# inherits = 'release'
+# debug = false
+# lto = true
+# debug-assertions = false
+# opt-level = 3
+# panic = 'abort'
+# incremental = false
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
