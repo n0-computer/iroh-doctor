@@ -2,7 +2,7 @@
 //! and to test connectivity to specific other nodes.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     io,
     net::SocketAddr,
     num::NonZeroU16,
@@ -32,6 +32,7 @@ use iroh::{
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
+use netcheck::{Options as ReportOptions, ProbeProtocol};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -77,13 +78,58 @@ impl std::str::FromStr for SecretKeyOption {
 pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
     /// or the settings from the config file.
+    ///
+    /// When no protocol flags are explicitly set, will run a report with all available probe
+    /// protocols
     Report {
-        /// Explicitly provided stun host. If provided, this will disable relay and just do stun.
+        /// Explicitly provided stun host. If provided, this will disable relay and just do STUN.
         #[clap(long)]
         stun_host: Option<String>,
         /// The port of the STUN server.
         #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
+        /// Run a report including a STUN probe over Ipv4
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        stun_ipv4: bool,
+        /// Run a report including a STUN probe over Ipv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        stun_ipv6: bool,
+        /// Run a report including a QUIC Address Discovery probe over Ipv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        quic_ipv4: bool,
+        /// Run a report including a QUIC Address Discovery probe over Ipv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        quic_ipv6: bool,
+        /// Run a report including an HTTPS probe
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        https: bool,
+        /// Run a report including an ICMP probe over Ipv4
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        icmp_v4: bool,
+        /// Run a report including an ICMP probe over IPv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        icmp_v6: bool,
     },
     /// Wait for incoming requests from iroh doctor connect.
     Accept {
@@ -306,12 +352,44 @@ async fn report(
     stun_host: Option<String>,
     stun_port: u16,
     config: &NodeConfig,
+    stun_ipv4: bool,
+    stun_ipv6: bool,
+    quic_ipv4: bool,
+    quic_ipv6: bool,
+    https: bool,
+    icmp_v4: bool,
+    icmp_v6: bool,
 ) -> anyhow::Result<()> {
+    let mut protocols = BTreeSet::new();
+    if stun_ipv4 {
+        protocols.insert(ProbeProtocol::StunIpv4);
+    }
+    if stun_ipv6 {
+        protocols.insert(ProbeProtocol::StunIpv6);
+    }
+    if quic_ipv4 {
+        protocols.insert(ProbeProtocol::QuicIpv4);
+    }
+    if quic_ipv6 {
+        protocols.insert(ProbeProtocol::QuicIpv6);
+    }
+    if https {
+        protocols.insert(ProbeProtocol::Https);
+    }
+    if icmp_v4 {
+        protocols.insert(ProbeProtocol::IcmpV4);
+    }
+    if icmp_v6 {
+        protocols.insert(ProbeProtocol::IcmpV6);
+    }
+    if protocols.is_empty() {
+        protocols = ReportOptions::default_protocols();
+    }
     let port_mapper = portmapper::Client::default();
     let dns_resolver = default_resolver().clone();
     let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
 
-    let dm = match stun_host {
+    let relay_map = match stun_host {
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a relay map from host name and stun port
@@ -319,9 +397,17 @@ async fn report(
         }
         None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
-    println!("getting report using relay map {dm:#?}");
+    println!("relay map {relay_map:#?}");
+    println!("attempting probes for these protocols: {protocols:#?}");
 
-    let r = client.get_report(dm, None, None).await?;
+    let opts = ReportOptions {
+        relay_map,
+        stun_sock_v4: None,
+        stun_sock_v6: None,
+        quic_config: None,
+        protocols,
+    };
+    let r = client.get_report_with_opts(opts).await?;
     println!("{r:#?}");
     Ok(())
 }
@@ -1047,7 +1133,20 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::Report {
             stun_host,
             stun_port,
-        } => report(stun_host, stun_port, config).await,
+            stun_ipv4,
+            stun_ipv6,
+            quic_ipv4,
+            quic_ipv6,
+            https,
+            icmp_v4,
+            icmp_v6,
+        } => {
+            report(
+                stun_host, stun_port, config, stun_ipv4, stun_ipv6, quic_ipv4, quic_ipv6, https,
+                icmp_v4, icmp_v6,
+            )
+            .await
+        }
         Commands::Connect {
             dial,
             secret_key,

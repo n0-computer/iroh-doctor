@@ -43,8 +43,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 iroh-base = "0.29.0"
 url = "2.5.2"
 
-# [patch.crates-io]
-# iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+[patch.crates-io]
+iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "ramfox/net-report-simplify"}
 # iroh-metrics = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
 # portmapper = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
-# iroh-net-report = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
+iroh-net-report = { git = "https://github.com/n0-computer/iroh.git", branch = "ramfox/net-report-simplify"}
