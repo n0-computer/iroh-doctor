@@ -4,7 +4,7 @@
 use std::{
     collections::{BTreeSet, HashMap},
     io,
-    net::SocketAddr,
+    net::{Ipv6Addr, SocketAddr},
     num::NonZeroU16,
     path::PathBuf,
     sync::Arc,
@@ -32,7 +32,7 @@ use iroh::{
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
-use netcheck::{Options as ReportOptions, ProbeProtocol};
+use netcheck::{Options as ReportOptions, ProbeProtocol, QuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -400,16 +400,34 @@ async fn report(
     println!("relay map {relay_map:#?}");
     println!("attempting probes for these protocols: {protocols:#?}");
 
+    let quic_config = if protocols.contains(&ProbeProtocol::QuicIpv4)
+        || protocols.contains(&ProbeProtocol::QuicIpv6)
+    {
+        Some(create_quic_endpoint()?)
+    } else {
+        None
+    };
     let opts = ReportOptions {
         relay_map,
         stun_sock_v4: None,
         stun_sock_v6: None,
-        quic_config: None,
+        quic_config,
         protocols,
     };
     let r = client.get_report_with_opts(opts).await?;
     println!("{r:#?}");
     Ok(())
+}
+
+/// Create a quinn Endpoint that has QUIC address discovery enabled.
+fn create_quic_endpoint() -> anyhow::Result<QuicConfig> {
+    let root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let client_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
+    Ok(QuicConfig { ep, client_config })
 }
 
 /// Contains all the GUI state.
