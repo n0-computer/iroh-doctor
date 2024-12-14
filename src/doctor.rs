@@ -18,17 +18,15 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use futures_lite::StreamExt;
+use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::default_resolver,
     endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
-    key::{PublicKey, SecretKey},
     metrics::MagicsockMetrics,
-    relay::RelayUrl,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode,
+    Endpoint, NodeAddr, NodeId, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
@@ -774,10 +772,13 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind().await?;
 
-    tokio::time::timeout(Duration::from_secs(10), endpoint.direct_addresses().next())
-        .await
-        .context("wait for relay connection")?
-        .context("no endpoints")?;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        endpoint.direct_addresses().initialized(),
+    )
+    .await
+    .context("wait for relay connection")?
+    .context("no endpoints")?;
 
     Ok(endpoint)
 }
@@ -798,7 +799,7 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            let maybe_stream = endpoint.conn_type_stream(node_id);
+            let maybe_stream = endpoint.conn_type(node_id);
             let gui = Gui::new(endpoint, node_id);
             if let Ok(stream) = maybe_stream {
                 log_connection_changes(gui.mp.clone(), node_id, stream);
@@ -835,7 +836,7 @@ async fn accept(
     let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
     let endpoints = endpoint
         .direct_addresses()
-        .next()
+        .initialized()
         .await
         .context("no endpoints")?;
     let remote_addrs = endpoints
@@ -849,7 +850,7 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.home_relay() {
+    if let relay_url = endpoint.home_relay().initialized().await? {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
@@ -886,7 +887,7 @@ async fn accept(
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        if let Ok(stream) = endpoint.conn_type_stream(remote_peer_id) {
+                        if let Ok(stream) = endpoint.conn_type(remote_peer_id) {
                             log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
                         }
                         let res = active_side(connection, &config, Some(&gui)).await;
@@ -985,7 +986,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::relay::HttpClientBuilder::new(node.url.clone())
+        let client = iroh_relay::HttpClientBuilder::new(node.url.clone())
             .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
