@@ -2,7 +2,7 @@
 //! and to test connectivity to specific other nodes.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     io,
     net::{Ipv6Addr, SocketAddr},
     num::NonZeroU16,
@@ -18,26 +18,27 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use futures_lite::{Stream, StreamExt};
+use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::default_resolver,
-    endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
+    endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
+    watchable::Watcher,
     Endpoint, NodeAddr, NodeId, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
-use netcheck::{Options as ReportOptions, ProbeProtocol, QuicConfig};
+use netcheck::{Options as ReportOptions, QuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::warn;
 
 use crate::{
@@ -346,11 +347,12 @@ async fn send_blocks(
 }
 
 /// Prints a client report.
+#[allow(clippy::too_many_arguments)]
 async fn report(
     stun_host: Option<String>,
     stun_port: u16,
     config: &NodeConfig,
-    stun_ipv4: bool,
+    mut stun_ipv4: bool,
     stun_ipv6: bool,
     quic_ipv4: bool,
     quic_ipv6: bool,
@@ -358,31 +360,17 @@ async fn report(
     icmp_v4: bool,
     icmp_v6: bool,
 ) -> anyhow::Result<()> {
-    let mut protocols = BTreeSet::new();
-    if stun_ipv4 {
-        protocols.insert(ProbeProtocol::StunIpv4);
-    }
-    if stun_ipv6 {
-        protocols.insert(ProbeProtocol::StunIpv6);
-    }
-    if quic_ipv4 {
-        protocols.insert(ProbeProtocol::QuicIpv4);
-    }
-    if quic_ipv6 {
-        protocols.insert(ProbeProtocol::QuicIpv6);
-    }
+    let mut opts = ReportOptions::empty();
     if https {
-        protocols.insert(ProbeProtocol::Https);
+        opts = opts.enable_https()
     }
     if icmp_v4 {
-        protocols.insert(ProbeProtocol::IcmpV4);
+        opts = opts.enable_icmp_v4()
     }
     if icmp_v6 {
-        protocols.insert(ProbeProtocol::IcmpV6);
+        opts = opts.enable_icmp_v6()
     }
-    if protocols.is_empty() {
-        protocols = ReportOptions::default_protocols();
-    }
+
     let port_mapper = portmapper::Client::default();
     let dns_resolver = default_resolver().clone();
     let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
@@ -391,41 +379,47 @@ async fn report(
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a relay map from host name and stun port
+            stun_ipv4 = true;
             RelayMap::default_from_node(url, stun_port)
         }
         None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
-    println!("relay map {relay_map:#?}");
-    println!("attempting probes for these protocols: {protocols:#?}");
+    let cancel = CancellationToken::new();
+    if stun_ipv4 {
+        let stun_sock_v4 =
+            netcheck::bind_local_stun_socket(netwatch::IpFamily::V4, client.addr(), cancel.clone());
+        opts = opts.stun_v4(stun_sock_v4);
+    }
+    if stun_ipv6 {
+        let stun_sock_v6 =
+            netcheck::bind_local_stun_socket(netwatch::IpFamily::V6, client.addr(), cancel.clone());
+        opts = opts.stun_v6(stun_sock_v6);
+    }
 
-    let quic_config = if protocols.contains(&ProbeProtocol::QuicIpv4)
-        || protocols.contains(&ProbeProtocol::QuicIpv6)
-    {
-        Some(create_quic_endpoint()?)
-    } else {
-        None
-    };
-    let opts = ReportOptions {
-        relay_map,
-        stun_sock_v4: None,
-        stun_sock_v6: None,
-        quic_config,
-        protocols,
-    };
-    let r = client.get_report_with_opts(opts).await?;
+    if quic_ipv4 || quic_ipv6 {
+        opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
+    }
+    println!("relay map {relay_map:#?}");
+    let r = client.get_report_with_opts(relay_map, opts).await?;
     println!("{r:#?}");
+    cancel.cancel();
     Ok(())
 }
 
-/// Create a quinn Endpoint that has QUIC address discovery enabled.
-fn create_quic_endpoint() -> anyhow::Result<QuicConfig> {
+/// Create a QuicConfig with a quinn Endpoint and a client configuration.
+fn create_quic_config(ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
     let root_store =
         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let client_config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
-    Ok(QuicConfig { ep, client_config })
+    Ok(QuicConfig {
+        ep,
+        client_config,
+        ipv4,
+        ipv6,
+    })
 }
 
 /// Contains all the GUI state.
@@ -850,13 +844,12 @@ async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let relay_url = endpoint.home_relay().initialized().await? {
-        println!(
-            "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
-            secret_key.public(),
-            relay_url,
-        );
-    }
+    let relay_url = endpoint.home_relay().initialized().await?;
+    println!(
+        "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
+        secret_key.public(),
+        relay_url,
+    );
     if endpoint.discovery().is_some() {
         println!(
             "\tUsing just the node id:\niroh-doctor connect {}\n",
@@ -915,8 +908,9 @@ async fn accept(
 }
 
 /// Logs the connection changes to the multiprogress.
-fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
+fn log_connection_changes(pb: MultiProgress, node_id: NodeId, watcher: Watcher<ConnectionType>) {
     tokio::spawn(async move {
+        let mut stream = watcher.stream();
         let start = Instant::now();
         while let Some(conn_type) = stream.next().await {
             pb.println(format!(

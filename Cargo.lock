@@ -1983,6 +1983,7 @@ checksum = "ddc24109865250148c2e0f3d25d4f0f479571723792d3802153c60922a4fb708"
 [[package]]
 name = "iroh"
 version = "0.29.0"
+source = "git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify#26f7e0a82e8a9ff6537fb5db1bedb1c75767b851"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2006,7 +2007,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "igd-next",
- "iroh-base 0.29.0",
+ "iroh-base 0.29.0 (git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify)",
  "iroh-metrics",
  "iroh-net-report",
  "iroh-quinn",
@@ -2060,6 +2061,24 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fd98293ce8e85e6b4f0ce09af7c6bb860f2fece8fcf9238d6e628f1e163e27a"
+dependencies = [
+ "anyhow",
+ "data-encoding",
+ "derive_more",
+ "hex",
+ "iroh-blake3",
+ "postcard",
+ "serde",
+ "thiserror 2.0.6",
+ "url",
+]
+
+[[package]]
+name = "iroh-base"
+version = "0.29.0"
+source = "git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify#26f7e0a82e8a9ff6537fb5db1bedb1c75767b851"
 dependencies = [
  "aead",
  "anyhow",
@@ -2077,23 +2096,6 @@ dependencies = [
  "ttl_cache",
  "url",
  "zeroize",
-]
-
-[[package]]
-name = "iroh-base"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fd98293ce8e85e6b4f0ce09af7c6bb860f2fece8fcf9238d6e628f1e163e27a"
-dependencies = [
- "anyhow",
- "data-encoding",
- "derive_more",
- "hex",
- "iroh-blake3",
- "postcard",
- "serde",
- "thiserror 2.0.6",
- "url",
 ]
 
 [[package]]
@@ -2128,6 +2130,8 @@ dependencies = [
  "iroh-metrics",
  "iroh-net-report",
  "iroh-quinn",
+ "iroh-relay",
+ "netwatch",
  "pkarr",
  "portable-atomic",
  "portmapper",
@@ -2172,6 +2176,7 @@ dependencies = [
 [[package]]
 name = "iroh-net-report"
 version = "0.29.0"
+source = "git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify#26f7e0a82e8a9ff6537fb5db1bedb1c75767b851"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2179,7 +2184,7 @@ dependencies = [
  "futures-buffered",
  "futures-lite 2.5.0",
  "hickory-resolver",
- "iroh-base 0.29.0",
+ "iroh-base 0.29.0 (git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify)",
  "iroh-metrics",
  "iroh-quinn",
  "iroh-relay",
@@ -2248,6 +2253,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "0.29.0"
+source = "git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify#26f7e0a82e8a9ff6537fb5db1bedb1c75767b851"
 dependencies = [
  "anyhow",
  "base64",
@@ -2266,7 +2272,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "iroh-base 0.29.0",
+ "iroh-base 0.29.0 (git+https://github.com/n0-computer/iroh.git?branch=ramfox/net-report-simplify)",
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
