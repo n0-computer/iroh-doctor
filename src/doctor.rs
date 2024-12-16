@@ -360,7 +360,7 @@ async fn report(
     icmp_v4: bool,
     icmp_v6: bool,
 ) -> anyhow::Result<()> {
-    let mut opts = ReportOptions::empty()
+    let mut opts = ReportOptions::disabled()
         .icmp_v4(icmp_v4)
         .icmp_v6(icmp_v6)
         .https(https);
