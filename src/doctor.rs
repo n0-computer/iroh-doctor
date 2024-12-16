@@ -360,16 +360,10 @@ async fn report(
     icmp_v4: bool,
     icmp_v6: bool,
 ) -> anyhow::Result<()> {
-    let mut opts = ReportOptions::empty();
-    if https {
-        opts = opts.enable_https()
-    }
-    if icmp_v4 {
-        opts = opts.enable_icmp_v4()
-    }
-    if icmp_v6 {
-        opts = opts.enable_icmp_v6()
-    }
+    let mut opts = ReportOptions::empty()
+        .icmp_v4(icmp_v4)
+        .icmp_v6(icmp_v6)
+        .https(https);
 
     let port_mapper = portmapper::Client::default();
     let dns_resolver = default_resolver().clone();

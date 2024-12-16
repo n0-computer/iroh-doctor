@@ -21,7 +21,7 @@ futures-lite = "2.3.0"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 iroh = { version = "0.29.0", features = ["metrics"] }
-iroh-net-report = "0.29.0"
+iroh-net-report = { version = "0.29.0", features = ["stun-utils"] }
 iroh-metrics = { version = "0.29.0" }
 iroh-relay = "0.29.0"
 netwatch = { version = "0.2.0" }
@@ -52,5 +52,5 @@ url = "2.5.2"
 iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "ramfox/net-report-simplify"}
 # iroh-metrics = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
 # portmapper = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
-iroh-net-report = { git = "https://github.com/n0-computer/iroh.git", branch = "ramfox/net-report-simplify"}
+iroh-net-report = { git = "https://github.com/n0-computer/iroh.git", branch = "ramfox/net-report-simplify", features = ["stun-utils"]}
 iroh-relay = { git = "https://github.com/n0-computer/iroh.git", branch = "ramfox/net-report-simplify"}
