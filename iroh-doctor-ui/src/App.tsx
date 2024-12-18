@@ -33,7 +33,22 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-start p-8 font-space">
+    <div className="min-h-screen flex flex-col items-center justify-start p-8 font-space"
+      style={screen === 'scanning' ? {
+        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+        clipPath: `polygon(
+          /* Outer rectangle (the full one) */
+          0 0, 0 100%, 100% 100%, 100% 0,
+          /* Back to the top left corner */
+          0 0,
+          /* Inner rectangle (the cutout) */
+          10% 25%, 90% 25%, 90% 75%, 10% 75%,
+          /* Back to the top left corner of the inner rectangle */
+          10% 25%
+        )`
+      } : {
+        backgroundColor: 'white',
+      }}>
       <div className="w-full max-w-md">
         <h1 className="text-[2.5rem] leading-tight font-koulen text-center mb-12 text-irohGray-900">
           iroh doctor
