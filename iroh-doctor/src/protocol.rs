@@ -134,7 +134,46 @@ pub async fn active_side<G: GuiExt>(
             let _d = echo_test(&connection, config, pb).await?;
         }
     }
+
+    // Close the connection gracefully.
+    // We're always the ones last receiving data, because
+    // `echo_test` waits for data on the connection as the last thing.
+    connection.close(0u32.into(), b"done");
+    connection.closed().await;
+
     Ok(())
+}
+
+/// Accepts connections and answers requests (echo, drain or send) as passive side.
+pub async fn passive_side(gui: impl GuiExt, connection: Connection) -> anyhow::Result<()> {
+    let conn = connection.clone();
+    let accept_loop = async move {
+        let result = loop {
+            match conn.accept_bi().await {
+                Ok((send, recv)) => {
+                    if let Err(cause) = handle_test_request(send, recv, &gui).await {
+                        eprintln!("Error handling test request {cause}");
+                    }
+                }
+                Err(cause) => {
+                    eprintln!("error accepting bidi stream {cause}");
+                    break Err(cause.into());
+                }
+            };
+        };
+
+        conn.close(0u32.into(), b"internal err");
+        conn.closed().await;
+        eprintln!("Connection closed.");
+
+        result
+    };
+    let conn_closed = async move {
+        connection.closed().await;
+        eprintln!("Connection closed.");
+        anyhow::Ok(())
+    };
+    futures_lite::future::race(conn_closed, accept_loop).await
 }
 
 /// Sends a test request in a connection.
