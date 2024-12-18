@@ -3,15 +3,11 @@ import { useState } from 'react';
 interface ConnectingScreenProps {
   onBack: () => void;
   onScanClick: () => void;
+  onConnect: (nodeId: string) => void;
 }
 
-export function ConnectingScreen({ onBack, onScanClick }: ConnectingScreenProps) {
+export function ConnectingScreen({ onBack, onScanClick, onConnect }: ConnectingScreenProps) {
   const [nodeId, setNodeId] = useState('');
-
-  const handleConnect = () => {
-    // TODO: Implement connection logic
-    console.log('Connecting to:', nodeId);
-  };
 
   return (
     <div className="w-full">
@@ -38,7 +34,7 @@ export function ConnectingScreen({ onBack, onScanClick }: ConnectingScreenProps)
         </div>
 
         <button
-          onClick={handleConnect}
+          onClick={() => onConnect(nodeId)}
           className="w-full p-3 px-4 transition bg-irohGray-800 text-irohPurple-500 uppercase hover:bg-irohGray-700 hover:text-gray-200 font-medium"
         >
           Connect

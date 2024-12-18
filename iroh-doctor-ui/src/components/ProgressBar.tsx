@@ -19,34 +19,6 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(2).replace(/\.?0+$/, '')} ${units[unitIndex]}`;
 }
 
-export class ProgressBarWrapper {
-  private setMessage: (msg: string) => void;
-  private setPosition: (pos: number) => void;
-  private setLength: (len: number) => void;
-
-  constructor(
-    setMessage: (msg: string) => void,
-    setPosition: (pos: number) => void,
-    setLength: (len: number) => void
-  ) {
-    this.setMessage = setMessage;
-    this.setPosition = setPosition;
-    this.setLength = setLength;
-  }
-
-  set_message(msg: string) {
-    this.setMessage(msg);
-  }
-
-  set_position(pos: number) {
-    this.setPosition(pos);
-  }
-
-  set_length(len: number) {
-    this.setLength(len);
-  }
-}
-
 export const ProgressBar: React.FC<ProgressBarProps> = ({ message, position, length }) => {
   const percentage = length > 0 ? (position / length) * 100 : 0;
   

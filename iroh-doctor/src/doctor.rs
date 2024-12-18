@@ -24,7 +24,7 @@ use iroh::{
     defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::default_resolver,
-    endpoint::{self, Connection, ConnectionTypeStream, RemoteInfo},
+    endpoint::{self, ConnectionTypeStream, RemoteInfo},
     key::{PublicKey, SecretKey},
     metrics::MagicsockMetrics,
     relay::RelayUrl,
@@ -387,23 +387,6 @@ impl GuiExt for Gui {
     }
 }
 
-/// Accepts connections and answers requests (echo, drain or send) as passive side.
-async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
-    loop {
-        match connection.accept_bi().await {
-            Ok((send, recv)) => {
-                if let Err(cause) = protocol::handle_test_request(send, recv, &gui).await {
-                    eprintln!("Error handling test request {cause}");
-                }
-            }
-            Err(cause) => {
-                eprintln!("error accepting bidi stream {cause}");
-                break Err(cause.into());
-            }
-        };
-    }
-}
-
 /// Configures a relay map with some default values.
 fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_STUN_PORT;
@@ -476,7 +459,7 @@ async fn connect(
                 log_connection_changes(gui.mp.clone(), node_id, stream);
             }
 
-            if let Err(cause) = passive_side(gui, connection).await {
+            if let Err(cause) = protocol::passive_side(gui, connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }

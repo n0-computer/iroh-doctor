@@ -1,19 +1,20 @@
 import { useState, useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import './styles.css'
+import { startAcceptingConnections, connectToNode } from './bindings'
 import { AcceptingConnScreen } from './components/AcceptingConnScreen'
 import { ConnectingScreen } from './components/ConnectingScreen'
-import { startAcceptingConnections } from './bindings'
 import { QrScannerScreen } from './components/QrScannerScreen'
+import { AcceptedConnScreen } from './components/AcceptedConnScreen'
 
 function App() {
-  const [screen, setScreen] = useState<'home' | 'accepting' | 'connecting' | 'scanning'>('home')
+  const [screen, setScreen] = useState<'home' | 'accepting' | 'connecting' | 'scanning' | 'connected'>('home')
   const [connectionString, setConnectionString] = useState<string>('')
   
   useEffect(() => {
     // Listen for connection accepted event
     const unlisten = listen('connection-accepted', () => {
-      setScreen('connecting');
+      setScreen('connected');
     });
 
     return () => {
@@ -29,6 +30,17 @@ function App() {
     } catch (err) {
       console.error('Failed to start accepting connections:', err);
       // TODO: Show error to user
+    }
+  };
+
+  const handleConnect = async (nodeId: string) => {
+    try {
+      setScreen('connected');
+      await connectToNode(nodeId);
+    } catch (err) {
+      console.error('Failed to connect:', err);
+      // TODO: Show error to user
+      setScreen('home');
     }
   };
 
@@ -54,7 +66,27 @@ function App() {
           iroh doctor
         </h1>
         
-        {screen === 'home' ? (
+        {screen === 'accepting' ? (
+          <AcceptingConnScreen 
+            connectionString={connectionString}
+            onBack={() => setScreen('home')}
+          />
+        ) : screen === 'connecting' ? (
+          <ConnectingScreen 
+            onBack={() => setScreen('home')} 
+            onScanClick={() => setScreen('scanning')}
+            onConnect={handleConnect}
+          />
+        ) : screen ==='scanning' ? (
+          <QrScannerScreen 
+            onBack={() => setScreen('connecting')}
+            onScan={handleConnect}
+          />
+        ) : screen === 'connected' ? (
+          <AcceptedConnScreen 
+            onBack={() => setScreen('home')}
+          />
+        ) : /* screen === 'home' */ 
           <div className="flex-col space-y-3">
             <button 
               className="w-full my-4 p-3 px-4 transition bg-irohGray-800 text-irohPurple-500 uppercase hover:bg-irohGray-700 hover:text-gray-200 font-medium"
@@ -70,26 +102,7 @@ function App() {
               Connect
             </button>
           </div>
-        ) : screen === 'accepting' ? (
-          <AcceptingConnScreen 
-            connectionString={connectionString}
-            onBack={() => setScreen('home')}
-          />
-        ) : screen === 'connecting' ? (
-          <ConnectingScreen 
-            onBack={() => setScreen('home')} 
-            onScanClick={() => setScreen('scanning')}
-          />
-        ) : (
-          <QrScannerScreen 
-            onBack={() => setScreen('connecting')}
-            onScan={(nodeId) => {
-              // TODO: Implement connection logic
-              console.log('Scanned NodeId:', nodeId);
-              setScreen('connecting');
-            }}
-          />
-        )}
+        }
       </div>
     </div>
   )

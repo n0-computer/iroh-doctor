@@ -42,7 +42,7 @@ export function AcceptingConnScreen({ connectionString, onBack }: AcceptingConnS
                 value={connectionString}
                 size={280}
                 level="L"
-                includeMargin={false}
+                marginSize={0}
               />
             </div>
           </div>

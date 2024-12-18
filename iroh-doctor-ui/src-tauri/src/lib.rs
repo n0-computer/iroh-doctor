@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use iroh::{discovery::pkarr::PkarrPublisher, key::SecretKey};
+use iroh::{
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
+    key::SecretKey,
+};
 use iroh_doctor::{
     doctor,
     protocol::{self, TestConfig},
@@ -164,6 +167,44 @@ async fn accept_connections(endpoint: iroh::Endpoint, gui: TauriDoctorGui) -> Re
     Ok(())
 }
 
+#[tauri::command]
+async fn connect_to_node(
+    _app: State<'_, DoctorApp>,
+    window: Window,
+    node_id: String,
+) -> Result<(), String> {
+    // Parse the node ID
+    let node_id = node_id.parse::<iroh::NodeId>().map_err(|e| e.to_string())?;
+
+    // Generate a new random secret key
+    let secret_key = iroh::key::SecretKey::generate();
+
+    // Create the endpoint using the generated secret key
+    let endpoint = doctor::make_endpoint(
+        secret_key,
+        Some(iroh::endpoint::default_relay_mode().relay_map()),
+        Some(Box::new(DnsDiscovery::n0_dns())),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Create TauriDoctorGui with the window
+    let gui = TauriDoctorGui::new(window);
+
+    // Connect to the remote node
+    let connection = endpoint
+        .connect(node_id, &iroh_doctor::doctor::DR_RELAY_ALPN)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Run the passive side protocol
+    if let Err(e) = protocol::passive_side(gui, connection).await {
+        return Err(format!("Error in passive side: {}", e));
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     println!("hello from iroh-doctor!");
@@ -191,7 +232,10 @@ pub fn run() {
                 Ok(())
             })
         })
-        .invoke_handler(tauri::generate_handler![start_accepting_connections])
+        .invoke_handler(tauri::generate_handler![
+            start_accepting_connections,
+            connect_to_node
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { ProgressBar, ProgressBarWrapper } from './ProgressBar';
+import React, { useState, useEffect } from 'react';
+import { ProgressBar } from './ProgressBar';
 import { listen } from '@tauri-apps/api/event';
 
 interface Stats {
