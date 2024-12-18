@@ -170,6 +170,7 @@ pub fn run() {
 
     init_logging();
 
+    #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
 
     #[cfg(mobile)]

@@ -4,9 +4,10 @@ import './styles.css'
 import { AcceptingConnScreen } from './components/AcceptingConnScreen'
 import { ConnectingScreen } from './components/ConnectingScreen'
 import { startAcceptingConnections } from './bindings'
+import { QrScannerScreen } from './components/QrScannerScreen'
 
 function App() {
-  const [screen, setScreen] = useState<'home' | 'accepting' | 'connecting'>('home')
+  const [screen, setScreen] = useState<'home' | 'accepting' | 'connecting' | 'scanning'>('home')
   const [connectionString, setConnectionString] = useState<string>('')
   
   useEffect(() => {
@@ -59,8 +60,20 @@ function App() {
             connectionString={connectionString}
             onBack={() => setScreen('home')}
           />
+        ) : screen === 'connecting' ? (
+          <ConnectingScreen 
+            onBack={() => setScreen('home')} 
+            onScanClick={() => setScreen('scanning')}
+          />
         ) : (
-          <ConnectingScreen onBack={() => setScreen('home')} />
+          <QrScannerScreen 
+            onBack={() => setScreen('connecting')}
+            onScan={(nodeId) => {
+              // TODO: Implement connection logic
+              console.log('Scanned NodeId:', nodeId);
+              setScreen('connecting');
+            }}
+          />
         )}
       </div>
     </div>

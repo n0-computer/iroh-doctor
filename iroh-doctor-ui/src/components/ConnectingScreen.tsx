@@ -2,9 +2,10 @@ import { useState } from 'react';
 
 interface ConnectingScreenProps {
   onBack: () => void;
+  onScanClick: () => void;
 }
 
-export function ConnectingScreen({ onBack }: ConnectingScreenProps) {
+export function ConnectingScreen({ onBack, onScanClick }: ConnectingScreenProps) {
   const [nodeId, setNodeId] = useState('');
 
   const handleConnect = () => {
@@ -44,6 +45,7 @@ export function ConnectingScreen({ onBack }: ConnectingScreenProps) {
         </button>
 
         <button
+          onClick={onScanClick}
           className="w-full p-3 px-4 transition bg-white text-irohGray-800 uppercase hover:bg-irohGray-100 border border-irohGray-200 font-medium"
         >
           Scan QR Code Instead
