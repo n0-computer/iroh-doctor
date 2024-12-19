@@ -203,7 +203,7 @@ pub async fn send_blocks(
     Ok(())
 }
 
-/// Echoes test a connection.
+/// Runs an echo test
 pub async fn echo_test(
     connection: &Connection,
     config: &TestConfig,
@@ -225,7 +225,7 @@ pub async fn echo_test(
     Ok(duration)
 }
 
-/// Sends test a connection.
+/// Runs a send test
 pub async fn send_test(
     connection: &Connection,
     config: &TestConfig,
@@ -250,7 +250,7 @@ pub async fn send_test(
     Ok(duration)
 }
 
-/// Receives test a connection.
+/// Runs a receive test
 pub async fn recv_test(
     connection: &Connection,
     config: &TestConfig,

@@ -7,7 +7,10 @@ use iroh_doctor::{
     doctor,
     protocol::{self, TestConfig},
 };
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tokio::task::JoinHandle;
 
@@ -31,11 +34,19 @@ impl DoctorApp {
 #[derive(Clone)]
 struct TauriDoctorGui {
     window: Window,
+    progress_pos: Arc<AtomicU64>,
+    progress_len: Arc<AtomicU64>,
+    progress_message: Arc<Mutex<String>>,
 }
 
 impl TauriDoctorGui {
     fn new(window: Window) -> Self {
-        Self { window }
+        Self {
+            window,
+            progress_pos: Arc::new(AtomicU64::new(0)),
+            progress_len: Arc::new(AtomicU64::new(0)),
+            progress_message: Arc::new(Mutex::new(String::new())),
+        }
     }
 
     fn emit_test_stats(&self, test_type: &str, bytes: u64, duration: std::time::Duration) {
@@ -78,16 +89,41 @@ impl protocol::GuiExt for TauriDoctorGui {
 
 impl protocol::ProgressBarExt for TauriDoctorGui {
     fn set_message(&self, msg: String) {
-        let _ = self.window.emit("progress-update", ("message", msg));
+        if let Ok(mut message) = self.progress_message.lock() {
+            *message = msg;
+        }
     }
 
     fn set_position(&self, pos: u64) {
-        let _ = self.window.emit("progress-update", ("position", pos));
+        self.progress_pos.store(pos, Ordering::Relaxed);
     }
 
     fn set_length(&self, len: u64) {
-        let _ = self.window.emit("progress-update", ("length", len));
+        self.progress_len.store(len, Ordering::Relaxed);
     }
+}
+
+#[derive(serde::Serialize)]
+struct ProgressState {
+    position: u64,
+    length: u64,
+    message: String,
+}
+
+#[tauri::command]
+fn get_progress_state(app_handle: tauri::AppHandle) -> ProgressState {
+    app_handle
+        .try_state::<TauriDoctorGui>()
+        .map(|state| ProgressState {
+            position: state.progress_pos.load(Ordering::Relaxed),
+            length: state.progress_len.load(Ordering::Relaxed),
+            message: state.progress_message.lock().unwrap().clone(),
+        })
+        .unwrap_or_else(|| ProgressState {
+            position: 0,
+            length: 0,
+            message: "Pending".to_string(),
+        })
 }
 
 #[tauri::command]
@@ -234,7 +270,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             start_accepting_connections,
-            connect_to_node
+            connect_to_node,
+            get_progress_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

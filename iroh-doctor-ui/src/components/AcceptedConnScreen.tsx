@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ProgressBar } from './ProgressBar';
 import { listen } from '@tauri-apps/api/event';
+import { getProgressState } from '../bindings';
 
 interface Stats {
   send: string;
@@ -19,22 +20,24 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
   const [stats, setStats] = useState<Stats>({ send: '', recv: '', echo: '' });
   const [isComplete, setIsComplete] = useState(false);
 
-  useEffect(() => {
-    // Listen for progress bar updates
-    const progressUnlisten = listen<[string, any]>('progress-update', ({ payload }) => {
-      const [type, value] = payload;
-      switch (type) {
-        case 'message':
-          setMessage(value);
-          break;
-        case 'position':
-          setPosition(value);
-          break;
-        case 'length':
-          setLength(value);
-          break;
+  // Create a polling function using requestAnimationFrame
+  const pollProgress = useCallback(async () => {
+    if (!isComplete) {
+      try {
+        const state = await getProgressState();
+        setMessage(state.message);
+        setPosition(state.position);
+        setLength(state.length);
+      } catch (error) {
+        console.error('Failed to get progress state:', error);
       }
-    });
+      requestAnimationFrame(pollProgress);
+    }
+  }, [isComplete]);
+
+  useEffect(() => {
+    // Start polling progress
+    requestAnimationFrame(pollProgress);
 
     // Listen for test statistics
     const statsUnlisten = listen<[string, string]>('test-stats', ({ payload }) => {
@@ -51,11 +54,10 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
 
     // Cleanup listeners
     return () => {
-      progressUnlisten.then(unlisten => unlisten());
       statsUnlisten.then(unlisten => unlisten());
       completeUnlisten.then(unlisten => unlisten());
     };
-  }, []);
+  }, [pollProgress]);
 
   return (
     <div className="w-full">
