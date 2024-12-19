@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 pub struct DoctorApp {
     accept_task: Mutex<Option<JoinHandle<()>>>,
     secret_key: SecretKey,
+    gui: Mutex<Option<TauriDoctorGui>>,
 }
 
 impl DoctorApp {
@@ -27,7 +28,14 @@ impl DoctorApp {
         Ok(Self {
             accept_task: Mutex::new(None),
             secret_key,
+            gui: Mutex::new(None),
         })
+    }
+
+    fn set_gui(&self, gui: TauriDoctorGui) {
+        if let Ok(mut state) = self.gui.lock() {
+            *state = Some(gui);
+        }
     }
 }
 
@@ -111,13 +119,15 @@ struct ProgressState {
 }
 
 #[tauri::command]
-fn get_progress_state(app_handle: tauri::AppHandle) -> ProgressState {
-    app_handle
-        .try_state::<TauriDoctorGui>()
-        .map(|state| ProgressState {
-            position: state.progress_pos.load(Ordering::Relaxed),
-            length: state.progress_len.load(Ordering::Relaxed),
-            message: state.progress_message.lock().unwrap().clone(),
+fn get_progress_state(app: State<'_, DoctorApp>) -> ProgressState {
+    app.gui
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|gui| ProgressState {
+            position: gui.progress_pos.load(Ordering::Relaxed),
+            length: gui.progress_len.load(Ordering::Relaxed),
+            message: gui.progress_message.lock().unwrap().clone(),
         })
         .unwrap_or_else(|| ProgressState {
             position: 0,
@@ -141,8 +151,9 @@ async fn start_accepting_connections(
     .map_err(|e| e.to_string())?;
     let node_id = endpoint.node_id();
 
-    // Create TauriDoctorGui with the window
+    // Create TauriDoctorGui and store it in DoctorApp
     let gui = TauriDoctorGui::new(window.clone());
+    app.set_gui(gui.clone());
 
     // Spawn the connection acceptance task
     let handle = tokio::spawn(async move {
@@ -205,7 +216,7 @@ async fn accept_connections(endpoint: iroh::Endpoint, gui: TauriDoctorGui) -> Re
 
 #[tauri::command]
 async fn connect_to_node(
-    _app: State<'_, DoctorApp>,
+    app: State<'_, DoctorApp>,
     window: Window,
     node_id: String,
 ) -> Result<(), String> {
@@ -224,8 +235,9 @@ async fn connect_to_node(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Create TauriDoctorGui with the window
-    let gui = TauriDoctorGui::new(window);
+    // Create TauriDoctorGui and store it in DoctorApp
+    let gui = TauriDoctorGui::new(window.clone());
+    app.set_gui(gui.clone());
 
     // Connect to the remote node
     let connection = endpoint

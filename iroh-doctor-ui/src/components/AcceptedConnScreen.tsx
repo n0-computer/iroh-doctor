@@ -4,9 +4,9 @@ import { listen } from '@tauri-apps/api/event';
 import { getProgressState } from '../bindings';
 
 interface Stats {
-  send: string;
-  recv: string;
-  echo: string;
+  send?: string;
+  recv?: string;
+  echo?: string;
 }
 
 interface AcceptedConnScreenProps {
@@ -17,7 +17,7 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
   const [message, setMessage] = useState<string>('');
   const [position, setPosition] = useState<number>(0);
   const [length, setLength] = useState<number>(0);
-  const [stats, setStats] = useState<Stats>({ send: '', recv: '', echo: '' });
+  const [stats, setStats] = useState<Stats>({});
   const [isComplete, setIsComplete] = useState(false);
 
   // Create a polling function using requestAnimationFrame
@@ -36,28 +36,27 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
   }, [isComplete]);
 
   useEffect(() => {
-    // Start polling progress
     requestAnimationFrame(pollProgress);
 
-    // Listen for test statistics
     const statsUnlisten = listen<[string, string]>('test-stats', ({ payload }) => {
       const [type, value] = payload;
       setStats(prev => ({ ...prev, [type]: value }));
     });
 
-    // Listen for test completion
     const completeUnlisten = listen('test-complete', () => {
       setIsComplete(true);
-      setLength(0); // Remove progress bar
+      setLength(0);
       setMessage('');
     });
 
-    // Cleanup listeners
     return () => {
       statsUnlisten.then(unlisten => unlisten());
       completeUnlisten.then(unlisten => unlisten());
     };
   }, [pollProgress]);
+
+  // Get the stats that have values, in the order they were received
+  const completedStats = Object.entries(stats).filter(([_, value]) => value);
 
   return (
     <div className="w-full">
@@ -70,43 +69,18 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
 
       <h2 className="text-2xl font-koulen mb-8">Connection Accepted</h2>
       
-      {/* Stats display */}
+      {/* Stats display - show all completed stats in order */}
       <div className="space-y-4">
-        {stats.send && (
-          <div className="flex justify-between items-center">
-            <span className="text-sm uppercase text-irohGray-500">Send</span>
-            <span className="font-spaceMono">{stats.send}</span>
+        {completedStats.map(([type, value]) => (
+          <div key={type} className="flex justify-between items-center">
+            <span className="text-sm uppercase text-irohGray-500">{type}</span>
+            <span className="font-spaceMono">{value}</span>
           </div>
-        )}
-        
-        {/* Active progress bar or recv stats */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center">
-            <span className="text-sm uppercase text-irohGray-500">Recv</span>
-            {stats.recv ? (
-              <span className="font-spaceMono">{stats.recv}</span>
-            ) : null}
-          </div>
-          {!isComplete && length > 0 && message === 'recv' && (
-            <ProgressBar
-              message={message}
-              position={position}
-              length={length}
-            />
-          )}
-        </div>
-
-        {/* Echo stats */}
-        {stats.echo && (
-          <div className="flex justify-between items-center">
-            <span className="text-sm uppercase text-irohGray-500">Echo</span>
-            <span className="font-spaceMono">{stats.echo}</span>
-          </div>
-        )}
+        ))}
       </div>
       
-      {/* Active progress bar for send/echo */}
-      {!isComplete && length > 0 && message !== 'recv' && (
+      {/* Progress bar shown at bottom while test is running */}
+      {!isComplete && length > 0 && (
         <div className="mt-4">
           <ProgressBar
             message={message}
