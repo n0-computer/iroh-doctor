@@ -16,6 +16,7 @@ use tokio::task::JoinHandle;
 
 pub struct DoctorApp {
     accept_task: Mutex<Option<JoinHandle<()>>>,
+    connect_task: Mutex<Option<JoinHandle<()>>>,
     secret_key: SecretKey,
     gui: Mutex<Option<TauriDoctorGui>>,
 }
@@ -27,6 +28,7 @@ impl DoctorApp {
 
         Ok(Self {
             accept_task: Mutex::new(None),
+            connect_task: Mutex::new(None),
             secret_key,
             gui: Mutex::new(None),
         })
@@ -144,7 +146,7 @@ async fn start_accepting_connections(
     // Create the endpoint using the stored secret key
     let endpoint = doctor::make_endpoint(
         app.secret_key.clone(),
-        Some(iroh::endpoint::default_relay_mode().relay_map()),
+        None,
         Some(Box::new(PkarrPublisher::n0_dns(app.secret_key.clone()))),
     )
     .await
@@ -229,13 +231,9 @@ async fn connect_to_node(
     let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
 
     // Create the endpoint using the generated secret key
-    let endpoint = doctor::make_endpoint(
-        secret_key,
-        Some(iroh::endpoint::default_relay_mode().relay_map()),
-        Some(Box::new(DnsDiscovery::n0_dns())),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let endpoint = doctor::make_endpoint(secret_key, None, Some(Box::new(DnsDiscovery::n0_dns())))
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Create TauriDoctorGui and store it in DoctorApp
     let gui = TauriDoctorGui::new(window.clone());
@@ -248,9 +246,17 @@ async fn connect_to_node(
         .map_err(|e| e.to_string())?;
 
     // Run the passive side protocol
-    if let Err(e) = protocol::passive_side(gui, connection).await {
-        return Err(format!("Error in passive side: {}", e));
+    let handle = tokio::spawn(async move {
+        if let Err(e) = protocol::passive_side(gui, connection).await {
+            eprintln!("Error in passive side: {}", e);
+        }
+    });
+
+    let mut connect_task = app.connect_task.lock().map_err(|e| e.to_string())?;
+    if let Some(task) = connect_task.take() {
+        task.abort();
     }
+    *connect_task = Some(handle);
 
     Ok(())
 }

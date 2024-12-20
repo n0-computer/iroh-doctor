@@ -10,7 +10,8 @@ export function ErrorScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   const { message, details } = (location.state as ErrorScreenState) || {
-    message: 'An unknown error occurred'
+    message: 'An unknown error occurred',
+    details: '<No details available>'
   };
 
   return (
@@ -35,4 +36,4 @@ export function ErrorScreen() {
       </div>
     </ScreenWrapper>
   );
-} 
+}
