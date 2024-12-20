@@ -13,8 +13,8 @@ function HomeScreen() {
 
   const handleAcceptConnections = async () => {
     try {
-      const connString = await startAcceptingConnections();
-      navigate('/accepting', { state: { connectionString: connString } });
+      const nodeId = await startAcceptingConnections();
+      navigate('/accepting', { state: { nodeId } });
     } catch (err) {
       console.error('Failed to start accepting connections:', err);
       // TODO: Show error to user
@@ -89,7 +89,7 @@ function AppContent() {
           <Route 
             path="/accepting" 
             element={<AcceptingConnScreen 
-              connectionString={(location.state as { connectionString: string })?.connectionString || ''}
+              nodeId={(location.state as { nodeId: string })?.nodeId || ''}
               onBack={() => navigate('/')}
             />} 
           />

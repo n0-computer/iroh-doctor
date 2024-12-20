@@ -2,15 +2,15 @@ import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 
 interface AcceptingConnScreenProps {
-  connectionString: string;
+  nodeId: string;
   onBack: () => void;
 }
 
-export function AcceptingConnScreen({ connectionString, onBack }: AcceptingConnScreenProps) {
+export function AcceptingConnScreen({ nodeId, onBack }: AcceptingConnScreenProps) {
   const [copied, setCopied] = useState(false)
   
   // Construct the full CLI command
-  const fullCommand = `iroh-doctor connect ${connectionString}`
+  const fullCommand = `iroh-doctor connect ${nodeId}`
 
   const copyToClipboard = async () => {
     try {
@@ -39,7 +39,7 @@ export function AcceptingConnScreen({ connectionString, onBack }: AcceptingConnS
           <div className="w-full flex justify-center">
             <div className="bg-white p-3 inline-block">
               <QRCodeSVG 
-                value={connectionString}
+                value={nodeId}
                 size={280}
                 level="L"
                 marginSize={0}
