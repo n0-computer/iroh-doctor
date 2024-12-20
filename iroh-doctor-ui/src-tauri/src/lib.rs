@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
-    key::SecretKey,
+    SecretKey,
 };
 use iroh_doctor::{
     doctor,
@@ -23,7 +23,7 @@ pub struct DoctorApp {
 impl DoctorApp {
     pub async fn new(app: &AppHandle) -> Result<Self> {
         let dir = app.path().app_data_dir()?.join("iroh-doctor-ui");
-        let secret_key = iroh_node_util::load_secret_key(dir.join("secret.key")).await?;
+        let secret_key = iroh_node_util::fs::load_secret_key(dir.join("secret.key")).await?;
 
         Ok(Self {
             accept_task: Mutex::new(None),
@@ -224,7 +224,7 @@ async fn connect_to_node(
     let node_id = node_id.parse::<iroh::NodeId>().map_err(|e| e.to_string())?;
 
     // Generate a new random secret key
-    let secret_key = iroh::key::SecretKey::generate();
+    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
 
     // Create the endpoint using the generated secret key
     let endpoint = doctor::make_endpoint(

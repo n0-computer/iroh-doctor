@@ -24,11 +24,10 @@ use iroh::{
     defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::default_resolver,
-    endpoint::{self, ConnectionTypeStream, RemoteInfo},
-    key::{PublicKey, SecretKey},
+    endpoint::{self, ConnectionType, RemoteInfo},
     metrics::MagicsockMetrics,
-    relay::RelayUrl,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode,
+    watchable::WatcherStream,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
@@ -112,7 +111,7 @@ pub enum Commands {
     /// Connect to an iroh doctor accept node.
     Connect {
         /// Hexadecimal node id of the node to connect to.
-        dial: PublicKey,
+        dial: NodeId,
 
         /// One or more remote endpoints to use when dialing.
         #[clap(long)]
@@ -217,7 +216,7 @@ async fn report(
     };
     println!("getting report using relay map {dm:#?}");
 
-    let r = client.get_report(dm, None, None).await?;
+    let r = client.get_report(dm, None, None, None).await?;
     println!("{r:#?}");
     Ok(())
 }
@@ -429,10 +428,12 @@ pub async fn make_endpoint(
     };
     let endpoint = endpoint.bind().await?;
 
-    tokio::time::timeout(Duration::from_secs(10), endpoint.direct_addresses().next())
-        .await
-        .context("wait for relay connection")?
-        .context("no endpoints")?;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        endpoint.direct_addresses().initialized(),
+    )
+    .await
+    .context("wait for relay connection")??;
 
     Ok(endpoint)
 }
@@ -453,10 +454,10 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            let maybe_stream = endpoint.conn_type_stream(node_id);
+            let maybe_watcher = endpoint.conn_type(node_id);
             let gui = Gui::new(endpoint, node_id);
-            if let Ok(stream) = maybe_stream {
-                log_connection_changes(gui.mp.clone(), node_id, stream);
+            if let Ok(watcher) = maybe_watcher {
+                log_connection_changes(gui.mp.clone(), node_id, watcher.stream());
             }
 
             if let Err(cause) = protocol::passive_side(gui, connection).await {
@@ -488,11 +489,7 @@ pub async fn accept(
     discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
-    let direct_addresses = endpoint
-        .direct_addresses()
-        .next()
-        .await
-        .context("no direct addresses")?;
+    let direct_addresses = endpoint.direct_addresses().initialized().await?;
     let addrs = direct_addresses
         .iter()
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
@@ -504,7 +501,7 @@ pub async fn accept(
         secret_key.public(),
         addrs,
     );
-    if let Some(relay_url) = endpoint.home_relay() {
+    if let Some(relay_url) = endpoint.home_relay().get()? {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
@@ -541,8 +538,12 @@ pub async fn accept(
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        if let Ok(stream) = endpoint.conn_type_stream(remote_peer_id) {
-                            log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
+                        if let Ok(watcher) = endpoint.conn_type(remote_peer_id) {
+                            log_connection_changes(
+                                gui.mp.clone(),
+                                remote_peer_id,
+                                watcher.stream(),
+                            );
                         }
                         let res = protocol::active_side(connection, &config, Some(&gui)).await;
                         gui.clear();
@@ -570,7 +571,11 @@ pub async fn accept(
 }
 
 /// Logs the connection changes to the multiprogress.
-fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
+fn log_connection_changes(
+    pb: MultiProgress,
+    node_id: NodeId,
+    mut stream: WatcherStream<ConnectionType>,
+) {
     tokio::spawn(async move {
         let start = Instant::now();
         while let Some(conn_type) = stream.next().await {
@@ -632,7 +637,7 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 
 /// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
 async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
-    let key = SecretKey::generate();
+    let key = SecretKey::generate(rand::rngs::OsRng);
     if config.relay_nodes.is_empty() {
         println!("No relay nodes specified in the config file.");
     }
@@ -641,7 +646,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::relay::HttpClientBuilder::new(node.url.clone())
+        let client = iroh_relay::HttpClientBuilder::new(node.url.clone())
             .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
@@ -753,7 +758,7 @@ impl std::fmt::Display for NodeDetails {
 /// Creates a [`SecretKey`] from a [`SecretKeyOption`].
 fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     Ok(match secret_key {
-        SecretKeyOption::Random => SecretKey::generate(),
+        SecretKeyOption::Random => SecretKey::generate(rand::rngs::OsRng),
         SecretKeyOption::Hex(hex) => {
             let bytes = hex::decode(hex)?;
             SecretKey::try_from(&bytes[..])?
@@ -762,16 +767,27 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
             let path = iroh_data_root()?.join("keypair");
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
-                SecretKey::try_from_openssh(bytes)?
+                try_secret_key_from_openssh(bytes)?
             } else {
                 println!(
                     "Local key not found in {}. Using random key.",
                     path.display()
                 );
-                SecretKey::generate()
+                SecretKey::generate(rand::rngs::OsRng)
             }
         }
     })
+}
+
+/// Deserialise a SecretKey from OpenSSH format.
+pub fn try_secret_key_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<SecretKey> {
+    let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
+    match ser_key.key_data() {
+        ssh_key::private::KeypairData::Ed25519(kp) => {
+            Ok(SecretKey::from_bytes(&kp.private.to_bytes()))
+        }
+        _ => anyhow::bail!("invalid key format"),
+    }
 }
 
 /// Creates a [`Discovery`] service from a [`SecretKey`].
@@ -1166,11 +1182,7 @@ impl PlotterApp {
                     return;
                 }
                 let data = req.unwrap().text().await.unwrap();
-                let metrics_response = iroh_metrics::parse_prometheus_metrics(&data);
-                if metrics_response.is_err() {
-                    return;
-                }
-                metrics_response.unwrap()
+                iroh_metrics::parse_prometheus_metrics(&data)
             }
             false => {
                 if self.file_data.len() == 1 {

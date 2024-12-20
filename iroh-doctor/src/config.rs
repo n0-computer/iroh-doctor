@@ -223,7 +223,7 @@ mod tests {
             url: Url::parse("https://example.org./").unwrap().into(),
             stun_only: false,
             stun_port: 123,
-            quic: Some(iroh_base::relay_map::QuicConfig { port: 7842 }),
+            quic: Some(iroh_relay::RelayQuicConfig { port: 7842 }),
         };
         assert_eq!(config.relay_nodes, vec![expected]);
     }
