@@ -9,7 +9,10 @@ interface AcceptingConnScreenProps {
 export function AcceptingConnScreen({ nodeId, onBack }: AcceptingConnScreenProps) {
   const [copied, setCopied] = useState(false)
   
-  // Construct the full CLI command
+  // Convert hex nodeId to decimal
+  const nodeIdDecimal = BigInt(`0x${nodeId}`).toString()
+  
+  // Construct the full CLI command - keep using hex for the command
   const fullCommand = `iroh-doctor connect ${nodeId}`
 
   const copyToClipboard = async () => {
@@ -39,7 +42,7 @@ export function AcceptingConnScreen({ nodeId, onBack }: AcceptingConnScreenProps
           <div className="w-full flex justify-center">
             <div className="bg-white p-3 inline-block">
               <QRCodeSVG 
-                value={nodeId}
+                value={nodeIdDecimal}
                 size={280}
                 level="L"
                 marginSize={0}

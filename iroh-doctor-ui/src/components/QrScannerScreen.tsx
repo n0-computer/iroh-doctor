@@ -14,7 +14,10 @@ export function QrScannerScreen({ onBack, onScan }: QrScannerScreenProps) {
         if (result === 'granted') {
           const scan = await BarcodeScanner.scan({ windowed: true });
           if (scan.content) {
-            onScan(scan.content);
+            const hexString = BigInt(scan.content)
+              .toString(16)
+              .padStart(64, '0');
+            onScan(hexString);
           }
         }
       } catch (err) {
