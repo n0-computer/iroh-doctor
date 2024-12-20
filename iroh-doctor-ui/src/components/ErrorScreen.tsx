@@ -16,24 +16,22 @@ export function ErrorScreen() {
   return (
     <ScreenWrapper onBack={() => navigate('/')}>
       <div className="flex-col space-y-4">
-        <h2 className="text-xl font-semibold text-red-600">Error</h2>
-        
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="font-medium text-red-800 mb-2">{message}</p>
+        <div className="bg-red-50 border border-red-200">
+          <h2 className="text-lg p-3 font-medium text-red-800 border-b border-red-200">
+            Error: {message}
+          </h2>
           
           {details && (
-            <div className="bg-red-100 rounded mt-2 p-3">
-              <pre className="whitespace-pre-wrap font-mono text-sm text-red-700 overflow-auto max-h-[200px]">
-                {details}
-              </pre>
-            </div>
+            <pre className="p-3 font-mono text-sm text-red-700 bg-red-100 overflow-auto whitespace-nowrap leading-6 h-36">
+              {details}
+            </pre>
           )}
         </div>
 
-        <div className="text-sm text-gray-600 mt-4">
+        <p className="text-sm text-gray-600">
           Try going back and attempting the action again. If the problem persists, 
           please report this issue.
-        </div>
+        </p>
       </div>
     </ScreenWrapper>
   );
