@@ -151,6 +151,8 @@ async fn start_accepting_connections(
     .map_err(|e| e.to_string())?;
     let node_id = endpoint.node_id();
 
+    tracing::info!(node_id = node_id.to_string(), "Started endpoint");
+
     // Create TauriDoctorGui and store it in DoctorApp
     let gui = TauriDoctorGui::new(window.clone());
     app.set_gui(gui.clone());

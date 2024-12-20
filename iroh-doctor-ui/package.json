@@ -18,7 +18,8 @@
     "@tauri-apps/plugin-shell": "^2",
     "qrcode.react": "^4.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.0.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
