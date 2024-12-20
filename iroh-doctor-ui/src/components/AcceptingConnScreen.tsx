@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import { ScreenWrapper } from './ScreenWrapper';
 
 interface AcceptingConnScreenProps {
   nodeId: string;
@@ -26,14 +27,7 @@ export function AcceptingConnScreen({ nodeId, onBack }: AcceptingConnScreenProps
   }
 
   return (
-    <div className="w-full">
-      <button 
-        onClick={onBack}
-        className="mb-8 text-irohGray-500 hover:text-irohGray-800 transition flex items-center gap-2"
-      >
-        ← Back
-      </button>
-
+    <ScreenWrapper onBack={onBack} style={{ backgroundColor: 'white' }}>
       <div className="space-y-8">
         <div className="space-y-2">
           <label className="text-sm uppercase text-irohGray-500">
@@ -70,6 +64,6 @@ export function AcceptingConnScreen({ nodeId, onBack }: AcceptingConnScreenProps
           </div>
         </div>
       </div>
-    </div>
+    </ScreenWrapper>
   )
 } 

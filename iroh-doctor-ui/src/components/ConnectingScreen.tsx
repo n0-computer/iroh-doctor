@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ScreenWrapper } from './ScreenWrapper';
 
 interface ConnectingScreenProps {
   onBack: () => void;
@@ -10,14 +11,7 @@ export function ConnectingScreen({ onBack, onScanClick, onConnect }: ConnectingS
   const [nodeId, setNodeId] = useState('');
 
   return (
-    <div className="w-full">
-      <button 
-        onClick={onBack}
-        className="mb-8 text-irohGray-500 hover:text-irohGray-800 transition flex items-center gap-2"
-      >
-        ← Back
-      </button>
-
+    <ScreenWrapper onBack={onBack} style={{ backgroundColor: 'white' }}>
       <div className="flex flex-col space-y-6">
         <div className="flex flex-col space-y-2">
           <label htmlFor="nodeId" className="text-sm text-irohGray-600">
@@ -47,6 +41,6 @@ export function ConnectingScreen({ onBack, onScanClick, onConnect }: ConnectingS
           Scan QR Code Instead
         </button>
       </div>
-    </div>
+    </ScreenWrapper>
   );
 } 

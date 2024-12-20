@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ProgressBar } from './ProgressBar';
 import { listen } from '@tauri-apps/api/event';
 import { getProgressState } from '../bindings';
+import { ScreenWrapper } from './ScreenWrapper';
 
 interface Stats {
   send?: string;
@@ -59,14 +60,7 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
   const completedStats = Object.entries(stats).filter(([_, value]) => value);
 
   return (
-    <div className="w-full">
-      <button 
-        onClick={onBack}
-        className="mb-8 text-irohGray-500 hover:text-irohGray-800 transition flex items-center gap-2"
-      >
-        ← Back
-      </button>
-
+    <ScreenWrapper onBack={onBack} style={{ backgroundColor: 'white' }}>
       <h2 className="text-2xl font-koulen mb-8">Connection Accepted</h2>
       
       {/* Stats display - show all completed stats in order */}
@@ -89,6 +83,6 @@ export const AcceptedConnScreen: React.FC<AcceptedConnScreenProps> = ({ onBack }
           />
         </div>
       )}
-    </div>
+    </ScreenWrapper>
   );
 }; 
