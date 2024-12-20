@@ -2,46 +2,13 @@ import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { listen } from '@tauri-apps/api/event'
 import './styles.css'
-import { startAcceptingConnections, connectToNode } from './bindings'
+import { connectToNode } from './bindings'
+import { HomeScreen } from './components/HomeScreen'
 import { AcceptingConnScreen } from './components/AcceptingConnScreen'
 import { ConnectingScreen } from './components/ConnectingScreen'
 import { QrScannerScreen } from './components/QrScannerScreen'
 import { AcceptedConnScreen } from './components/AcceptedConnScreen'
-import { ScreenWrapper } from './components/ScreenWrapper'
-
-function HomeScreen() {
-  const navigate = useNavigate();
-
-  const handleAcceptConnections = async () => {
-    try {
-      const nodeId = await startAcceptingConnections();
-      navigate('/accepting', { state: { nodeId } });
-    } catch (err) {
-      console.error('Failed to start accepting connections:', err);
-      // TODO: Show error to user
-    }
-  };
-
-  return (
-    <ScreenWrapper>
-      <div className="flex-col space-y-3">
-        <button 
-          className="w-full my-4 p-3 px-4 transition bg-irohGray-800 text-irohPurple-500 uppercase hover:bg-irohGray-700 hover:text-gray-200 font-medium"
-          onClick={handleAcceptConnections}
-        >
-          Accept Connections
-        </button>
-        
-        <button 
-          className="w-full my-4 p-3 px-4 transition bg-white text-irohGray-800 uppercase hover:bg-irohGray-100 border border-irohGray-200 font-medium"
-          onClick={() => navigate('/connecting')}
-        >
-          Connect
-        </button>
-      </div>
-    </ScreenWrapper>
-  );
-}
+import { ErrorScreen } from './components/ErrorScreen'
 
 function AppContent() {
   const navigate = useNavigate();
@@ -64,8 +31,12 @@ function AppContent() {
       navigate('/connected');
     } catch (err) {
       console.error('Failed to connect:', err);
-      // TODO: Show error to user
-      navigate('/');
+      navigate('/error', {
+        state: {
+          message: 'Failed to connect to node',
+          details: err instanceof Error ? err.message : String(err)
+        }
+      });
     }
   };
 
@@ -75,8 +46,8 @@ function AppContent() {
       <Route 
         path="/accepting" 
         element={<AcceptingConnScreen 
-          nodeId={(location.state as { nodeId: string })?.nodeId || ''}
           onBack={() => navigate('/')}
+          nodeId={(location.state as { nodeId: string })?.nodeId || ''}
         />} 
       />
       <Route 
@@ -100,6 +71,7 @@ function AppContent() {
           onBack={() => navigate('/')}
         />}
       />
+      <Route path="/error" element={<ErrorScreen />} />
     </Routes>
   );
 }
