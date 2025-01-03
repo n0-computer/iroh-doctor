@@ -9,11 +9,6 @@ on:
       - opened
       - labeled
 
-permissions:
-  issues: write
-  pull-requests: write
-  repository-projects: write
-
 jobs:
   add-to-project:
     name: Add to project
@@ -22,4 +17,4 @@ jobs:
       - uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/orgs/n0-computer/projects/1
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.PROJECT_PAT }}
