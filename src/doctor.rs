@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     io,
-    net::SocketAddr,
+    net::{Ipv6Addr, SocketAddr},
     num::NonZeroU16,
     path::PathBuf,
     sync::Arc,
@@ -30,13 +30,14 @@ use iroh::{
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
+use netcheck::{Options as ReportOptions, QuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::warn;
 
 use crate::{
@@ -75,13 +76,58 @@ impl std::str::FromStr for SecretKeyOption {
 pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
     /// or the settings from the config file.
+    ///
+    /// When no protocol flags are explicitly set, will run a report with all available probe
+    /// protocols
     Report {
-        /// Explicitly provided stun host. If provided, this will disable relay and just do stun.
+        /// Explicitly provided stun host. If provided, this will disable relay and just do STUN.
         #[clap(long)]
         stun_host: Option<String>,
         /// The port of the STUN server.
         #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
+        /// Run a report including a STUN probe over Ipv4
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        stun_ipv4: bool,
+        /// Run a report including a STUN probe over Ipv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        stun_ipv6: bool,
+        /// Run a report including a QUIC Address Discovery probe over Ipv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        quic_ipv4: bool,
+        /// Run a report including a QUIC Address Discovery probe over Ipv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        quic_ipv6: bool,
+        /// Run a report including an HTTPS probe
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        https: bool,
+        /// Run a report including an ICMP probe over Ipv4
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        icmp_v4: bool,
+        /// Run a report including an ICMP probe over IPv6
+        ///
+        /// When all protocol flags are false, will
+        /// run a report with all available protocols
+        #[clap(long, default_value_t = false)]
+        icmp_v6: bool,
     },
     /// Wait for incoming requests from iroh doctor connect.
     Accept {
@@ -300,28 +346,73 @@ async fn send_blocks(
 }
 
 /// Prints a client report.
+#[allow(clippy::too_many_arguments)]
 async fn report(
     stun_host: Option<String>,
     stun_port: u16,
     config: &NodeConfig,
+    mut stun_ipv4: bool,
+    stun_ipv6: bool,
+    quic_ipv4: bool,
+    quic_ipv6: bool,
+    https: bool,
+    icmp_v4: bool,
+    icmp_v6: bool,
 ) -> anyhow::Result<()> {
+    let mut opts = ReportOptions::disabled()
+        .icmp_v4(icmp_v4)
+        .icmp_v6(icmp_v6)
+        .https(https);
+
     let port_mapper = portmapper::Client::default();
     let dns_resolver = default_resolver().clone();
     let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
 
-    let dm = match stun_host {
+    let relay_map = match stun_host {
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a relay map from host name and stun port
+            stun_ipv4 = true;
             RelayMap::default_from_node(url, stun_port)
         }
         None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
-    println!("getting report using relay map {dm:#?}");
+    let cancel = CancellationToken::new();
+    if stun_ipv4 {
+        let stun_sock_v4 =
+            netcheck::bind_local_stun_socket(netwatch::IpFamily::V4, client.addr(), cancel.clone());
+        opts = opts.stun_v4(stun_sock_v4);
+    }
+    if stun_ipv6 {
+        let stun_sock_v6 =
+            netcheck::bind_local_stun_socket(netwatch::IpFamily::V6, client.addr(), cancel.clone());
+        opts = opts.stun_v6(stun_sock_v6);
+    }
 
-    let r = client.get_report(dm, None, None, None).await?;
+    if quic_ipv4 || quic_ipv6 {
+        opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
+    }
+    println!("relay map {relay_map:#?}");
+    let r = client.get_report_with_opts(relay_map, opts).await?;
     println!("{r:#?}");
+    cancel.cancel();
     Ok(())
+}
+
+/// Create a QuicConfig with a quinn Endpoint and a client configuration.
+fn create_quic_config(ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
+    let root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let client_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
+    Ok(QuicConfig {
+        ep,
+        client_config,
+        ipv4,
+        ipv6,
+    })
 }
 
 /// Contains all the GUI state.
@@ -1047,7 +1138,20 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::Report {
             stun_host,
             stun_port,
-        } => report(stun_host, stun_port, config).await,
+            stun_ipv4,
+            stun_ipv6,
+            quic_ipv4,
+            quic_ipv6,
+            https,
+            icmp_v4,
+            icmp_v6,
+        } => {
+            report(
+                stun_host, stun_port, config, stun_ipv4, stun_ipv6, quic_ipv4, quic_ipv6, https,
+                icmp_v4, icmp_v6,
+            )
+            .await
+        }
         Commands::Connect {
             dial,
             secret_key,
