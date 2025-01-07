@@ -18,6 +18,7 @@ crossterm = "0.28.1"
 derive_more = { version = "1.0.0", features = ["display"] }
 dirs-next = "2.0.0"
 futures-lite = "2.3.0"
+futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 iroh = { version = "0.30.0", features = ["metrics"] }
@@ -50,8 +51,8 @@ iroh-base = "0.30.0"
 url = "2.5.2"
 
 [patch.crates-io]
-# iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+iroh-relay = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
 # iroh-metrics = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
 # portmapper = { git = "https://github.com/n0-computer/net-tools.git", branch = "main"}
-# iroh-net-report = { git = "https://github.com/n0-computer/iroh.git", branch = "main", features = ["stun-utils"]}
-# iroh-relay = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
+iroh-net-report = { git = "https://github.com/n0-computer/iroh.git", branch = "main"}
