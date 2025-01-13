@@ -1216,7 +1216,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             port_map_probe(config).await
         }
         Commands::RelayUrls { count } => {
-            let config = NodeConfig::load(None).await?;
             relay_urls(count, config).await
         }
         Commands::Plot {
