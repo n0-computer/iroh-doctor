@@ -18,6 +18,8 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use futures_lite::StreamExt;
+use futures_util::SinkExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     defaults::DEFAULT_STUN_PORT,
@@ -30,6 +32,7 @@ use iroh::{
 };
 use iroh_metrics::core::Core;
 use iroh_net_report as netcheck;
+use iroh_relay::client::SendMessage;
 use netcheck::{Options as ReportOptions, QuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
@@ -962,20 +965,23 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
 }
 
 /// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
-async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
+async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate(rand::rngs::OsRng);
     if config.relay_nodes.is_empty() {
         println!("No relay nodes specified in the config file.");
     }
 
     let dns_resolver = default_resolver();
-    let mut clients = HashMap::new();
+    let mut client_builders = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh_relay::HttpClientBuilder::new(node.url.clone())
-            .build(secret_key, dns_resolver.clone());
+        let client_builder = iroh_relay::client::ClientBuilder::new(
+            node.url.clone(),
+            secret_key,
+            dns_resolver.clone(),
+        );
 
-        clients.insert(node.url.clone(), client);
+        client_builders.insert(node.url.clone(), client_builder);
     }
 
     let mut success = Vec::new();
@@ -992,15 +998,10 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                 host: node.url.clone(),
             };
 
-            let client = clients.get(&node.url).map(|(c, _)| c.clone()).unwrap();
-
-            if client.is_connected().await? {
-                client.close_for_reconnect().await?;
-            }
-            assert!(!client.is_connected().await?);
+            let client_builder = client_builders.get(&node.url).cloned().unwrap();
 
             let start = std::time::Instant::now();
-            match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
+            match tokio::time::timeout(Duration::from_secs(2), client_builder.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
                     node_details.error = Some(e.to_string());
@@ -1009,11 +1010,9 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                     tracing::warn!("connect error");
                     node_details.error = Some(e.to_string());
                 }
-                Ok(_) => {
-                    assert!(client.is_connected().await?);
+                Ok(Ok(client)) => {
                     node_details.connect = Some(start.elapsed());
-
-                    match client.ping().await {
+                    match ping(client).await {
                         Ok(latency) => {
                             node_details.latency = Some(latency);
                         }
@@ -1052,6 +1051,31 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn ping(client: iroh_relay::client::Client) -> anyhow::Result<Duration> {
+    let (mut client_stream, mut client_sink) = client.split();
+    let data: [u8; 8] = rand::random();
+    let start = Instant::now();
+    client_sink.send(SendMessage::Ping(data)).await?;
+    match tokio::time::timeout(Duration::from_secs(2), async move {
+        while let Some(res) = client_stream.next().await {
+            let res = res?;
+            if let iroh_relay::client::ReceivedMessage::Pong(d) = res {
+                if d == data {
+                    return Ok(start.elapsed());
+                }
+            }
+        }
+        anyhow::bail!("no pong received");
+    })
+    .await
+    {
+        Err(_) => {
+            anyhow::bail!("ping timeout");
+        }
+        Ok(res) => res,
+    }
 }
 
 /// Information about a node and its connection.
@@ -1215,7 +1239,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             port_map_probe(config).await
         }
-        Commands::RelayUrls { count } => relay_urls(count, config.clone()).await,
+        Commands::RelayUrls { count } => relay_urls(count, config).await,
         Commands::Plot {
             interval,
             metrics,
