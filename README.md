@@ -1,4 +1,4 @@
-<h1 align="center"><a href="https://iroh.computer"><img alt="iroh-doctor" src="./.img/iroh_wordmark.svg" width="100" /></a></h1>
+<h1 align="center"><a href="https://iroh.computer"><img alt="iroh-doctor" src="https://www.iroh.computer/img/logo/iroh-wordmark-purple.svg" width="100" /></a></h1>
 
 <h3 align="center">
 Test your network.
