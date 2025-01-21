@@ -355,13 +355,45 @@ async fn report(
     stun_port: u16,
     config: &NodeConfig,
     mut stun_ipv4: bool,
-    stun_ipv6: bool,
-    quic_ipv4: bool,
-    quic_ipv6: bool,
-    https: bool,
-    icmp_v4: bool,
-    icmp_v6: bool,
+    mut stun_ipv6: bool,
+    mut quic_ipv4: bool,
+    mut quic_ipv6: bool,
+    mut https: bool,
+    mut icmp_v4: bool,
+    mut icmp_v6: bool,
 ) -> anyhow::Result<()> {
+    // if all protocol flags are false, set them all to true
+    if !(stun_ipv4 || stun_ipv6 || quic_ipv4 || quic_ipv6 || https || icmp_v4 || icmp_v6) {
+        stun_ipv4 = true;
+        stun_ipv6 = true;
+        quic_ipv4 = true;
+        quic_ipv6 = true;
+        icmp_v4 = true;
+        icmp_v6 = true;
+        https = true;
+    }
+    println!("Probe protocols selected:");
+    if stun_ipv4 {
+        println!("stun ipv4")
+    }
+    if stun_ipv6 {
+        println!("stun ipv6")
+    }
+    if quic_ipv4 {
+        println!("quic ipv4")
+    }
+    if quic_ipv6 {
+        println!("quic ipv6")
+    }
+    if icmp_v4 {
+        println!("icmp v4")
+    }
+    if icmp_v6 {
+        println!("icmp v6")
+    }
+    if https {
+        println!("https")
+    }
     let mut opts = ReportOptions::disabled()
         .icmp_v4(icmp_v4)
         .icmp_v6(icmp_v6)
@@ -395,9 +427,9 @@ async fn report(
     if quic_ipv4 || quic_ipv6 {
         opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
     }
-    println!("relay map {relay_map:#?}");
+    println!("\n{relay_map:#?}");
     let r = client.get_report_with_opts(relay_map, opts).await?;
-    println!("{r:#?}");
+    println!("\n{r:#?}");
     cancel.cancel();
     Ok(())
 }
