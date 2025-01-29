@@ -577,19 +577,19 @@ async fn active_side(
     if let Some(gui) = gui {
         let pb = Some(&gui.pb);
         for _ in 0..n {
-            let d = send_test(&connection, config, pb).await?;
+            let d = send_test(connection, config, pb).await?;
             gui.set_send(config.size, d);
-            let d = recv_test(&connection, config, pb).await?;
+            let d = recv_test(connection, config, pb).await?;
             gui.set_recv(config.size, d);
-            let d = echo_test(&connection, config, pb).await?;
+            let d = echo_test(connection, config, pb).await?;
             gui.set_echo(config.size, d);
         }
     } else {
         let pb = None;
         for _ in 0..n {
-            let _d = send_test(&connection, config, pb).await?;
-            let _d = recv_test(&connection, config, pb).await?;
-            let _d = echo_test(&connection, config, pb).await?;
+            let _d = send_test(connection, config, pb).await?;
+            let _d = recv_test(connection, config, pb).await?;
+            let _d = echo_test(connection, config, pb).await?;
         }
     }
 
@@ -797,7 +797,7 @@ async fn connect(
 
                 let close_reason = connection
                     .close_reason()
-                    .map(|e| format!(" (reason: {})", e.to_string()))
+                    .map(|e| format!(" (reason: {e})"))
                     .unwrap_or_default();
 
                 if let Err(cause) = passive_side(gui, &connection).await {
@@ -906,7 +906,7 @@ async fn accept(
                             if let Err(cause) = res {
                                 let close_reason = connection
                                     .close_reason()
-                                    .map(|e| format!(" (reason: {})", e.to_string()))
+                                    .map(|e| format!(" (reason: {e})"))
                                     .unwrap_or_default();
                                 eprintln!("Test finished after {dt}s: {cause}{close_reason}",);
                             } else {
