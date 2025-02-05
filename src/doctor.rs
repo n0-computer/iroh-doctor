@@ -401,7 +401,7 @@ async fn report(
 
     let port_mapper = portmapper::Client::default();
     let dns_resolver = default_resolver().clone();
-    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
+    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver, None)?;
 
     let relay_map = match stun_host {
         Some(host_name) => {
@@ -922,8 +922,7 @@ async fn accept(
                 match connecting.await {
                     Ok(connection) => {
                         if n == 0 {
-                            let Ok(remote_peer_id) = endpoint::get_remote_node_id(&connection)
-                            else {
+                            let Ok(remote_peer_id) = connection.remote_node_id() else {
                                 return;
                             };
                             println!("Accepted connection from {}", remote_peer_id);
