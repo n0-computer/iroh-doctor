@@ -21,16 +21,16 @@ futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
-iroh = { version = "0.31", features = ["metrics"] }
-iroh-net-report = { version = "0.31", features = ["stun-utils"] }
+iroh = { version = "0.32", features = ["metrics"] }
+iroh-net-report = { version = "0.32", features = ["stun-utils"] }
 iroh-metrics = { version = "0.31" }
-iroh-relay = "0.31"
+iroh-relay = "0.32"
 netwatch = { version = "0.3" }
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
 portmapper = { version = "0.3" }
-quinn = { package = "iroh-quinn", version = "0.12" }
+quinn = { package = "iroh-quinn", version = "0.13" }
 rand = "0.8.5"
 ratatui = "0.29.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -47,5 +47,5 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 
 [dev-dependencies]
-iroh-base = "0.31"
+iroh-base = "0.32"
 url = "2.5.2"
