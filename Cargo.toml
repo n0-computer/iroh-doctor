@@ -1,6 +1,6 @@
 [package]
 name = "iroh-doctor"
-version = "0.31.0"
+version = "0.32.0"
 edition = "2021"
 readme = "README.md"
 description = "Diagnose and test iroh in your network configuration"
