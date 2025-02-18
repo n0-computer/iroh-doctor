@@ -1,6 +1,6 @@
 [package]
 name = "iroh-doctor"
-version = "0.31.0"
+version = "0.32.0"
 edition = "2021"
 readme = "README.md"
 description = "Diagnose and test iroh in your network configuration"
@@ -49,3 +49,9 @@ webpki-roots = "0.26"
 [dev-dependencies]
 iroh-base = "0.32"
 url = "2.5.2"
+
+[patch.crates-io]
+iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
+iroh-base = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
+iroh-relay = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
+iroh-net-report = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
