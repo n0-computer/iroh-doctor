@@ -24,7 +24,7 @@ use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
-    dns::default_resolver,
+    dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
     watchable::Watcher,
@@ -400,7 +400,7 @@ async fn report(
         .https(https);
 
     let port_mapper = portmapper::Client::default();
-    let dns_resolver = default_resolver().clone();
+    let dns_resolver = DnsResolver::new();
     let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver, None)?;
 
     let relay_map = match stun_host {
@@ -1033,7 +1033,7 @@ async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()> {
         println!("No relay nodes specified in the config file.");
     }
 
-    let dns_resolver = default_resolver();
+    let dns_resolver = DnsResolver::new();
     let mut client_builders = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
