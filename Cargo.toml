@@ -46,6 +46,8 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 
+iroh-services = { git = "https://github.com/n0-computer/iroh-services", branch = "main" }
+
 [dev-dependencies]
 iroh-base = "0.33"
 url = "2.5.2"
