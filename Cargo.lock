@@ -2490,7 +2490,7 @@ dependencies = [
 [[package]]
 name = "iroh-services"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/iroh-services?branch=main#9337a72919ff7df87a8ac5847d0a9eeef77e8815"
+source = "git+https://github.com/n0-computer/iroh-services?branch=main#6ed49fd5bd8f98c8303662df09a193f704fb4d6f"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -2498,6 +2498,7 @@ dependencies = [
  "iroh-blobs",
  "iroh-metrics",
  "n0-future",
+ "rand 0.8.5",
  "rcan",
  "serde",
  "ssh-key",
@@ -5427,6 +5428,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0f540e3240398cce6128b64ba83fdbdd86129c16a3aa1a3a252efd66eb3d587"
 dependencies = [
  "getrandom 0.3.1",
+ "serde",
 ]
 
 [[package]]
