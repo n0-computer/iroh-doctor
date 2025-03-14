@@ -31,6 +31,7 @@ portable-atomic = "1.9.0"
 postcard = "1.0.10"
 portmapper = { version = "0.4" }
 quinn = { package = "iroh-quinn", version = "0.13" }
+quinn-udp = { package = "iroh-quinn-udp", version = "0.5" }
 rand = "0.8.5"
 ratatui = "0.29.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

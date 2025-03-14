@@ -7,11 +7,13 @@ use std::{
     net::{Ipv6Addr, SocketAddr},
     num::NonZeroU16,
     path::PathBuf,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::Context as _;
 use clap::Subcommand;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
@@ -36,6 +38,7 @@ use iroh_relay::client::SendMessage;
 use netcheck::{Options as ReportOptions, QuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
+use quinn::AsyncUdpSocket;
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
@@ -46,6 +49,7 @@ use tracing::warn;
 use crate::{
     config::{iroh_data_root, NodeConfig},
     progress::ProgressWriter,
+    udp_conn::UdpConn,
 };
 
 /// Options for the secret key usage.
@@ -1685,5 +1689,97 @@ fn try_secret_key_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Secret
             Ok(SecretKey::from_bytes(&kp.private.to_bytes()))
         }
         _ => anyhow::bail!("invalid key format"),
+    }
+}
+
+#[derive(Debug)]
+struct Sockets {
+    v4: UdpConn,
+    v6: Option<UdpConn>,
+}
+
+#[derive(Debug)]
+struct IoPoller {
+    ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
+    ipv6_poller: Option<Pin<Box<dyn quinn::UdpPoller>>>,
+}
+
+impl quinn::UdpPoller for IoPoller {
+    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        // This version returns Ready as soon as any of them are ready.
+        let this = &mut *self;
+        match this.ipv4_poller.as_mut().poll_writable(cx) {
+            Poll::Ready(_) => return Poll::Ready(Ok(())),
+            Poll::Pending => (),
+        }
+        if let Some(ref mut ipv6_poller) = this.ipv6_poller {
+            match ipv6_poller.as_mut().poll_writable(cx) {
+                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                Poll::Pending => (),
+            }
+        }
+        return Poll::Pending;
+    }
+}
+
+impl AsyncUdpSocket for Sockets {
+    /// Create a [`UdpPoller`] that can register a single task for write-readiness notifications
+    ///
+    /// A `poll_send` method on a single object can usually store only one [`Waker`] at a time,
+    /// i.e. allow at most one caller to wait for an event. This method allows any number of
+    /// interested tasks to construct their own [`UdpPoller`] object. They can all then wait for the
+    /// same event and be notified concurrently, because each [`UdpPoller`] can store a separate
+    /// [`Waker`].
+    ///
+    /// [`Waker`]: std::task::Waker
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+        let ipv4_poller = self.v4.create_io_poller();
+        let ipv6_poller = self.v6.as_ref().map(|sock| sock.create_io_poller());
+        Box::pin(IoPoller {
+            ipv4_poller,
+            ipv6_poller,
+        })
+    }
+
+    /// Send UDP datagrams from `transmits`, or return `WouldBlock` and clear the underlying
+    /// socket's readiness, or return an I/O error
+    ///
+    /// If this returns [`io::ErrorKind::WouldBlock`], [`UdpPoller::poll_writable`] must be called
+    /// to register the calling task to be woken when a send should be attempted again.
+    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        todo!();
+    }
+
+    /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        todo!();
+    }
+
+    /// Look up the local IP address and port used by this socket
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        todo!();
+    }
+
+    /// Maximum number of datagrams that a [`Transmit`] may encode
+    fn max_transmit_segments(&self) -> usize {
+        todo!();
+    }
+
+    /// Maximum number of datagrams that might be described by a single [`RecvMeta`]
+    fn max_receive_segments(&self) -> usize {
+        todo!();
+    }
+
+    /// Whether datagrams might get fragmented into multiple parts
+    ///
+    /// Sockets should prevent this for best performance. See e.g. the `IPV6_DONTFRAG` socket
+    /// option.
+    fn may_fragment(&self) -> bool {
+        todo!();
     }
 }

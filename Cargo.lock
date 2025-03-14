@@ -1971,6 +1971,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net-report",
  "iroh-quinn",
+ "iroh-quinn-udp",
  "iroh-relay",
  "netwatch 0.4.0",
  "pkarr",
