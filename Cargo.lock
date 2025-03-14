@@ -2288,10 +2288,10 @@ dependencies = [
  "iroh",
  "iroh-base",
  "iroh-metrics",
+ "iroh-n0des",
  "iroh-net-report",
  "iroh-quinn",
  "iroh-relay",
- "iroh-services",
  "netwatch",
  "pkarr",
  "portable-atomic",
@@ -2344,6 +2344,28 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "iroh-n0des"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/iroh-n0des?branch=main#91f4432222d90263daa074c6a61730965f43ced6"
+dependencies = [
+ "anyhow",
+ "ed25519-dalek",
+ "iroh",
+ "iroh-blobs",
+ "iroh-metrics",
+ "n0-future",
+ "rand 0.8.5",
+ "rcan",
+ "serde",
+ "ssh-key",
+ "tokio",
+ "tokio-serde",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2485,28 +2507,6 @@ dependencies = [
  "url",
  "webpki-roots",
  "z32",
-]
-
-[[package]]
-name = "iroh-services"
-version = "0.1.0"
-source = "git+https://github.com/n0-computer/iroh-services?branch=main#6ed49fd5bd8f98c8303662df09a193f704fb4d6f"
-dependencies = [
- "anyhow",
- "ed25519-dalek",
- "iroh",
- "iroh-blobs",
- "iroh-metrics",
- "n0-future",
- "rand 0.8.5",
- "rcan",
- "serde",
- "ssh-key",
- "tokio",
- "tokio-serde",
- "tokio-util",
- "tracing",
- "uuid",
 ]
 
 [[package]]
