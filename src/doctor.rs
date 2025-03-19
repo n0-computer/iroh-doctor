@@ -158,6 +158,12 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
+
+        /// Use X.509 TLS certificates when making `iroh` connections.
+        ///
+        /// This typically means you are trying to run accept/connect with a version of `iroh` from `0.33.0` or earlier.
+        #[clap(long, default_value_t = false)]
+        tls_x509: bool,
     },
     /// Connect to an iroh doctor accept node.
     Connect {
@@ -196,6 +202,12 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
+
+        /// Use X.509 TLS certificates when making `iroh` connections.
+        ///
+        /// This typically means you are trying to run accept/connect with a version of `iroh` from `0.33.0` or earlier.
+        #[clap(long, default_value_t = false)]
+        tls_x509: bool,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -767,6 +779,7 @@ async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
+    x509: bool,
 ) -> anyhow::Result<Endpoint> {
     tracing::info!(
         "public key: {}",
@@ -782,6 +795,11 @@ async fn make_endpoint(
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
+
+    let endpoint = match x509 {
+        true => endpoint.tls_x509(),
+        false => endpoint,
+    };
 
     let endpoint = match discovery {
         Some(discovery) => endpoint.discovery(discovery),
@@ -812,8 +830,9 @@ async fn connect(
     relay_url: Option<RelayUrl>,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
+    x509: bool,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, relay_map, discovery).await?;
+    let endpoint = make_endpoint(secret_key, relay_map, discovery, x509).await?;
 
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         tracing::info!("dialing {:?}", node_id);
@@ -870,8 +889,9 @@ async fn accept(
     config: TestConfig,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
+    tls_x509: bool,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
+    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery, tls_x509).await?;
 
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         let endpoints = endpoint
@@ -1245,6 +1265,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             relay_url,
             remote_endpoint,
             disable_discovery,
+            tls_x509,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
@@ -1263,6 +1284,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 relay_url,
                 relay_map,
                 discovery,
+                tls_x509,
             )
             .await
         }
@@ -1272,6 +1294,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             size,
             iterations,
             disable_discovery,
+            tls_x509,
         } => {
             let relay_map = if local_relay_server {
                 Some(configure_local_relay_map())
@@ -1281,7 +1304,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
             let discovery = create_discovery(disable_discovery, &secret_key);
-            accept(secret_key, config, relay_map, discovery).await
+            accept(secret_key, config, relay_map, discovery, tls_x509).await
         }
         Commands::PortMap {
             protocol,
