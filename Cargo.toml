@@ -46,6 +46,7 @@ tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
+bytes = "1.10.1"
 
 [dev-dependencies]
 iroh-base = "0.34"

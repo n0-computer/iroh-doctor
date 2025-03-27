@@ -22,8 +22,8 @@ impl UdpConn {
         Self { inner }
     }
 
-    pub(super) fn as_socket_ref(&self) -> &UdpSocket {
-        &self.inner
+    pub(super) fn udp_socket(&self) -> Arc<UdpSocket> {
+        self.inner.clone()
     }
 
     pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {

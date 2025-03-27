@@ -8,8 +8,8 @@ use std::{
     num::NonZeroU16,
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
-    task::{Context, Poll, Waker},
+    sync::{atomic::AtomicBool, Arc},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -33,9 +33,10 @@ use iroh::{
     Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_metrics::core::Core;
-use iroh_net_report as netcheck;
-use iroh_relay::client::SendMessage;
+use iroh_net_report::{self as netcheck, Addr};
+use iroh_relay::{client::SendMessage, protos::stun};
 use netcheck::{Options as ReportOptions, QuicConfig};
+use netwatch::UdpSocket;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use quinn::AsyncUdpSocket;
@@ -44,7 +45,7 @@ use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::warn;
+use tracing::{instrument::WithSubscriber, warn};
 
 use crate::{
     config::{iroh_data_root, NodeConfig},
@@ -451,12 +452,26 @@ async fn report(
 }
 
 /// Create a QuicConfig with a quinn Endpoint and a client configuration.
-fn create_quic_config(ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
+fn create_quic_config(
+    ipv4: bool,
+    ipv4_conn: UdpConn,
+    ipv6: bool,
+    ipv6_conn: Option<UdpConn>,
+) -> anyhow::Result<QuicConfig> {
     let root_store =
         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let client_config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
+    let mut config = quinn::EndpointConfig::default();
+
+    // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+    // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+    // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+    // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+    // the packet if grease_quic_bit is set to false.
+    config.grease_quic_bit(false);
+
     let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
     Ok(QuicConfig {
         ep,
@@ -1693,9 +1708,137 @@ fn try_secret_key_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Secret
 }
 
 #[derive(Debug)]
-struct Sockets {
+struct QuinnSockets {
     v4: UdpConn,
     v6: Option<UdpConn>,
+    should_poll_ipv4: AtomicBool,
+    stun_addr: Option<Addr>,
+}
+
+#[derive(Debug)]
+struct SocketsConfig {
+    stun_ipv4: bool,
+    stun_ipv6: bool,
+    quic_ipv4: bool,
+    quic_ipv6: bool,
+    stun_addr: Option<Addr>,
+}
+
+#[derive(Debug)]
+struct Sockets {
+    ipv4: Option<Arc<UdpSocket>>,
+    ipv6: Option<Arc<UdpSocket>>,
+    config: SocketsConfig,
+}
+
+impl Sockets {
+    // TODO(ramfox): need to work out logic for if we
+    fn bind_sockets(config: SocketsConfig) -> anyhow::Result<Self> {
+        // quic socket code expects an ipv4 socket if an ipv6 one is bound
+        let ipv4: Option<Arc<UdpSocket>> =
+            if config.stun_ipv4 || config.quic_ipv4 || config.quic_ipv6 {
+                Some(Arc::new(UdpSocket::bind(netwatch::IpFamily::V4, 0)?))
+            } else {
+                None
+            };
+        let ipv6: Option<Arc<UdpSocket>> = if config.stun_ipv6 || config.quic_ipv6 {
+            Some(Arc::new(UdpSocket::bind(netwatch::IpFamily::V6, 0)?))
+        } else {
+            None
+        };
+        // if no quic, then we need to spawn stun tasks
+        Ok(Self { ipv4, ipv6, config })
+    }
+
+    fn stun_ipv4_socket(&self) -> Option<Arc<UdpSocket>> {
+        // TODO(ramfox): can i adjust the asyncudp code to have an optional ipv4 as well?
+        if self.config.stun_ipv4 {
+            self.ipv4.clone()
+        } else {
+            None
+        }
+    }
+
+    fn stun_ipv6_socket(&self) -> Option<Arc<UdpSocket>> {
+        self.ipv6.clone()
+    }
+
+    fn create_quic_config(&self) -> anyhow::Result<QuicConfig> {
+        todo!();
+    }
+}
+
+impl QuicSockets {
+    /// Process datagrams received from UDP sockets.
+    ///
+    /// All the `bufs` and `metas` should have initialized packets in them.
+    ///
+    /// This extracts STUN packets and sends the to the correct
+    /// location for processing
+    fn process_udp_datagrams(
+        &self,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+    ) {
+        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+
+        let mut quic_packets_total = 0;
+
+        for (meta, buf) in metas.iter_mut().zip(bufs.iter_mut()) {
+            let mut buf_contains_quic_datagrams = false;
+            let mut quic_datagram_count = 0;
+            if meta.len > meta.stride {
+                tracing::trace!(%meta.len, %meta.stride, "GRO datagram received");
+            }
+
+            // Chunk through the datagrams in this GRO payload to find stun
+            // packets and forward them to the net reporter
+            for datagram in buf[..meta.len].chunks_mut(meta.stride) {
+                if datagram.len() < meta.stride {
+                    tracing::trace!(
+                        len = %datagram.len(),
+                        %meta.stride,
+                        "Last GRO datagram smaller than stride",
+                    );
+                }
+
+                // Detect STUN datagrams and process them.  Overwrite the first
+                // byte of those packets with zero to make Quinn ignore the packet.  This
+                // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
+                // which we do in Endpoint::bind.
+                if stun::is(datagram) {
+                    tracing::trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
+                    let packet = bytes::Bytes::copy_from_slice(datagram);
+                    if let Some(addr) = self.stun_addr.as_ref() {
+                        addr.receive_stun_packet(packet, meta.addr);
+                    };
+                    datagram[0] = 0u8;
+                } else {
+                    tracing::trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
+                    quic_datagram_count += 1;
+                    buf_contains_quic_datagrams = true;
+                };
+            }
+
+            if buf_contains_quic_datagrams {
+                tracing::trace!(
+                    src = ?meta.addr,
+                    count = %quic_datagram_count,
+                    len = meta.len,
+                    "UDP recv QUIC address discovery packets",
+                );
+                quic_packets_total += quic_datagram_count;
+            } else {
+                // If all datagrams in this buf are DISCO or STUN, set len to zero to make
+                // Quinn skip the buf completely.
+                meta.len = 0;
+            }
+        }
+
+        if quic_packets_total > 0 {
+            tracing::trace!("UDP recv: {} packets", quic_packets_total);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1722,7 +1865,7 @@ impl quinn::UdpPoller for IoPoller {
     }
 }
 
-impl AsyncUdpSocket for Sockets {
+impl AsyncUdpSocket for QuinnSockets {
     /// Create a [`UdpPoller`] that can register a single task for write-readiness notifications
     ///
     /// A `poll_send` method on a single object can usually store only one [`Waker`] at a time,
@@ -1747,7 +1890,21 @@ impl AsyncUdpSocket for Sockets {
     /// If this returns [`io::ErrorKind::WouldBlock`], [`UdpPoller::poll_writable`] must be called
     /// to register the calling task to be woken when a send should be attempted again.
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        todo!();
+        let dest = transmit.destination;
+        tracing::trace!(
+            dst = %dest,
+            src = ?transmit.src_ip,
+            len = %transmit.contents.len(),
+            "sending",
+        );
+        let conn = match dest {
+            SocketAddr::V4(_) => &self.v4,
+            SocketAddr::V6(_) => self
+                .v6
+                .as_ref()
+                .ok_or(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"))?,
+        };
+        conn.try_send(transmit)
     }
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
@@ -1755,24 +1912,94 @@ impl AsyncUdpSocket for Sockets {
         &self,
         cx: &mut Context,
         bufs: &mut [std::io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
+        metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        todo!();
+        // Two macros to help polling: they return if they get a result, execution
+        // continues if they were Pending and we need to poll others (or finally return
+        // Pending).
+        macro_rules! poll_ipv4 {
+            () => {
+                match self.v4.poll_recv(cx, bufs, metas)? {
+                    Poll::Pending | Poll::Ready(0) => {}
+                    Poll::Ready(n) => {
+                        self.process_udp_datagrams(&mut bufs[..n], &mut metas[..n]);
+                        return Poll::Ready(Ok(n));
+                    }
+                }
+            };
+        }
+        macro_rules! poll_ipv6 {
+            () => {
+                if let Some(ref socket) = self.v6 {
+                    match socket.poll_recv(cx, bufs, metas)? {
+                        Poll::Pending | Poll::Ready(0) => {}
+                        Poll::Ready(n) => {
+                            self.process_udp_datagrams(&mut bufs[..n], &mut metas[..n]);
+                            return Poll::Ready(Ok(n));
+                        }
+                    }
+                }
+            };
+        }
+
+        if self
+            .should_poll_ipv4
+            .fetch_not(std::sync::atomic::Ordering::Relaxed)
+        {
+            // order of polling: UDPv4, UDPv6
+            poll_ipv4!();
+            poll_ipv6!();
+            Poll::Pending
+        } else {
+            // order of polling: UDPv6, UDPv4
+            poll_ipv6!();
+            poll_ipv4!();
+            Poll::Pending
+        }
     }
 
     /// Look up the local IP address and port used by this socket
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        todo!();
+        match self.v4.local_addr() {
+            Ok(addr) => Ok(addr),
+            Err(e) => {
+                if let Some(addr) = self.v6.as_ref().and_then(|c| c.local_addr().ok()) {
+                    Ok(addr)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// Maximum number of datagrams that a [`Transmit`] may encode
     fn max_transmit_segments(&self) -> usize {
-        todo!();
+        if let Some(socket) = self.v6.as_ref() {
+            std::cmp::min(
+                socket.max_transmit_segments(),
+                self.v4.max_transmit_segments(),
+            )
+        } else {
+            self.v4.max_transmit_segments()
+        }
     }
 
     /// Maximum number of datagrams that might be described by a single [`RecvMeta`]
     fn max_receive_segments(&self) -> usize {
-        todo!();
+        if let Some(socket) = self.v6.as_ref() {
+            // `max_receive_segments` controls the size of the `RecvMeta` buffer
+            // that quinn creates. Having buffers slightly bigger than necessary
+            // isn't terrible, and makes sure a single socket can read the maximum
+            // amount with a single poll. We considered adding these numbers instead,
+            // but we never get data from both sockets at the same time in `poll_recv`
+            // and it's impossible and unnecessary to be refactored that way.
+            std::cmp::max(
+                socket.max_receive_segments(),
+                self.v4.max_receive_segments(),
+            )
+        } else {
+            self.v4.max_receive_segments()
+        }
     }
 
     /// Whether datagrams might get fragmented into multiple parts
@@ -1780,6 +2007,10 @@ impl AsyncUdpSocket for Sockets {
     /// Sockets should prevent this for best performance. See e.g. the `IPV6_DONTFRAG` socket
     /// option.
     fn may_fragment(&self) -> bool {
-        todo!();
+        if let Some(socket) = self.v6.as_ref() {
+            socket.may_fragment() || self.v4.may_fragment()
+        } else {
+            self.v4.may_fragment()
+        }
     }
 }
