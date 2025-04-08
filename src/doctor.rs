@@ -27,13 +27,12 @@ use iroh::{
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
+    net_report::{self, Options as ReportOptions, QuicConfig},
     watchable::Watcher,
     Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_metrics::core::Core;
-use iroh_net_report as netcheck;
 use iroh_relay::client::SendMessage;
-use netcheck::{Options as ReportOptions, QuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -413,7 +412,7 @@ async fn report(
 
     let port_mapper = portmapper::Client::default();
     let dns_resolver = DnsResolver::new();
-    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver, None)?;
+    let mut client = net_report::Client::new(Some(port_mapper), dns_resolver, None)?;
 
     let relay_map = match stun_host {
         Some(host_name) => {
@@ -426,13 +425,19 @@ async fn report(
     };
     let cancel = CancellationToken::new();
     if stun_ipv4 {
-        let stun_sock_v4 =
-            netcheck::bind_local_stun_socket(netwatch::IpFamily::V4, client.addr(), cancel.clone());
+        let stun_sock_v4 = net_report::bind_local_stun_socket(
+            netwatch::IpFamily::V4,
+            client.addr(),
+            cancel.clone(),
+        );
         opts = opts.stun_v4(stun_sock_v4);
     }
     if stun_ipv6 {
-        let stun_sock_v6 =
-            netcheck::bind_local_stun_socket(netwatch::IpFamily::V6, client.addr(), cancel.clone());
+        let stun_sock_v6 = net_report::bind_local_stun_socket(
+            netwatch::IpFamily::V6,
+            client.addr(),
+            cancel.clone(),
+        );
         opts = opts.stun_v6(stun_sock_v6);
     }
 
@@ -440,7 +445,7 @@ async fn report(
         opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
     }
     println!("\n{relay_map:#?}");
-    let r = client.get_report_with_opts(relay_map, opts).await?;
+    let r = client.get_report(relay_map, opts).await?;
     println!("\n{r:#?}");
     cancel.cancel();
     Ok(())
