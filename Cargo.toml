@@ -22,7 +22,6 @@ futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 iroh = { version = "0.34", features = ["metrics"] }
-iroh-net-report = { version = "0.34", features = ["stun-utils"] }
 iroh-metrics = { version = "0.32", features = ["service"] }
 iroh-relay = "0.34"
 netwatch = { version = "0.4" }
