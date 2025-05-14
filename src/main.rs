@@ -42,13 +42,14 @@ fn main() -> Result<()> {
 
 async fn main_impl() -> Result<()> {
     let cli = Cli::parse();
-    iroh_metrics::core::Core::try_init(|reg, metrics| {
-        use iroh_metrics::core::Metric;
-        metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
-        metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
-        metrics.insert(iroh::metrics::PortmapMetrics::new(reg));
-    })
-    .expect("should be first init");
+    // TODO:
+    // iroh_metrics::core::Core::try_init(|reg, metrics| {
+    //     use iroh_metrics::core::Metric;
+    //     metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
+    //     metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
+    //     metrics.insert(iroh::metrics::PortmapMetrics::new(reg));
+    // })
+    // .expect("should be first init");
     let config = NodeConfig::load(cli.config.as_deref()).await?;
     iroh_doctor::doctor::run(cli.command, &config).await
 }

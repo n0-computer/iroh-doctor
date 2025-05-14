@@ -29,10 +29,10 @@ use iroh::{
     metrics::MagicsockMetrics,
     net_report::{self, Options as ReportOptions, QuicConfig},
     watchable::Watcher,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
 };
-use iroh_metrics::core::Core;
-use iroh_relay::client::SendMessage;
+use iroh_metrics::static_core::Core;
+use iroh_relay::{client::SendMessage, RelayQuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -40,7 +40,7 @@ use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::warn;
+use tracing::{warn, Instrument};
 
 use crate::{
     config::{iroh_data_root, NodeConfig},
@@ -405,60 +405,43 @@ async fn report(
     if https {
         println!("https")
     }
+    let relay_map = match stun_host {
+        Some(host_name) => {
+            let url = host_name.parse()?;
+            RelayMap::from(RelayNode {
+                url,
+                stun_port,
+                quic: Some(RelayQuicConfig::default()),
+                stun_only: false,
+            })
+        }
+        None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
+    };
     let mut opts = ReportOptions::disabled()
         .icmp_v4(icmp_v4)
         .icmp_v6(icmp_v6)
         .https(https);
+    let endpoint = iroh::Endpoint::builder()
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .bind()
+        .await?;
 
-    let port_mapper = portmapper::Client::default();
-    let dns_resolver = DnsResolver::new();
-    let mut client = net_report::Client::new(Some(port_mapper), dns_resolver, None)?;
-
-    let relay_map = match stun_host {
-        Some(host_name) => {
-            let url = host_name.parse()?;
-            // creating a relay map from host name and stun port
-            stun_ipv4 = true;
-            RelayMap::default_from_node(url, stun_port)
-        }
-        None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
-    };
-    let cancel = CancellationToken::new();
-    if stun_ipv4 {
-        let stun_sock_v4 = net_report::bind_local_stun_socket(
-            netwatch::IpFamily::V4,
-            client.addr(),
-            cancel.clone(),
-        );
-        opts = opts.stun_v4(stun_sock_v4);
-    }
-    if stun_ipv6 {
-        let stun_sock_v6 = net_report::bind_local_stun_socket(
-            netwatch::IpFamily::V6,
-            client.addr(),
-            cancel.clone(),
-        );
-        opts = opts.stun_v6(stun_sock_v6);
-    }
-
-    if quic_ipv4 || quic_ipv6 {
-        opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
-    }
     println!("\n{relay_map:#?}");
-    let r = client.get_report(relay_map, opts).await?;
+    let mut report = endpoint.net_report();
+    let r = report.initialized().await?;
     println!("\n{r:#?}");
-    cancel.cancel();
+
+    endpoint.close().await;
     Ok(())
 }
 
 /// Create a QuicConfig with a quinn Endpoint and a client configuration.
-fn create_quic_config(ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
+fn create_quic_config(ep: quinn::Endpoint, ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
     let root_store =
         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let client_config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
-    let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
     Ok(QuicConfig {
         ep,
         client_config,
@@ -773,7 +756,12 @@ async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<()> {
 fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
-    RelayMap::default_from_node(url, stun_port)
+    RelayMap::from(RelayNode {
+        url,
+        stun_port,
+        stun_only: false,
+        quic: Some(RelayQuicConfig::default()),
+    })
 }
 
 /// ALPN protocol address.
@@ -1239,9 +1227,10 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         // metrics are initilaized in iroh::node::Node::spawn
         // here we only start the server
         tokio::task::spawn(async move {
-            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
-                eprintln!("Failed to start metrics server: {e}");
-            }
+            // TODO
+            // if let Err(e) = iroh_metrics::service::start_metrics_server(metrics_addr).await {
+            //     eprintln!("Failed to start metrics server: {e}");
+            // }
         })
     });
     tracing::info!("Metrics server not started, no address provided");

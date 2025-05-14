@@ -89,7 +89,7 @@ impl NodeConfig {
         if self.relay_nodes.is_empty() {
             return Ok(None);
         }
-        Some(RelayMap::from_nodes(self.relay_nodes.iter().cloned())).transpose()
+        Ok(Some(RelayMap::from_iter(self.relay_nodes.iter().cloned())))
     }
 }
 

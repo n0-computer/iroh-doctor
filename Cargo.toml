@@ -21,10 +21,10 @@ futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
-iroh = { version = "0.34", features = ["metrics"] }
-iroh-metrics = { version = "0.32", features = ["service"] }
-iroh-relay = "0.34"
-netwatch = { version = "0.4" }
+iroh = { version = "0.35", features = ["metrics"] }
+iroh-metrics = { version = "0.34", features = ["service", "static_core"] }
+iroh-relay = "0.35"
+netwatch = { version = "0.5" }
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
@@ -46,5 +46,5 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 
 [dev-dependencies]
-iroh-base = "0.34"
+iroh-base = "0.35"
 url = "2.5.2"
