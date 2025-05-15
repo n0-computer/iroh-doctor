@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     io,
-    net::{Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     num::NonZeroU16,
     path::PathBuf,
     sync::Arc,
@@ -27,19 +27,19 @@ use iroh::{
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
-    net_report::{self, Options as ReportOptions, QuicConfig},
-    watchable::Watcher,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    net_report::Options as ReportOptions,
+    watcher::{self, Watcher},
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
 };
-use iroh_metrics::core::Core;
-use iroh_relay::client::SendMessage;
+use iroh_metrics::static_core::Core;
+use iroh_relay::{client::SendMessage, RelayQuicConfig};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
 use crate::{
@@ -383,88 +383,73 @@ async fn report(
         icmp_v6 = true;
         https = true;
     }
-    println!("Probe protocols selected:");
-    if stun_ipv4 {
-        println!("stun ipv4")
-    }
-    if stun_ipv6 {
-        println!("stun ipv6")
-    }
-    if quic_ipv4 {
-        println!("quic ipv4")
-    }
-    if quic_ipv6 {
-        println!("quic ipv6")
-    }
-    if icmp_v4 {
-        println!("icmp v4")
-    }
-    if icmp_v6 {
-        println!("icmp v6")
-    }
-    if https {
-        println!("https")
-    }
-    let mut opts = ReportOptions::disabled()
-        .icmp_v4(icmp_v4)
-        .icmp_v6(icmp_v6)
-        .https(https);
-
-    let port_mapper = portmapper::Client::default();
-    let dns_resolver = DnsResolver::new();
-    let mut client = net_report::Client::new(Some(port_mapper), dns_resolver, None)?;
-
+    // println!("Probe protocols selected:");
+    // if stun_ipv4 {
+    //     println!("stun ipv4")
+    // }
+    // if stun_ipv6 {
+    //     println!("stun ipv6")
+    // }
+    // if quic_ipv4 {
+    //     println!("quic ipv4")
+    // }
+    // if quic_ipv6 {
+    //     println!("quic ipv6")
+    // }
+    // if icmp_v4 {
+    //     println!("icmp v4")
+    // }
+    // if icmp_v6 {
+    //     println!("icmp v6")
+    // }
+    // if https {
+    //     println!("https")
+    // }
     let relay_map = match stun_host {
         Some(host_name) => {
             let url = host_name.parse()?;
-            // creating a relay map from host name and stun port
-            stun_ipv4 = true;
-            RelayMap::default_from_node(url, stun_port)
+            RelayMap::from(RelayNode {
+                url,
+                stun_port,
+                quic: Some(RelayQuicConfig::default()),
+                stun_only: false,
+            })
         }
         None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
-    let cancel = CancellationToken::new();
-    if stun_ipv4 {
-        let stun_sock_v4 = net_report::bind_local_stun_socket(
-            netwatch::IpFamily::V4,
-            client.addr(),
-            cancel.clone(),
+    let opts = ReportOptions::disabled()
+        .icmp_v4(icmp_v4)
+        .icmp_v6(icmp_v6)
+        .https(https);
+    let endpoint = iroh::Endpoint::builder()
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .bind()
+        .await?;
+
+    println!("\nRelay Map:");
+    for (url, node) in relay_map.urls().zip(relay_map.nodes()) {
+        println!(
+            r#"- {url}
+  STUN only: {}
+  STUN port: {}
+  QUIC port: {:?}"#,
+            node.stun_only,
+            node.stun_port,
+            node.quic.as_ref().map(|c| c.port),
         );
-        opts = opts.stun_v4(stun_sock_v4);
-    }
-    if stun_ipv6 {
-        let stun_sock_v6 = net_report::bind_local_stun_socket(
-            netwatch::IpFamily::V6,
-            client.addr(),
-            cancel.clone(),
-        );
-        opts = opts.stun_v6(stun_sock_v6);
     }
 
-    if quic_ipv4 || quic_ipv6 {
-        opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
+    println!("\nProbes:");
+    let mut reporter = endpoint.run_diagnostic_net_report().await?;
+    while let Some(probe) = reporter.next().await {
+        println!("{probe}");
     }
-    println!("\n{relay_map:#?}");
-    let r = client.get_report(relay_map, opts).await?;
-    println!("\n{r:#?}");
-    cancel.cancel();
+
+    let report = reporter.await?;
+    println!("{report:#?}");
+
+    endpoint.close().await;
     Ok(())
-}
-
-/// Create a QuicConfig with a quinn Endpoint and a client configuration.
-fn create_quic_config(ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
-    let root_store =
-        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let client_config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
-    Ok(QuicConfig {
-        ep,
-        client_config,
-        ipv4,
-        ipv6,
-    })
 }
 
 /// Contains all the GUI state.
@@ -773,7 +758,12 @@ async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<()> {
 fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
-    RelayMap::default_from_node(url, stun_port)
+    RelayMap::from(RelayNode {
+        url,
+        stun_port,
+        stun_only: false,
+        quic: Some(RelayQuicConfig::default()),
+    })
 }
 
 /// ALPN protocol address.
@@ -990,7 +980,7 @@ async fn accept(
 fn log_connection_changes(
     pb: MultiProgress,
     node_id: NodeId,
-    mut conn_type: Watcher<ConnectionType>,
+    mut conn_type: watcher::Direct<ConnectionType>,
 ) {
     tokio::spawn(async move {
         let start = Instant::now();
@@ -1236,10 +1226,14 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
     // doesn't start the server if the address is None
     let metrics_fut = config.metrics_addr.map(|metrics_addr| {
-        // metrics are initilaized in iroh::node::Node::spawn
-        // here we only start the server
+        let registry = iroh_metrics::Registry::default();
+        // TODO
+        // registry.register_all(endpoint.metrics());
+
         tokio::task::spawn(async move {
-            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+            if let Err(e) =
+                iroh_metrics::service::start_metrics_server(metrics_addr, Arc::new(registry)).await
+            {
                 eprintln!("Failed to start metrics server: {e}");
             }
         })
