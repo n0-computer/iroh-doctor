@@ -1933,8 +1933,7 @@ checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
 [[package]]
 name = "iroh"
 version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ca758f4ce39ae3f07de922be6c73de6a48a07f39554e78b5745585652ce38f5"
+source = "git+https://github.com/n0-computer/iroh?branch=ramfox%2Ffull-report#559c4bc8274eba0a68064e441fdadef7bb909d6a"
 dependencies = [
  "aead",
  "anyhow",
@@ -1955,7 +1954,7 @@ dependencies = [
  "http 1.2.0",
  "igd-next 0.16.1",
  "instant",
- "iroh-base",
+ "iroh-base 0.35.0 (git+https://github.com/n0-computer/iroh?branch=ramfox%2Ffull-report)",
  "iroh-metrics 0.34.0",
  "iroh-quinn",
  "iroh-quinn-proto",
@@ -2010,6 +2009,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-base"
+version = "0.35.0"
+source = "git+https://github.com/n0-computer/iroh?branch=ramfox%2Ffull-report#559c4bc8274eba0a68064e441fdadef7bb909d6a"
+dependencies = [
+ "curve25519-dalek",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror 2.0.11",
+ "url",
+]
+
+[[package]]
 name = "iroh-doctor"
 version = "0.33.0"
 dependencies = [
@@ -2025,7 +2039,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh",
- "iroh-base",
+ "iroh-base 0.35.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "iroh-metrics 0.34.0",
  "iroh-quinn",
  "iroh-relay",
@@ -2154,8 +2168,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c63f122cdfaa4b4e0e7d6d3921d2b878f42a0c6d3ee5a29456dc3f5ab5ec931f"
+source = "git+https://github.com/n0-computer/iroh?branch=ramfox%2Ffull-report#559c4bc8274eba0a68064e441fdadef7bb909d6a"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2168,7 +2181,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "iroh-base",
+ "iroh-base 0.35.0 (git+https://github.com/n0-computer/iroh?branch=ramfox%2Ffull-report)",
  "iroh-metrics 0.34.0",
  "iroh-quinn",
  "iroh-quinn-proto",
