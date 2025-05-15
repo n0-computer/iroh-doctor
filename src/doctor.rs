@@ -445,6 +445,9 @@ async fn report(
         println!("{probe}");
     }
 
+    let report = reporter.await?;
+    println!("{report:#?}");
+
     endpoint.close().await;
     Ok(())
 }
