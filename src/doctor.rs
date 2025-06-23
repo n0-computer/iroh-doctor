@@ -7,6 +7,7 @@ use std::{
     net::SocketAddr,
     num::NonZeroU16,
     path::PathBuf,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -111,6 +112,15 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
+    },
+    /// Run a general test with your doctor node
+    Test {
+        /// Hexadecimal node id of the node to connect to. If not specified,
+        /// it will dial a hosted doctor node.
+        dial: Option<PublicKey>,
+        /// Optional name for the test run
+        #[clap(long)]
+        name: Option<String>,
     },
     /// Connect to an iroh doctor accept node.
     Connect {
@@ -1050,6 +1060,21 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             stun_host,
             stun_port,
         } => report(stun_host, stun_port, config).await,
+        Commands::Test { dial, name } => {
+            let dial = dial.unwrap_or_else(|| {
+                PublicKey::from_str("ornq323o5gyx3y7vcyzmj44emfjnwzr2ycssxar65u2w75k6lika").unwrap()
+            });
+
+            // Currently this just bridges to the connect command
+            let (relay_map, relay_url) = (config.relay_map()?, None);
+            let secret_key = create_secret_key(SecretKeyOption::Local)?;
+            let pub_key = secret_key.public();
+            let discovery = create_discovery(false, &secret_key);
+            connect(dial, secret_key, vec![], relay_url, relay_map, discovery).await?;
+
+            tracing::error!("prompt_for_metrics");
+            prompt_for_metrics(pub_key, name, dial).await
+        }
         Commands::Connect {
             dial,
             secret_key,
@@ -1114,8 +1139,8 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             port_map_probe(config).await
         }
         Commands::RelayUrls { count } => {
-            let config = NodeConfig::load(None).await?;
-            relay_urls(count, config).await
+            // let config = NodeConfig::load(None).await?;
+            relay_urls(count, config.clone()).await
         }
         Commands::Plot {
             interval,
@@ -1474,4 +1499,49 @@ fn parse_csv_metrics(header: &[String], data: &str) -> anyhow::Result<HashMap<St
         metrics.insert(h.clone(), val);
     }
     Ok(metrics)
+}
+
+pub(crate) async fn prompt_for_metrics(
+    pub_key: PublicKey,
+    test_name: Option<String>,
+    connecting_to: PublicKey,
+) -> anyhow::Result<()> {
+    println!("Would you like to submit metrics? (y/n)");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    if input.trim() == "y" {
+        submit_metrics(pub_key, test_name, connecting_to).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn submit_metrics(
+    pub_key: PublicKey,
+    test_name: Option<String>,
+    connecting_to: PublicKey,
+) -> anyhow::Result<()> {
+    let identifier = match test_name {
+        Some(test_name) => test_name,
+        _ => hex::encode(pub_key.as_bytes()),
+    };
+    let connecting_to = hex::encode(connecting_to.as_bytes());
+    let metrics = encode_metrics().unwrap();
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://localhost:3000/submit/{}/to/{}", identifier, connecting_to))
+        .body(metrics)
+        .send()
+        .await;
+    if let Err(e) = res {
+        eprintln!("Failed to submit metrics: {e}");
+    }
+    Ok(())
+}
+
+/// Encode metrics to a string.
+pub(crate) fn encode_metrics() -> Result<String, std::fmt::Error> {
+    if let Some(core) = iroh_metrics::core::Core::get() {
+        return core.encode();
+    }
+    Ok("".to_string())
 }
