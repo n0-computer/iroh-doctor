@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     io,
-    net::{Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     num::NonZeroU16,
     path::PathBuf,
     sync::Arc,
@@ -22,24 +22,22 @@ use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
-    net_report::{self, Options as ReportOptions, QuicConfig},
-    watchable::Watcher,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
 };
-use iroh_metrics::core::Core;
-use iroh_relay::client::SendMessage;
+use iroh_metrics::static_core::Core;
+use iroh_relay::{client::SendMessage, RelayQuicConfig};
+use n0_watcher::Watcher;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
 use crate::{
@@ -82,24 +80,6 @@ pub enum Commands {
     /// When no protocol flags are explicitly set, will run a report with all available probe
     /// protocols
     Report {
-        /// Explicitly provided stun host. If provided, this will disable relay and just do STUN.
-        #[clap(long)]
-        stun_host: Option<String>,
-        /// The port of the STUN server.
-        #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
-        stun_port: u16,
-        /// Run a report including a STUN probe over Ipv4
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
-        #[clap(long, default_value_t = false)]
-        stun_ipv4: bool,
-        /// Run a report including a STUN probe over Ipv6
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
-        #[clap(long, default_value_t = false)]
-        stun_ipv6: bool,
         /// Run a report including a QUIC Address Discovery probe over Ipv6
         ///
         /// When all protocol flags are false, will
@@ -118,18 +98,6 @@ pub enum Commands {
         /// run a report with all available protocols
         #[clap(long, default_value_t = false)]
         https: bool,
-        /// Run a report including an ICMP probe over Ipv4
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
-        #[clap(long, default_value_t = false)]
-        icmp_v4: bool,
-        /// Run a report including an ICMP probe over IPv6
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
-        #[clap(long, default_value_t = false)]
-        icmp_v6: bool,
     },
     /// Wait for incoming requests from iroh doctor connect.
     Accept {
@@ -157,12 +125,6 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
-
-        /// Use X.509 TLS certificates when making `iroh` connections.
-        ///
-        /// This typically means you are trying to run accept/connect with a version of `iroh` from `0.33.0` or earlier.
-        #[clap(long, default_value_t = false)]
-        tls_x509: bool,
     },
     /// Connect to an iroh doctor accept node.
     Connect {
@@ -201,12 +163,6 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
-
-        /// Use X.509 TLS certificates when making `iroh` connections.
-        ///
-        /// This typically means you are trying to run accept/connect with a version of `iroh` from `0.33.0` or earlier.
-        #[clap(long, default_value_t = false)]
-        tls_x509: bool,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -362,109 +318,50 @@ async fn send_blocks(
 /// Prints a client report.
 #[allow(clippy::too_many_arguments)]
 async fn report(
-    stun_host: Option<String>,
-    stun_port: u16,
     config: &NodeConfig,
-    mut stun_ipv4: bool,
-    mut stun_ipv6: bool,
     mut quic_ipv4: bool,
     mut quic_ipv6: bool,
     mut https: bool,
-    mut icmp_v4: bool,
-    mut icmp_v6: bool,
 ) -> anyhow::Result<()> {
     // if all protocol flags are false, set them all to true
-    if !(stun_ipv4 || stun_ipv6 || quic_ipv4 || quic_ipv6 || https || icmp_v4 || icmp_v6) {
-        stun_ipv4 = true;
-        stun_ipv6 = true;
+    if !(quic_ipv4 || quic_ipv6 || https) {
         quic_ipv4 = true;
         quic_ipv6 = true;
-        icmp_v4 = true;
-        icmp_v6 = true;
         https = true;
     }
     println!("Probe protocols selected:");
-    if stun_ipv4 {
-        println!("stun ipv4")
-    }
-    if stun_ipv6 {
-        println!("stun ipv6")
-    }
     if quic_ipv4 {
         println!("quic ipv4")
     }
     if quic_ipv6 {
         println!("quic ipv6")
     }
-    if icmp_v4 {
-        println!("icmp v4")
-    }
-    if icmp_v6 {
-        println!("icmp v6")
-    }
     if https {
         println!("https")
     }
-    let mut opts = ReportOptions::disabled()
-        .icmp_v4(icmp_v4)
-        .icmp_v6(icmp_v6)
-        .https(https);
+    let relay_map = config.relay_map()?.unwrap_or_else(RelayMap::empty);
 
-    let port_mapper = portmapper::Client::default();
-    let dns_resolver = DnsResolver::new();
-    let mut client = net_report::Client::new(Some(port_mapper), dns_resolver, None)?;
+    let endpoint = iroh::Endpoint::builder()
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .bind()
+        .await?;
 
-    let relay_map = match stun_host {
-        Some(host_name) => {
-            let url = host_name.parse()?;
-            // creating a relay map from host name and stun port
-            stun_ipv4 = true;
-            RelayMap::default_from_node(url, stun_port)
-        }
-        None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
-    };
-    let cancel = CancellationToken::new();
-    if stun_ipv4 {
-        let stun_sock_v4 = net_report::bind_local_stun_socket(
-            netwatch::IpFamily::V4,
-            client.addr(),
-            cancel.clone(),
+    println!("\nRelay Map:");
+    for (url, node) in relay_map.urls().zip(relay_map.nodes()) {
+        println!(
+            r#"- {url}
+  QUIC port: {:?}"#,
+            node.quic.as_ref().map(|c| c.port),
         );
-        opts = opts.stun_v4(stun_sock_v4);
-    }
-    if stun_ipv6 {
-        let stun_sock_v6 = net_report::bind_local_stun_socket(
-            netwatch::IpFamily::V6,
-            client.addr(),
-            cancel.clone(),
-        );
-        opts = opts.stun_v6(stun_sock_v6);
     }
 
-    if quic_ipv4 || quic_ipv6 {
-        opts = opts.quic_config(Some(create_quic_config(quic_ipv4, quic_ipv6)?));
+    let mut stream = endpoint.net_report().stream();
+    while let Some(report) = stream.next().await {
+        println!("{report:#?}");
     }
-    println!("\n{relay_map:#?}");
-    let r = client.get_report(relay_map, opts).await?;
-    println!("\n{r:#?}");
-    cancel.cancel();
+
+    endpoint.close().await;
     Ok(())
-}
-
-/// Create a QuicConfig with a quinn Endpoint and a client configuration.
-fn create_quic_config(ipv4: bool, ipv6: bool) -> anyhow::Result<QuicConfig> {
-    let root_store =
-        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let client_config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
-    Ok(QuicConfig {
-        ep,
-        client_config,
-        ipv4,
-        ipv6,
-    })
 }
 
 /// Contains all the GUI state.
@@ -771,9 +668,11 @@ async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<()> {
 
 /// Configures a relay map with some default values.
 fn configure_local_relay_map() -> RelayMap {
-    let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
-    RelayMap::default_from_node(url, stun_port)
+    RelayMap::from(RelayNode {
+        url,
+        quic: Some(RelayQuicConfig::default()),
+    })
 }
 
 /// ALPN protocol address.
@@ -784,7 +683,6 @@ async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
-    x509: bool,
 ) -> anyhow::Result<Endpoint> {
     tracing::info!(
         "public key: {}",
@@ -800,11 +698,6 @@ async fn make_endpoint(
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
-
-    let endpoint = match x509 {
-        true => endpoint.tls_x509(),
-        false => endpoint,
-    };
 
     let endpoint = match discovery {
         Some(discovery) => endpoint.discovery(discovery),
@@ -835,9 +728,8 @@ async fn connect(
     relay_url: Option<RelayUrl>,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
-    x509: bool,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, relay_map, discovery, x509).await?;
+    let endpoint = make_endpoint(secret_key, relay_map, discovery).await?;
 
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         tracing::info!("dialing {:?}", node_id);
@@ -847,7 +739,7 @@ async fn connect(
             Ok(connection) => {
                 let maybe_conn_type = endpoint.conn_type(node_id);
                 let gui = Gui::new(endpoint, node_id);
-                if let Ok(conn_type) = maybe_conn_type {
+                if let Some(conn_type) = maybe_conn_type {
                     log_connection_changes(gui.mp.clone(), node_id, conn_type);
                 }
 
@@ -894,9 +786,8 @@ async fn accept(
     config: TestConfig,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
-    tls_x509: bool,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery, tls_x509).await?;
+    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
 
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         let endpoints = endpoint
@@ -916,7 +807,7 @@ async fn accept(
             secret_key.public(),
             remote_addrs,
         );
-        if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive") {
+        if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive").pop() {
             println!(
                 "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
                 secret_key.public(),
@@ -953,7 +844,7 @@ async fn accept(
                             println!("Accepted connection from {}", remote_peer_id);
                             let t0 = Instant::now();
                             let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                            if let Ok(conn_type) = endpoint.conn_type(remote_peer_id) {
+                            if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
                                 log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
                             }
                             let res = active_side(&connection, &config, Some(&gui)).await;
@@ -990,7 +881,7 @@ async fn accept(
 fn log_connection_changes(
     pb: MultiProgress,
     node_id: NodeId,
-    mut conn_type: Watcher<ConnectionType>,
+    mut conn_type: n0_watcher::Direct<ConnectionType>,
 ) {
     tokio::spawn(async move {
         let start = Instant::now();
@@ -1236,10 +1127,14 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
     // doesn't start the server if the address is None
     let metrics_fut = config.metrics_addr.map(|metrics_addr| {
-        // metrics are initilaized in iroh::node::Node::spawn
-        // here we only start the server
+        let registry = iroh_metrics::Registry::default();
+        // TODO
+        // registry.register_all(endpoint.metrics());
+
         tokio::task::spawn(async move {
-            if let Err(e) = iroh_metrics::metrics::start_metrics_server(metrics_addr).await {
+            if let Err(e) =
+                iroh_metrics::service::start_metrics_server(metrics_addr, Arc::new(registry)).await
+            {
                 eprintln!("Failed to start metrics server: {e}");
             }
         })
@@ -1247,22 +1142,10 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     tracing::info!("Metrics server not started, no address provided");
     let cmd_res = match command {
         Commands::Report {
-            stun_host,
-            stun_port,
-            stun_ipv4,
-            stun_ipv6,
             quic_ipv4,
             quic_ipv6,
             https,
-            icmp_v4,
-            icmp_v6,
-        } => {
-            report(
-                stun_host, stun_port, config, stun_ipv4, stun_ipv6, quic_ipv4, quic_ipv6, https,
-                icmp_v4, icmp_v6,
-            )
-            .await
-        }
+        } => report(config, quic_ipv4, quic_ipv6, https).await,
         Commands::Connect {
             dial,
             secret_key,
@@ -1270,7 +1153,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             relay_url,
             remote_endpoint,
             disable_discovery,
-            tls_x509,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
@@ -1289,7 +1171,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 relay_url,
                 relay_map,
                 discovery,
-                tls_x509,
             )
             .await
         }
@@ -1299,7 +1180,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             size,
             iterations,
             disable_discovery,
-            tls_x509,
         } => {
             let relay_map = if local_relay_server {
                 Some(configure_local_relay_map())
@@ -1309,7 +1189,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
             let discovery = create_discovery(disable_discovery, &secret_key);
-            accept(secret_key, config, relay_map, discovery, tls_x509).await
+            accept(secret_key, config, relay_map, discovery).await
         }
         Commands::PortMap {
             protocol,

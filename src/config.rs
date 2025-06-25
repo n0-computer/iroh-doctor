@@ -89,7 +89,7 @@ impl NodeConfig {
         if self.relay_nodes.is_empty() {
             return Ok(None);
         }
-        Some(RelayMap::from_nodes(self.relay_nodes.iter().cloned())).transpose()
+        Ok(Some(RelayMap::from_iter(self.relay_nodes.iter().cloned())))
     }
 }
 
@@ -222,8 +222,6 @@ mod tests {
 
         let expected = RelayNode {
             url: Url::parse("https://example.org./").unwrap().into(),
-            stun_only: false,
-            stun_port: 123,
             quic: Some(RelayQuicConfig { port: 7842 }),
         };
         assert_eq!(config.relay_nodes, vec![expected]);
