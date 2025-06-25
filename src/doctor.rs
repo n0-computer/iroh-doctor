@@ -671,8 +671,6 @@ fn configure_local_relay_map() -> RelayMap {
     let url = "http://localhost:3340".parse().unwrap();
     RelayMap::from(RelayNode {
         url,
-        // stun_only: false,
-        // stun_port: iroh::defaults::DEFAULT_STUN_PORT,
         quic: Some(RelayQuicConfig::default()),
     })
 }
