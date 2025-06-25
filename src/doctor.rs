@@ -22,7 +22,7 @@ use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
@@ -682,8 +682,10 @@ const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
-    discovery: Option<Box<dyn Discovery>>,
-) -> anyhow::Result<Endpoint> {
+    discovery: Option<ConcurrentDiscovery>,
+    service_node: Option<NodeId>,
+    ssh_key: Option<PathBuf>,
+) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
@@ -710,6 +712,19 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind().await?;
 
+    let rpc_client = if let Some(remote_node) = service_node {
+        // Grab ssh key
+        let ssh_key_path = ssh_key.expect("missing ssh key location");
+        let client = iroh_n0des::Client::builder(&endpoint)
+            .ssh_key_from_file(ssh_key_path)
+            .await?
+            .build(remote_node)
+            .await?;
+        Some(client)
+    } else {
+        None
+    };
+
     tokio::time::timeout(
         Duration::from_secs(10),
         endpoint.direct_addresses().initialized(),
@@ -717,20 +732,16 @@ async fn make_endpoint(
     .await
     .context("wait for relay connection")??;
 
-    Ok(endpoint)
+    Ok((endpoint, rpc_client))
 }
 
 /// Connects to a [`NodeId`].
 async fn connect(
     node_id: NodeId,
-    secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
-    relay_map: Option<RelayMap>,
-    discovery: Option<Box<dyn Discovery>>,
+    endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, relay_map, discovery).await?;
-
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         tracing::info!("dialing {:?}", node_id);
         let node_addr = NodeAddr::from_parts(node_id, relay_url, direct_addresses);
@@ -784,11 +795,8 @@ fn format_addr(addr: SocketAddr) -> String {
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
-    relay_map: Option<RelayMap>,
-    discovery: Option<Box<dyn Discovery>>,
+    endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
-
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         let endpoints = endpoint
             .direct_addresses()
@@ -1108,21 +1116,29 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 /// Creates a [`Discovery`] service from a [`SecretKey`].
-fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<Box<dyn Discovery>> {
+fn create_discovery(
+    disable_discovery: bool,
+    secret_key: &SecretKey,
+) -> Option<ConcurrentDiscovery> {
     if disable_discovery {
         None
     } else {
-        Some(Box::new(ConcurrentDiscovery::from_services(vec![
+        Some(ConcurrentDiscovery::from_services(vec![
             // Enable DNS discovery by default
-            Box::new(DnsDiscovery::n0_dns()),
+            Box::new(DnsDiscovery::n0_dns().build()),
             // Enable pkarr publishing by default
-            Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
-        ])))
+            Box::new(PkarrPublisher::n0_dns().build(secret_key.clone())),
+        ]))
     }
 }
 
 /// Runs the doctor commands.
-pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
+pub async fn run(
+    command: Commands,
+    config: &NodeConfig,
+    service_node: Option<NodeId>,
+    ssh_key: Option<PathBuf>,
+) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
     // doesn't start the server if the address is None
@@ -1139,7 +1155,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             }
         })
     });
-    tracing::info!("Metrics server not started, no address provided");
+    if metrics_fut.is_none() {
+        tracing::info!("Metrics server not started, no address provided");
+    }
     let cmd_res = match command {
         Commands::Report {
             quic_ipv4,
@@ -1162,17 +1180,18 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-
             let discovery = create_discovery(disable_discovery, &secret_key);
-            connect(
-                dial,
-                secret_key,
-                remote_endpoint,
-                relay_url,
-                relay_map,
+
+            let (endpoint, _client) = make_endpoint(
+                secret_key.clone(),
+                relay_map.clone(),
                 discovery,
+                service_node,
+                ssh_key,
             )
-            .await
+            .await?;
+
+            connect(dial, remote_endpoint, relay_url, endpoint).await
         }
         Commands::Accept {
             secret_key,
@@ -1189,7 +1208,17 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
             let discovery = create_discovery(disable_discovery, &secret_key);
-            accept(secret_key, config, relay_map, discovery).await
+
+            let (endpoint, _client) = make_endpoint(
+                secret_key.clone(),
+                relay_map.clone(),
+                discovery,
+                service_node,
+                ssh_key,
+            )
+            .await?;
+
+            accept(secret_key, config, endpoint).await
         }
         Commands::PortMap {
             protocol,
