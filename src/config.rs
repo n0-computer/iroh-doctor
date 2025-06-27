@@ -79,6 +79,10 @@ impl NodeConfig {
         Ok(config)
     }
 
+    pub fn set_metrics_addr(&mut self, addr: SocketAddr) {
+        self.metrics_addr = Some(addr);
+    }
+
     fn load_toml(s: &str) -> Result<NodeConfig> {
         let config = toml::from_str(s)?;
         Ok(config)

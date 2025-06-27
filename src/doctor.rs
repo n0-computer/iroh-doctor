@@ -42,6 +42,7 @@ use tracing::warn;
 
 use crate::{
     config::{iroh_data_root, NodeConfig},
+    metrics::{IrohMetricsRegistry, MetricsRegistry},
     progress::ProgressWriter,
 };
 
@@ -446,8 +447,7 @@ impl Gui {
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!(
-                    "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
-                    relay_url, latency, conn_type, addrs
+                    "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
                 )
             }
             None => "connection info unavailable".to_string(),
@@ -685,6 +685,7 @@ async fn make_endpoint(
     discovery: Option<ConcurrentDiscovery>,
     service_node: Option<NodeId>,
     ssh_key: Option<PathBuf>,
+    metrics: IrohMetricsRegistry,
 ) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
     tracing::info!(
         "public key: {}",
@@ -711,6 +712,11 @@ async fn make_endpoint(
         None => endpoint,
     };
     let endpoint = endpoint.bind().await?;
+
+    {
+        let mut registry = metrics.write().expect("poisoned");
+        registry.register_all(endpoint.metrics());
+    }
 
     let rpc_client = if let Some(remote_node) = service_node {
         // Grab ssh key
@@ -849,7 +855,7 @@ async fn accept(
                             let Ok(remote_peer_id) = connection.remote_node_id() else {
                                 return;
                             };
-                            println!("Accepted connection from {}", remote_peer_id);
+                            println!("Accepted connection from {remote_peer_id}");
                             let t0 = Instant::now();
                             let gui = Gui::new(endpoint.clone(), remote_peer_id);
                             if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
@@ -1141,15 +1147,15 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
-    // doesn't start the server if the address is None
-    let metrics_fut = config.metrics_addr.map(|metrics_addr| {
-        let registry = iroh_metrics::Registry::default();
-        // TODO
-        // registry.register_all(endpoint.metrics());
 
+    let metrics = MetricsRegistry::default();
+    // doesn't start the server if the address is None
+    let metrics_clone = metrics.clone();
+    let metrics_fut = config.metrics_addr.map(|metrics_addr| {
         tokio::task::spawn(async move {
             if let Err(e) =
-                iroh_metrics::service::start_metrics_server(metrics_addr, Arc::new(registry)).await
+                iroh_metrics::service::start_metrics_server(metrics_addr, metrics_clone.clone())
+                    .await
             {
                 eprintln!("Failed to start metrics server: {e}");
             }
@@ -1188,6 +1194,7 @@ pub async fn run(
                 discovery,
                 service_node,
                 ssh_key,
+                metrics.iroh.clone(),
             )
             .await?;
 
@@ -1215,6 +1222,7 @@ pub async fn run(
                 discovery,
                 service_node,
                 ssh_key,
+                metrics.iroh.clone(),
             )
             .await?;
 
@@ -1379,18 +1387,18 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     // TODO(arqu): labels are incorrectly spaced for > 3 labels https://github.com/ratatui-org/ratatui/issues/334
     let x_labels = vec![
         Span::styled(
-            format!("{:.1}s", x_start),
+            format!("{x_start:.1}s"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!("{:.1}s", x_start + (x_end - x_start) / 2.0)),
         Span::styled(
-            format!("{:.1}s", x_end),
+            format!("{x_end:.1}s"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ];
 
     let mut y_labels = vec![Span::styled(
-        format!("{:.0}", y_start),
+        format!("{y_start:.0}"),
         Style::default().add_modifier(Modifier::BOLD),
     )];
 
@@ -1402,7 +1410,7 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     }
 
     y_labels.push(Span::styled(
-        format!("{:.0}", y_end),
+        format!("{y_end:.0}"),
         Style::default().add_modifier(Modifier::BOLD),
     ));
 
@@ -1410,7 +1418,7 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("Chart: {}", metric)),
+                .title(format!("Chart: {metric}")),
         )
         .x_axis(
             Axis::default()
