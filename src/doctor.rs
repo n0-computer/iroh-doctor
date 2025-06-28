@@ -225,9 +225,9 @@ enum TestStreamRequest {
 
 /// Configuration for testing.
 #[derive(Debug, Clone, Copy)]
-struct TestConfig {
-    size: u64,
-    iterations: Option<u64>,
+pub struct TestConfig {
+    pub size: u64,
+    pub iterations: Option<u64>,
 }
 
 /// Updates the progress bar.
@@ -798,7 +798,7 @@ fn format_addr(addr: SocketAddr) -> String {
 }
 
 /// Accepts the connections.
-async fn accept(
+pub async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
     endpoint: Endpoint,
