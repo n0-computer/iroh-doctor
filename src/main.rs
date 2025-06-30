@@ -2,6 +2,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
+use iroh::NodeId;
 use iroh_doctor::{config::NodeConfig, doctor::Commands};
 
 /// iroh-doctor is a tool for diagnosing network issues with iroh-net.
@@ -24,6 +25,13 @@ pub(crate) struct Cli {
     /// Write metrics in CSV format at 100ms intervals. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_dump_path: Option<PathBuf>,
+
+    /// Connect to this iroh service node and report metrics if set.
+    #[clap(long, requires("ssh_key"))]
+    pub(crate) service_node: Option<NodeId>,
+    /// Path to an ssh key to authenticate with.
+    #[clap(long, requires("service_node"))]
+    pub(crate) ssh_key: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -42,14 +50,10 @@ fn main() -> Result<()> {
 
 async fn main_impl() -> Result<()> {
     let cli = Cli::parse();
-    // TODO:
-    // iroh_metrics::core::Core::try_init(|reg, metrics| {
-    //     use iroh_metrics::core::Metric;
-    //     metrics.insert(iroh::metrics::MagicsockMetrics::new(reg));
-    //     metrics.insert(iroh::metrics::NetReportMetrics::new(reg));
-    //     metrics.insert(iroh::metrics::PortmapMetrics::new(reg));
-    // })
-    // .expect("should be first init");
-    let config = NodeConfig::load(cli.config.as_deref()).await?;
-    iroh_doctor::doctor::run(cli.command, &config).await
+
+    let mut config = NodeConfig::load(cli.config.as_deref()).await?;
+    if let Some(addr) = cli.metrics_addr {
+        config.set_metrics_addr(addr);
+    }
+    iroh_doctor::doctor::run(cli.command, &config, cli.service_node, cli.ssh_key).await
 }

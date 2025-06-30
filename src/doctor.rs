@@ -22,7 +22,7 @@ use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
@@ -42,6 +42,7 @@ use tracing::warn;
 
 use crate::{
     config::{iroh_data_root, NodeConfig},
+    metrics::{IrohMetricsRegistry, MetricsRegistry},
     progress::ProgressWriter,
 };
 
@@ -446,8 +447,7 @@ impl Gui {
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!(
-                    "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
-                    relay_url, latency, conn_type, addrs
+                    "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
                 )
             }
             None => "connection info unavailable".to_string(),
@@ -682,8 +682,11 @@ const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
-    discovery: Option<Box<dyn Discovery>>,
-) -> anyhow::Result<Endpoint> {
+    discovery: Option<ConcurrentDiscovery>,
+    service_node: Option<NodeId>,
+    ssh_key: Option<PathBuf>,
+    metrics: IrohMetricsRegistry,
+) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
@@ -710,6 +713,24 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind().await?;
 
+    {
+        let mut registry = metrics.write().expect("poisoned");
+        registry.register_all(endpoint.metrics());
+    }
+
+    let rpc_client = if let Some(remote_node) = service_node {
+        // Grab ssh key
+        let ssh_key_path = ssh_key.expect("missing ssh key location");
+        let client = iroh_n0des::Client::builder(&endpoint)
+            .ssh_key_from_file(ssh_key_path)
+            .await?
+            .build(remote_node)
+            .await?;
+        Some(client)
+    } else {
+        None
+    };
+
     tokio::time::timeout(
         Duration::from_secs(10),
         endpoint.direct_addresses().initialized(),
@@ -717,20 +738,16 @@ async fn make_endpoint(
     .await
     .context("wait for relay connection")??;
 
-    Ok(endpoint)
+    Ok((endpoint, rpc_client))
 }
 
 /// Connects to a [`NodeId`].
 async fn connect(
     node_id: NodeId,
-    secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
-    relay_map: Option<RelayMap>,
-    discovery: Option<Box<dyn Discovery>>,
+    endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, relay_map, discovery).await?;
-
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         tracing::info!("dialing {:?}", node_id);
         let node_addr = NodeAddr::from_parts(node_id, relay_url, direct_addresses);
@@ -784,11 +801,8 @@ fn format_addr(addr: SocketAddr) -> String {
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
-    relay_map: Option<RelayMap>,
-    discovery: Option<Box<dyn Discovery>>,
+    endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
-
     futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
         let endpoints = endpoint
             .direct_addresses()
@@ -841,7 +855,7 @@ async fn accept(
                             let Ok(remote_peer_id) = connection.remote_node_id() else {
                                 return;
                             };
-                            println!("Accepted connection from {}", remote_peer_id);
+                            println!("Accepted connection from {remote_peer_id}");
                             let t0 = Instant::now();
                             let gui = Gui::new(endpoint.clone(), remote_peer_id);
                             if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
@@ -1108,38 +1122,48 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 /// Creates a [`Discovery`] service from a [`SecretKey`].
-fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<Box<dyn Discovery>> {
+fn create_discovery(
+    disable_discovery: bool,
+    secret_key: &SecretKey,
+) -> Option<ConcurrentDiscovery> {
     if disable_discovery {
         None
     } else {
-        Some(Box::new(ConcurrentDiscovery::from_services(vec![
+        Some(ConcurrentDiscovery::from_services(vec![
             // Enable DNS discovery by default
-            Box::new(DnsDiscovery::n0_dns()),
+            Box::new(DnsDiscovery::n0_dns().build()),
             // Enable pkarr publishing by default
-            Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
-        ])))
+            Box::new(PkarrPublisher::n0_dns().build(secret_key.clone())),
+        ]))
     }
 }
 
 /// Runs the doctor commands.
-pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
+pub async fn run(
+    command: Commands,
+    config: &NodeConfig,
+    service_node: Option<NodeId>,
+    ssh_key: Option<PathBuf>,
+) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
-    // doesn't start the server if the address is None
-    let metrics_fut = config.metrics_addr.map(|metrics_addr| {
-        let registry = iroh_metrics::Registry::default();
-        // TODO
-        // registry.register_all(endpoint.metrics());
 
+    let metrics = MetricsRegistry::default();
+    // doesn't start the server if the address is None
+    let metrics_clone = metrics.clone();
+    let metrics_fut = config.metrics_addr.map(|metrics_addr| {
         tokio::task::spawn(async move {
             if let Err(e) =
-                iroh_metrics::service::start_metrics_server(metrics_addr, Arc::new(registry)).await
+                iroh_metrics::service::start_metrics_server(metrics_addr, metrics_clone.clone())
+                    .await
             {
                 eprintln!("Failed to start metrics server: {e}");
             }
         })
     });
-    tracing::info!("Metrics server not started, no address provided");
+    if metrics_fut.is_none() {
+        tracing::info!("Metrics server not started, no address provided");
+    }
     let cmd_res = match command {
         Commands::Report {
             quic_ipv4,
@@ -1162,17 +1186,19 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-
             let discovery = create_discovery(disable_discovery, &secret_key);
-            connect(
-                dial,
-                secret_key,
-                remote_endpoint,
-                relay_url,
-                relay_map,
+
+            let (endpoint, _client) = make_endpoint(
+                secret_key.clone(),
+                relay_map.clone(),
                 discovery,
+                service_node,
+                ssh_key,
+                metrics.iroh.clone(),
             )
-            .await
+            .await?;
+
+            connect(dial, remote_endpoint, relay_url, endpoint).await
         }
         Commands::Accept {
             secret_key,
@@ -1189,7 +1215,18 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
             let discovery = create_discovery(disable_discovery, &secret_key);
-            accept(secret_key, config, relay_map, discovery).await
+
+            let (endpoint, _client) = make_endpoint(
+                secret_key.clone(),
+                relay_map.clone(),
+                discovery,
+                service_node,
+                ssh_key,
+                metrics.iroh.clone(),
+            )
+            .await?;
+
+            accept(secret_key, config, endpoint).await
         }
         Commands::PortMap {
             protocol,
@@ -1350,18 +1387,18 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     // TODO(arqu): labels are incorrectly spaced for > 3 labels https://github.com/ratatui-org/ratatui/issues/334
     let x_labels = vec![
         Span::styled(
-            format!("{:.1}s", x_start),
+            format!("{x_start:.1}s"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!("{:.1}s", x_start + (x_end - x_start) / 2.0)),
         Span::styled(
-            format!("{:.1}s", x_end),
+            format!("{x_end:.1}s"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ];
 
     let mut y_labels = vec![Span::styled(
-        format!("{:.0}", y_start),
+        format!("{y_start:.0}"),
         Style::default().add_modifier(Modifier::BOLD),
     )];
 
@@ -1373,7 +1410,7 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
     }
 
     y_labels.push(Span::styled(
-        format!("{:.0}", y_end),
+        format!("{y_end:.0}"),
         Style::default().add_modifier(Modifier::BOLD),
     ));
 
@@ -1381,7 +1418,7 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("Chart: {}", metric)),
+                .title(format!("Chart: {metric}")),
         )
         .x_axis(
             Axis::default()
