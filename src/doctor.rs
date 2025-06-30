@@ -676,7 +676,7 @@ fn configure_local_relay_map() -> RelayMap {
 }
 
 /// ALPN protocol address.
-const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
+const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
 /// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
 async fn make_endpoint(
