@@ -748,35 +748,32 @@ async fn connect(
     relay_url: Option<RelayUrl>,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-        tracing::info!("dialing {:?}", node_id);
-        let node_addr = NodeAddr::from_parts(node_id, relay_url, direct_addresses);
-        let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
-        match conn {
-            Ok(connection) => {
-                let maybe_conn_type = endpoint.conn_type(node_id);
-                let gui = Gui::new(endpoint, node_id);
-                if let Some(conn_type) = maybe_conn_type {
-                    log_connection_changes(gui.mp.clone(), node_id, conn_type);
-                }
-
-                let close_reason = connection
-                    .close_reason()
-                    .map(|e| format!(" (reason: {e})"))
-                    .unwrap_or_default();
-
-                if let Err(cause) = passive_side(gui, &connection).await {
-                    eprintln!("error handling connection: {cause}{close_reason}");
-                } else {
-                    eprintln!("Connection closed{close_reason}");
-                }
+    tracing::info!("dialing {:?}", node_id);
+    let node_addr = NodeAddr::from_parts(node_id, relay_url, direct_addresses);
+    let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
+    match conn {
+        Ok(connection) => {
+            let maybe_conn_type = endpoint.conn_type(node_id);
+            let gui = Gui::new(endpoint, node_id);
+            if let Some(conn_type) = maybe_conn_type {
+                log_connection_changes(gui.mp.clone(), node_id, conn_type);
             }
-            Err(cause) => {
-                eprintln!("unable to connect to {node_id}: {cause}");
+
+            let close_reason = connection
+                .close_reason()
+                .map(|e| format!(" (reason: {e})"))
+                .unwrap_or_default();
+
+            if let Err(cause) = passive_side(gui, &connection).await {
+                eprintln!("error handling connection: {cause}{close_reason}");
+            } else {
+                eprintln!("Connection closed{close_reason}");
             }
         }
-    })
-    .await;
+        Err(cause) => {
+            eprintln!("unable to connect to {node_id}: {cause}");
+        }
+    }
 
     Ok(())
 }
@@ -803,90 +800,87 @@ pub async fn accept(
     config: TestConfig,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-        let endpoints = endpoint
-            .direct_addresses()
-            .initialized()
-            .await
-            .expect("endpoint alive");
+    let endpoints = endpoint
+        .direct_addresses()
+        .initialized()
+        .await
+        .expect("endpoint alive");
 
-        let remote_addrs = endpoints
-            .iter()
-            .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!("Connect to this node using one of the following commands:\n");
+    let remote_addrs = endpoints
+        .iter()
+        .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("Connect to this node using one of the following commands:\n");
+    println!(
+        "\tUsing the relay url and direct connections:\niroh-doctor connect {} {}\n",
+        secret_key.public(),
+        remote_addrs,
+    );
+    if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive").pop() {
         println!(
-            "\tUsing the relay url and direct connections:\niroh-doctor connect {} {}\n",
+            "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
-            remote_addrs,
+            relay_url,
         );
-        if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive").pop() {
-            println!(
-                "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
-                secret_key.public(),
-                relay_url,
-            );
-        }
-        if endpoint.discovery().is_some() {
-            println!(
-                "\tUsing just the node id:\niroh-doctor connect {}\n",
-                secret_key.public(),
-            );
-        }
-        let connections = Arc::new(AtomicU64::default());
-        while let Some(incoming) = endpoint.accept().await {
-            let connecting = match incoming.accept() {
-                Ok(connecting) => connecting,
-                Err(err) => {
-                    warn!("incoming connection failed: {err:#}");
-                    // we can carry on in these cases:
-                    // this can be caused by retransmitted datagrams
-                    continue;
+    }
+    if endpoint.discovery().is_some() {
+        println!(
+            "\tUsing just the node id:\niroh-doctor connect {}\n",
+            secret_key.public(),
+        );
+    }
+    let connections = Arc::new(AtomicU64::default());
+    while let Some(incoming) = endpoint.accept().await {
+        let connecting = match incoming.accept() {
+            Ok(connecting) => connecting,
+            Err(err) => {
+                warn!("incoming connection failed: {err:#}");
+                // we can carry on in these cases:
+                // this can be caused by retransmitted datagrams
+                continue;
+            }
+        };
+        let connections = connections.clone();
+        let endpoint = endpoint.clone();
+        tokio::task::spawn(async move {
+            let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
+            match connecting.await {
+                Ok(connection) => {
+                    if n == 0 {
+                        let Ok(remote_peer_id) = connection.remote_node_id() else {
+                            return;
+                        };
+                        println!("Accepted connection from {remote_peer_id}");
+                        let t0 = Instant::now();
+                        let gui = Gui::new(endpoint.clone(), remote_peer_id);
+                        if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
+                            log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
+                        }
+                        let res = active_side(&connection, &config, Some(&gui)).await;
+                        gui.clear();
+                        let dt = t0.elapsed().as_secs_f64();
+                        if let Err(cause) = res {
+                            let close_reason = connection
+                                .close_reason()
+                                .map(|e| format!(" (reason: {e})"))
+                                .unwrap_or_default();
+                            eprintln!("Test finished after {dt}s: {cause}{close_reason}",);
+                        } else {
+                            eprintln!("Test finished after {dt}s",);
+                        }
+                    } else {
+                        // silent
+                        active_side(&connection, &config, None).await.ok();
+                    }
+                }
+                Err(cause) => {
+                    eprintln!("error accepting connection {cause}");
                 }
             };
-            let connections = connections.clone();
-            let endpoint = endpoint.clone();
-            tokio::task::spawn(async move {
-                let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
-                match connecting.await {
-                    Ok(connection) => {
-                        if n == 0 {
-                            let Ok(remote_peer_id) = connection.remote_node_id() else {
-                                return;
-                            };
-                            println!("Accepted connection from {remote_peer_id}");
-                            let t0 = Instant::now();
-                            let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                            if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
-                                log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
-                            }
-                            let res = active_side(&connection, &config, Some(&gui)).await;
-                            gui.clear();
-                            let dt = t0.elapsed().as_secs_f64();
-                            if let Err(cause) = res {
-                                let close_reason = connection
-                                    .close_reason()
-                                    .map(|e| format!(" (reason: {e})"))
-                                    .unwrap_or_default();
-                                eprintln!("Test finished after {dt}s: {cause}{close_reason}",);
-                            } else {
-                                eprintln!("Test finished after {dt}s",);
-                            }
-                        } else {
-                            // silent
-                            active_side(&connection, &config, None).await.ok();
-                        }
-                    }
-                    Err(cause) => {
-                        eprintln!("error accepting connection {cause}");
-                    }
-                };
-                connections.sub(1, portable_atomic::Ordering::SeqCst);
-            });
-        }
-    })
-    .await;
+            connections.sub(1, portable_atomic::Ordering::SeqCst);
+        });
+    }
 
     Ok(())
 }
@@ -1198,7 +1192,14 @@ pub async fn run(
             )
             .await?;
 
-            connect(dial, remote_endpoint, relay_url, endpoint).await
+            futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
+                if let Err(e) = connect(dial, remote_endpoint, relay_url, endpoint).await {
+                    eprintln!("connect error: {e}");
+                }
+            })
+            .await;
+
+            Ok(())
         }
         Commands::Accept {
             secret_key,
@@ -1226,7 +1227,14 @@ pub async fn run(
             )
             .await?;
 
-            accept(secret_key, config, endpoint).await
+            futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
+                if let Err(e) = accept(secret_key, config, endpoint).await {
+                    eprintln!("accept error: {e}");
+                }
+            })
+            .await;
+
+            Ok(())
         }
         Commands::PortMap {
             protocol,
