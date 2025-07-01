@@ -6,8 +6,8 @@ readme = "README.md"
 description = "Diagnose and test iroh in your network configuration"
 license = "MIT OR Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
-repository = "https://github.com/n0-computer/iroh"
-keywords = ["networking", "p2p", "holepunching"]
+repository = "https://github.com/n0-computer/iroh-doctor"
+keywords = ["networking", "p2p", "holepunching", "diagnostics", "iroh"]
 
 [dependencies]
 anyhow = "1.0.90"
@@ -23,7 +23,7 @@ hex = "0.4.3"
 indicatif = { version = "0.17.8", features = ["tokio"] }
 iroh = { version = "0.90", features = ["metrics"] }
 iroh-metrics = { version = "0.35", features = ["service", "static_core"] }
-iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "main" }
+iroh-n0des = "0.1.0"
 iroh-relay = "0.90"
 netwatch = { version = "0.6" }
 n0-watcher = "0.2"
