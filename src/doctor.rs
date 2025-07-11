@@ -126,6 +126,12 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
+
+        /// Bind to this specific socket address.
+        ///
+        /// Default is `None`, which means the endpoint will bind to a random port.
+        #[clap(long)]
+        socket_addr: Option<SocketAddr>,
     },
     /// Connect to an iroh doctor accept node.
     Connect {
@@ -164,6 +170,12 @@ pub enum Commands {
         /// Default is `false`
         #[clap(long, default_value_t = false)]
         disable_discovery: bool,
+
+        /// Bind to this specific socket address.
+        ///
+        /// Default is `None`, which means the endpoint will bind to a random port.
+        #[clap(long)]
+        socket_addr: Option<SocketAddr>,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -686,6 +698,7 @@ async fn make_endpoint(
     service_node: Option<NodeId>,
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
+    socket_addr: Option<SocketAddr>,
 ) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
     tracing::info!(
         "public key: {}",
@@ -697,10 +710,21 @@ async fn make_endpoint(
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-    let endpoint = Endpoint::builder()
+    let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
+
+    if let Some(address) = socket_addr {
+        match address {
+            SocketAddr::V6(addr) => {
+                endpoint = endpoint.bind_addr_v6(addr);
+            }
+            SocketAddr::V4(addr) => {
+                endpoint = endpoint.bind_addr_v4(addr);
+            }
+        }
+    }
 
     let endpoint = match discovery {
         Some(discovery) => endpoint.discovery(discovery),
@@ -1171,6 +1195,7 @@ pub async fn run(
             relay_url,
             remote_endpoint,
             disable_discovery,
+            socket_addr,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
@@ -1189,6 +1214,7 @@ pub async fn run(
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
+                socket_addr,
             )
             .await?;
 
@@ -1207,6 +1233,7 @@ pub async fn run(
             size,
             iterations,
             disable_discovery,
+            socket_addr,
         } => {
             let relay_map = if local_relay_server {
                 Some(configure_local_relay_map())
@@ -1224,6 +1251,7 @@ pub async fn run(
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
+                socket_addr,
             )
             .await?;
 
