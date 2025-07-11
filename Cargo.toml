@@ -20,7 +20,7 @@ dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
-indicatif = { version = "0.17.8", features = ["tokio"] }
+indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.90", features = ["metrics"] }
 iroh-metrics = { version = "0.35", features = ["service", "static_core"] }
 iroh-n0des = "0.1.0"
@@ -35,7 +35,10 @@ prometheus-client = "0.22"
 quinn = { package = "iroh-quinn", version = "0.14" }
 rand = "0.8.5"
 ratatui = "0.29.0"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"
