@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-doctor"
-version = "0.90.0"
+version = "0.90.1"
 dependencies = [
  "anyhow",
  "async-channel",
