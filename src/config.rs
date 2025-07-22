@@ -223,6 +223,8 @@ mod tests {
         let expected = RelayNode {
             url: Url::parse("https://example.org./").unwrap().into(),
             quic: Some(RelayQuicConfig { port: 7842 }),
+            stun_only: false,
+            stun_port: 123,
         };
         assert_eq!(config.relay_nodes, vec![expected]);
     }

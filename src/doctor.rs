@@ -22,6 +22,7 @@ use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
+    defaults::DEFAULT_STUN_PORT,
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
@@ -30,7 +31,6 @@ use iroh::{
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::{client::SendMessage, RelayQuicConfig};
-use n0_watcher::Watcher;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -672,6 +672,8 @@ fn configure_local_relay_map() -> RelayMap {
     RelayMap::from(RelayNode {
         url,
         quic: Some(RelayQuicConfig::default()),
+        stun_only: false,
+        stun_port: DEFAULT_STUN_PORT,
     })
 }
 
@@ -737,11 +739,9 @@ async fn connect(
         let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
         match conn {
             Ok(connection) => {
-                let maybe_conn_type = endpoint.conn_type(node_id);
+                let conn_type = endpoint.conn_type(node_id).unwrap();
                 let gui = Gui::new(endpoint, node_id);
-                if let Some(conn_type) = maybe_conn_type {
-                    log_connection_changes(gui.mp.clone(), node_id, conn_type);
-                }
+                log_connection_changes(gui.mp.clone(), node_id, conn_type);
 
                 let close_reason = connection
                     .close_reason()
@@ -807,7 +807,7 @@ async fn accept(
             secret_key.public(),
             remote_addrs,
         );
-        if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive").pop() {
+        if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive").take() {
             println!(
                 "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
                 secret_key.public(),
@@ -844,9 +844,8 @@ async fn accept(
                             println!("Accepted connection from {}", remote_peer_id);
                             let t0 = Instant::now();
                             let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                            if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
-                                log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
-                            }
+                            let conn_type = endpoint.conn_type(remote_peer_id).unwrap();
+                            log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
                             let res = active_side(&connection, &config, Some(&gui)).await;
                             gui.clear();
                             let dt = t0.elapsed().as_secs_f64();
@@ -881,7 +880,7 @@ async fn accept(
 fn log_connection_changes(
     pb: MultiProgress,
     node_id: NodeId,
-    mut conn_type: n0_watcher::Direct<ConnectionType>,
+    mut conn_type: iroh::watchable::Watcher<ConnectionType>,
 ) {
     tokio::spawn(async move {
         let start = Instant::now();

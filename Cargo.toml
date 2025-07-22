@@ -51,5 +51,5 @@ iroh-base = "0.35"
 url = "2.5.2"
 
 [patch.crates-io]
-iroh = { git = "https://github.com/n0-computer/iroh", branch = "main" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "main" }
+iroh = { git = "https://github.com/n0-computer/iroh", branch = "matheus23/refactor-path-validity" }
+iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "matheus23/refactor-path-validity" }
