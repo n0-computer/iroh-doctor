@@ -15,7 +15,7 @@ async-channel = "2.3.1"
 clap = { version = "4.5.20", features = ["derive"] }
 console = "0.15.8"
 crossterm = "0.28.1"
-derive_more = { version = "1.0.0", features = ["display"] }
+derive_more = { version = "1.0.0", features = ["display", "from_str"] }
 dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 futures-util = "0.3"
@@ -26,7 +26,7 @@ iroh-metrics = { version = "0.35", features = ["service", "static_core"] }
 iroh-n0des = "0.1.0"
 iroh-relay = "0.90"
 netwatch = { version = "0.6" }
-n0-watcher = "0.2"
+n0-watcher = "0.3"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
