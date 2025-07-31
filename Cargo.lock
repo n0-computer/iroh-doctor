@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "acto"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a026259da4f1a13b4af60cda453c392de64c58c12d239c560923e0382f42f2b9"
+dependencies = [
+ "parking_lot",
+ "pin-project-lite",
+ "rustc_version",
+ "smol_str",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1883,8 +1897,9 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.90.0"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#bcb60d42fecd79fcc5e4d064f410367a3f7aa0b2"
+version = "0.91.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef05c956df0788a649d65c33fdbbb8fc4442d7716af3d67a1bd6d00a9ee56ead"
 dependencies = [
  "aead",
  "backon",
@@ -1930,6 +1945,7 @@ dependencies = [
  "strum 0.27.1",
  "stun-rs",
  "surge-ping",
+ "swarm-discovery",
  "time",
  "tokio",
  "tokio-stream",
@@ -1943,8 +1959,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.90.0"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#bcb60d42fecd79fcc5e4d064f410367a3f7aa0b2"
+version = "0.91.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f68b5c5e190d8965699b2fd583f301a7e6094a0b89bb4d6c5baa94761fd1b7a3"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1981,7 +1998,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-relay",
  "n0-watcher 0.3.0",
- "netwatch 0.6.0",
+ "netwatch 0.7.0",
  "pkarr 2.3.1",
  "portable-atomic",
  "portmapper 0.6.1",
@@ -2038,27 +2055,43 @@ dependencies = [
 
 [[package]]
 name = "iroh-n0des"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1ffaf149d53894381a2b77d278990cd58c7c1bc243f53e313e1fd026bc4dffd"
+checksum = "00a9664caafd50e1bf311e9ae984de363941408ae20bd8bb03780a81fad307cc"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
  "ed25519-dalek",
  "iroh",
  "iroh-metrics",
+ "iroh-n0des-macro",
+ "iroh-quinn",
  "irpc",
  "irpc-iroh",
  "n0-future",
  "rand 0.8.5",
  "rcan",
  "serde",
+ "serde_json",
  "ssh-key",
  "strum 0.27.1",
  "thiserror 2.0.12",
+ "time",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "iroh-n0des-macro"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e15d38b6ae3d9480e49883bea72880f80d595276e34090f5096d844e6f7f5e40"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2118,8 +2151,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.90.0"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#bcb60d42fecd79fcc5e4d064f410367a3f7aa0b2"
+version = "0.91.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49596b5079817d0904fe4985307f532a4e23a33eb494bd680baaf2743f0c456b"
 dependencies = [
  "blake3",
  "bytes",
@@ -2167,9 +2201,9 @@ dependencies = [
 
 [[package]]
 name = "irpc"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b355fe12226ee885e1c1056a867c2cf37be2b22032a16f5ab7091069e98a966f"
+checksum = "a9f8f1d0987ea9da3d74698f921d0a817a214c83b2635a33ed4bc3efa4de1acd"
 dependencies = [
  "anyhow",
  "futures-buffered",
@@ -2190,9 +2224,9 @@ dependencies = [
 
 [[package]]
 name = "irpc-derive"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efeabe1ee5615ea0416340b1a6d71a16f971495859c87fad48633b6497ee7a77"
+checksum = "3e0b26b834d401a046dd9d47bc236517c746eddbb5d25ff3e1a6075bfa4eebdb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2201,9 +2235,9 @@ dependencies = [
 
 [[package]]
 name = "irpc-iroh"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9585893d9039f21e1406818d5bb3bc445ac4fa1b3aa2eb46a8bbd5963b11f77"
+checksum = "f5926531af491c6962db4d79f43ea219404cb800889922a728b1d3b92f887eda"
 dependencies = [
  "anyhow",
  "getrandom 0.3.3",
@@ -2685,6 +2719,41 @@ dependencies = [
  "windows 0.59.0",
  "windows-result",
  "wmi 0.14.5",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d0445cbbb4d6d1afe22f4d1c14da2a2eb598a98b83650f15f988050bceefea5"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "cfg_aliases",
+ "derive_more 2.0.1",
+ "iroh-quinn-udp",
+ "js-sys",
+ "libc",
+ "n0-future",
+ "n0-watcher 0.2.0",
+ "nested_enum_utils",
+ "netdev 0.36.0",
+ "netlink-packet-core",
+ "netlink-packet-route 0.24.0",
+ "netlink-proto",
+ "netlink-sys",
+ "pin-project-lite",
+ "serde",
+ "snafu",
+ "socket2 0.6.0",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "web-sys",
+ "windows 0.61.3",
+ "windows-result",
+ "wmi 0.17.2",
 ]
 
 [[package]]
@@ -4209,6 +4278,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
+name = "smol_str"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
+
+[[package]]
 name = "snafu"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4415,6 +4490,21 @@ dependencies = [
  "rand 0.9.1",
  "socket2 0.5.10",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "swarm-discovery"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4eae338a4551897c6a50fa2c041c4b75f578962d9fca8adb828cf81f7158740f"
+dependencies = [
+ "acto",
+ "hickory-proto",
+ "rand 0.9.1",
+ "socket2 0.5.10",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -4844,6 +4934,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4853,12 +4953,15 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

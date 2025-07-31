@@ -21,11 +21,11 @@ futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
-iroh = { version = "0.90", features = ["metrics"] }
+iroh = { version = "0.91", features = ["metrics"] }
 iroh-metrics = { version = "0.35", features = ["service", "static_core"] }
-iroh-n0des = "0.1.0"
-iroh-relay = "0.90"
-netwatch = { version = "0.6" }
+iroh-n0des = "0.2.0"
+iroh-relay = "0.91"
+netwatch = { version = "0.7" }
 n0-watcher = "0.3"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
@@ -52,10 +52,5 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 
 [dev-dependencies]
-iroh-base = "0.90"
+iroh-base = "0.91"
 url = "2.5.2"
-
-[patch.crates-io]
-iroh = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
-iroh-base = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh.git", branch = "main" }
