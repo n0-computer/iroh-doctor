@@ -26,11 +26,13 @@ use iroh::{
     dns::DnsResolver,
     endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
     metrics::MagicsockMetrics,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
-use iroh_relay::{client::SendMessage, RelayQuicConfig};
-use n0_watcher::Watcher;
+use iroh_relay::{
+    protos::relay::{ClientToRelayMsg, RelayToClientMsg},
+    RelayQuicConfig,
+};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -760,7 +762,7 @@ async fn make_endpoint(
         endpoint.direct_addresses().initialized(),
     )
     .await
-    .context("wait for relay connection")??;
+    .context("wait for relay connection")?;
 
     Ok((endpoint, rpc_client))
 }
@@ -824,11 +826,7 @@ pub async fn accept(
     config: TestConfig,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoints = endpoint
-        .direct_addresses()
-        .initialized()
-        .await
-        .expect("endpoint alive");
+    let endpoints = endpoint.direct_addresses().initialized().await;
 
     let remote_addrs = endpoints
         .iter()
@@ -841,7 +839,7 @@ pub async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.home_relay().get().expect("endpoint alive").pop() {
+    if let Some(relay_url) = endpoint.home_relay().get().pop() {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
@@ -1067,11 +1065,11 @@ async fn ping(client: iroh_relay::client::Client) -> anyhow::Result<Duration> {
     let (mut client_stream, mut client_sink) = client.split();
     let data: [u8; 8] = rand::random();
     let start = Instant::now();
-    client_sink.send(SendMessage::Ping(data)).await?;
+    client_sink.send(ClientToRelayMsg::Ping(data)).await?;
     match tokio::time::timeout(Duration::from_secs(2), async move {
         while let Some(res) = client_stream.next().await {
             let res = res?;
-            if let iroh_relay::client::ReceivedMessage::Pong(d) = res {
+            if let RelayToClientMsg::Pong(d) = res {
                 if d == data {
                     return Ok(start.elapsed());
                 }
