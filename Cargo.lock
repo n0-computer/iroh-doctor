@@ -1885,67 +1885,6 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.90.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9436f319c2d24bca1b28a2fab4477c8d2ac795ab2d3aeda142d207b38ec068f4"
-dependencies = [
- "aead",
- "backon",
- "bytes",
- "cfg_aliases",
- "crypto_box",
- "data-encoding",
- "der",
- "derive_more 1.0.0",
- "ed25519-dalek",
- "futures-buffered",
- "futures-util",
- "getrandom 0.3.3",
- "hickory-resolver",
- "http",
- "igd-next",
- "instant",
- "iroh-base 0.90.0",
- "iroh-metrics",
- "iroh-quinn",
- "iroh-quinn-proto",
- "iroh-quinn-udp",
- "iroh-relay 0.90.0",
- "n0-future",
- "n0-snafu",
- "n0-watcher 0.2.0",
- "nested_enum_utils",
- "netdev 0.31.0",
- "netwatch 0.6.0",
- "pin-project",
- "pkarr 3.10.0",
- "portmapper 0.6.1",
- "rand 0.8.5",
- "reqwest",
- "ring",
- "rustls",
- "rustls-pki-types",
- "rustls-webpki",
- "serde",
- "smallvec",
- "snafu",
- "spki",
- "strum 0.26.3",
- "stun-rs",
- "surge-ping",
- "time",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "url",
- "wasm-bindgen-futures",
- "webpki-roots 0.26.11",
- "z32",
-]
-
-[[package]]
-name = "iroh"
 version = "0.91.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e52be9b8f33833ec080042f82035f87e90762c44be67b8c1aa0c593ff31a97d3"
@@ -1966,12 +1905,12 @@ dependencies = [
  "http",
  "igd-next",
  "instant",
- "iroh-base 0.91.2",
+ "iroh-base",
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
- "iroh-relay 0.91.2",
+ "iroh-relay",
  "n0-future",
  "n0-snafu",
  "n0-watcher 0.3.0",
@@ -2008,24 +1947,6 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.90.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e0090050c4055b21e61cbcb856f043a2b24ad22c65d76bab91f121b4c7bece3"
-dependencies = [
- "curve25519-dalek",
- "data-encoding",
- "derive_more 1.0.0",
- "ed25519-dalek",
- "n0-snafu",
- "nested_enum_utils",
- "rand_core 0.6.4",
- "serde",
- "snafu",
- "url",
-]
-
-[[package]]
-name = "iroh-base"
 version = "0.91.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42393ff3628e5c765acdceb7da693d5f7869ec4c92599a83fa62368b15b0034e"
@@ -2058,14 +1979,14 @@ dependencies = [
  "futures-util",
  "hex",
  "indicatif",
- "iroh 0.91.2",
- "iroh-base 0.91.2",
+ "iroh",
+ "iroh-base",
  "iroh-metrics",
  "iroh-n0des",
  "iroh-quinn",
- "iroh-relay 0.91.2",
- "irpc 0.5.0",
- "irpc-iroh 0.5.0",
+ "iroh-relay",
+ "irpc",
+ "irpc-iroh",
  "n0-watcher 0.3.0",
  "netwatch 0.7.0",
  "pkarr 2.3.1",
@@ -2134,12 +2055,12 @@ dependencies = [
  "anyhow",
  "derive_more 2.0.1",
  "ed25519-dalek",
- "iroh 0.91.2",
+ "iroh",
  "iroh-metrics",
  "iroh-n0des-macro",
  "iroh-quinn",
- "irpc 0.7.0",
- "irpc-iroh 0.7.0",
+ "irpc",
+ "irpc-iroh",
  "n0-future",
  "rand 0.8.5",
  "rcan",
@@ -2223,54 +2144,6 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.90.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3f3cdbdaebc92835452e4e1d0d4b36118206b0950089b7bc3654f13e843475b"
-dependencies = [
- "bytes",
- "cfg_aliases",
- "data-encoding",
- "derive_more 1.0.0",
- "getrandom 0.3.3",
- "hickory-resolver",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "iroh-base 0.90.0",
- "iroh-metrics",
- "iroh-quinn",
- "iroh-quinn-proto",
- "lru 0.13.0",
- "n0-future",
- "n0-snafu",
- "nested_enum_utils",
- "num_enum",
- "pin-project",
- "pkarr 3.10.0",
- "postcard",
- "rand 0.8.5",
- "reqwest",
- "rustls",
- "rustls-pki-types",
- "rustls-webpki",
- "serde",
- "sha1",
- "snafu",
- "strum 0.26.3",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "tokio-websockets 0.11.4",
- "tracing",
- "url",
- "webpki-roots 0.26.11",
- "ws_stream_wasm",
- "z32",
-]
-
-[[package]]
-name = "iroh-relay"
 version = "0.91.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af1e4930e35b95957524aa08af0d27347156ff947f238f2b20d3e6da899fbdba"
@@ -2286,7 +2159,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "iroh-base 0.91.2",
+ "iroh-base",
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
@@ -2311,35 +2184,12 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
- "tokio-websockets 0.12.0",
+ "tokio-websockets",
  "tracing",
  "url",
  "webpki-roots 0.26.11",
  "ws_stream_wasm",
  "z32",
-]
-
-[[package]]
-name = "irpc"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b355fe12226ee885e1c1056a867c2cf37be2b22032a16f5ab7091069e98a966f"
-dependencies = [
- "anyhow",
- "futures-buffered",
- "futures-util",
- "iroh-quinn",
- "irpc-derive 0.4.0",
- "n0-future",
- "postcard",
- "rcgen",
- "rustls",
- "serde",
- "smallvec",
- "thiserror 2.0.12",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -2352,7 +2202,7 @@ dependencies = [
  "futures-buffered",
  "futures-util",
  "iroh-quinn",
- "irpc-derive 0.5.0",
+ "irpc-derive",
  "n0-future",
  "postcard",
  "rcgen",
@@ -2363,17 +2213,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "irpc-derive"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efeabe1ee5615ea0416340b1a6d71a16f971495859c87fad48633b6497ee7a77"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2389,31 +2228,14 @@ dependencies = [
 
 [[package]]
 name = "irpc-iroh"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9585893d9039f21e1406818d5bb3bc445ac4fa1b3aa2eb46a8bbd5963b11f77"
-dependencies = [
- "anyhow",
- "getrandom 0.3.3",
- "iroh 0.90.0",
- "irpc 0.5.0",
- "n0-future",
- "postcard",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "irpc-iroh"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5926531af491c6962db4d79f43ea219404cb800889922a728b1d3b92f887eda"
 dependencies = [
  "anyhow",
  "getrandom 0.3.3",
- "iroh 0.91.2",
- "irpc 0.7.0",
+ "iroh",
+ "irpc",
  "n0-future",
  "postcard",
  "serde",
@@ -4933,28 +4755,6 @@ dependencies = [
  "futures-util",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-websockets"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fcaf159b4e7a376b05b5bfd77bfd38f3324f5fce751b4213bfc7eaa47affb4e"
-dependencies = [
- "base64",
- "bytes",
- "futures-core",
- "futures-sink",
- "getrandom 0.3.3",
- "http",
- "httparse",
- "rand 0.9.2",
- "ring",
- "rustls-pki-types",
- "simdutf8",
- "tokio",
- "tokio-rustls",
- "tokio-util",
 ]
 
 [[package]]

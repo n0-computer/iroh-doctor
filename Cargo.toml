@@ -50,8 +50,8 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 ed25519-dalek = "2.1"
-irpc = { version = "0.5.0", features = ["derive", "default"] }
-irpc-iroh = "0.5.0"
+irpc = { version = "0.7.0", features = ["derive", "default"] }
+irpc-iroh = "0.7.0"
 rcan = "0.1.0"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 serde_json = "1.0"

@@ -328,7 +328,7 @@ impl DoctorClient {
 }
 
 /// IRPC client type for DoctorService
-pub type DoctorServiceClient = irpc::Client<DoctorMessage, DoctorProtocol, DoctorService>;
+pub type DoctorServiceClient = irpc::Client<DoctorProtocol>;
 
 /// Authentication message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,14 +546,12 @@ pub enum DoctorError {
 }
 
 /// Doctor service marker
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DoctorService;
 
-impl irpc::Service for DoctorService {}
-
 /// Doctor protocol messages
-#[rpc_requests(DoctorService, message = DoctorMessage)]
-#[derive(Serialize, Deserialize)]
+#[rpc_requests(message = DoctorMessage)]
+#[derive(Debug, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum DoctorProtocol {
     #[rpc(tx = oneshot::Sender<Result<AuthResponse, DoctorError>>)]

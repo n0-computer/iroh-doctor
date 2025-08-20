@@ -140,8 +140,7 @@ impl SwarmClient {
         )
         .await
         {
-            Ok(Ok(_)) => info!("Endpoint initialized successfully"),
-            Ok(Err(e)) => warn!("Endpoint initialization error: {}", e),
+            Ok(_) => info!("Endpoint initialized successfully"),
             Err(_) => warn!("Timeout waiting for endpoint initialization"),
         }
 
