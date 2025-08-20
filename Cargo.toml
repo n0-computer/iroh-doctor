@@ -13,7 +13,6 @@ keywords = ["networking", "p2p", "holepunching", "diagnostics", "iroh"]
 anyhow = "1.0.90"
 async-channel = "2.3.1"
 clap = { version = "4.5.20", features = ["derive"] }
-console = "0.15.8"
 crossterm = "0.28.1"
 derive_more = { version = "1.0.0", features = ["display", "from_str"] }
 dirs-next = "2.0.0"
@@ -50,6 +49,12 @@ tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
+ed25519-dalek = "2.1"
+irpc = { version = "0.5.0", features = ["derive", "default"] }
+irpc-iroh = "0.5.0"
+rcan = "0.1.0"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 iroh-base = "0.91"

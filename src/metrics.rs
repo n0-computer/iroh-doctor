@@ -7,7 +7,7 @@ pub type IrohMetricsRegistry = Arc<RwLock<Registry>>;
 
 #[derive(Default, Clone, Debug)]
 pub struct MetricsRegistry {
-    pub(crate) iroh: IrohMetricsRegistry,
+    pub iroh: IrohMetricsRegistry,
     pub(crate) prometheus: Arc<RwLock<prometheus_client::registry::Registry>>,
 }
 
