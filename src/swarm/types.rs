@@ -5,6 +5,40 @@ use std::fmt;
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
+/// Custom serde module for u128 duration in milliseconds
+/// Handles both integer and string values for backward compatibility
+mod serde_duration_ms {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.to_string().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        use serde_json::Value;
+
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::Number(n) => {
+                if let Some(int_val) = n.as_u64() {
+                    Ok(int_val as u128)
+                } else {
+                    Err(Error::custom("Invalid number format"))
+                }
+            }
+            Value::String(s) => s.parse().map_err(Error::custom),
+            _ => Err(Error::custom("Expected number or string")),
+        }
+    }
+}
+
 /// Test types supported by doctor nodes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TestType {
@@ -130,7 +164,7 @@ pub struct NetworkReport {
     /// Whether behind a captive portal
     pub captive_portal: Option<bool>,
     /// Debug string for relay latency
-    pub relay_latency_debug: String,
+    pub relay_latency_debug: Option<String>,
 }
 
 impl NetworkReport {
@@ -172,7 +206,7 @@ impl NetworkReport {
             global_v4: report.global_v4.map(|addr| addr.to_string()),
             global_v6: report.global_v6.map(|addr| addr.to_string()),
             captive_portal: report.captive_portal,
-            relay_latency_debug: report_str,
+            relay_latency_debug: Some(report_str),
         }
     }
 }
@@ -377,6 +411,7 @@ pub struct ConnectivityResult {
     pub connected: bool,
     pub connection_time_ms: Option<u64>,
     pub peer: String,
+    #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub error: Option<String>,
 }
@@ -392,6 +427,7 @@ pub struct LatencyResult {
     pub failed_pings: u32,
     pub total_iterations: u32,
     pub success_rate: Option<f64>,
+    #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub error: Option<String>,
 }
@@ -401,6 +437,7 @@ pub struct LatencyResult {
 pub struct ThroughputResult {
     pub test_type: TestType,
     pub peer: String,
+    #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub data_size_mb: u64,
     pub bytes_sent: u64,
@@ -420,6 +457,7 @@ pub struct ThroughputResult {
 pub struct FingerprintResult {
     pub test_type: TestType,
     pub peer: String,
+    #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub connectivity: Option<ConnectivityResult>,
     pub latency: Option<LatencyResult>,
@@ -431,6 +469,7 @@ pub struct FingerprintResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResult {
     pub error: String,
+    #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub test_type: Option<TestType>,
     pub peer: Option<String>,
