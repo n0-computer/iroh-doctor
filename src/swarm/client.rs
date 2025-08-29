@@ -134,59 +134,93 @@ impl SwarmClient {
 
         // Wait for endpoint to initialize (relay connection, direct addresses, etc.)
         info!("Waiting for endpoint initialization...");
-        match tokio::time::timeout(
-            Duration::from_secs(10),
-            endpoint.direct_addresses().initialized(),
-        )
-        .await
-        {
-            Ok(_) => info!("Endpoint initialized successfully"),
-            Err(_) => warn!("Timeout waiting for endpoint initialization"),
+        let mut direct_addrs = endpoint.direct_addresses();
+        tokio::select! {
+            result = tokio::time::timeout(
+                Duration::from_secs(10),
+                direct_addrs.initialized(),
+            ) => {
+                match result {
+                    Ok(_) => info!("Endpoint initialized successfully"),
+                    Err(_) => warn!("Timeout waiting for endpoint initialization"),
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received Ctrl+C during endpoint initialization, shutting down...");
+                return Err(anyhow::anyhow!("Cancelled by user"));
+            }
         }
 
         // Collect initial network report for NAT detection
         // We'll wait briefly for an initial report
         let network_report = {
             let mut net_report_stream = endpoint.net_report().stream();
-            match tokio::time::timeout(Duration::from_secs(2), net_report_stream.next()).await {
-                Ok(Some(Some(report))) => {
-                    info!("Collected network report for NAT detection");
-                    info!("Network report details: udp_v4={:?}, udp_v6={:?}, mapping_varies_by_dest_ipv4={:?}, mapping_varies_by_dest_ipv6={:?}", 
-                        report.udp_v4, report.udp_v6, report.mapping_varies_by_dest_ipv4, report.mapping_varies_by_dest_ipv6);
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(3), net_report_stream.next()) => {
+                    match result {
+                        Ok(Some(Some(report))) => {
+                            info!("Collected network report for NAT detection");
+                            info!("Network report details: udp_v4={:?}, udp_v6={:?}, mapping_varies_by_dest_ipv4={:?}, mapping_varies_by_dest_ipv6={:?}", 
+                                report.udp_v4, report.udp_v6, report.mapping_varies_by_dest_ipv4, report.mapping_varies_by_dest_ipv6);
 
-                    // Convert iroh NetReport to our structured NetworkReport
-                    Some(NetworkReport::from_iroh_report(report))
+                            // Convert iroh NetReport to our structured NetworkReport
+                            Some(NetworkReport::from_iroh_report(report))
+                        }
+                        Ok(Some(None)) => {
+                            warn!("Network report stream returned None report");
+                            None
+                        }
+                        Ok(None) => {
+                            warn!("Network report stream ended unexpectedly");
+                            None
+                        }
+                        Err(_) => {
+                            warn!("Timeout waiting for network report, proceeding without NAT detection");
+                            None
+                        }
+                    }
                 }
-                Ok(Some(None)) => {
-                    warn!("Network report stream returned None report");
-                    None
-                }
-                Ok(None) => {
-                    warn!("Network report stream ended unexpectedly");
-                    None
-                }
-                Err(_) => {
-                    warn!("Timeout waiting for network report, proceeding without NAT detection");
-                    None
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received Ctrl+C during network report collection, shutting down...");
+                    return Err(anyhow::anyhow!("Cancelled by user"));
                 }
             }
         };
 
         // Create doctor client with SSH key authentication and connect to coordinator
-        let doctor_client =
-            DoctorClient::with_ssh_key(&endpoint, coordinator_addr.clone(), ssh_key_path)
-                .await
-                .context("Failed to connect and authenticate with coordinator")?;
+        let doctor_client = tokio::select! {
+            result = tokio::time::timeout(
+                Duration::from_secs(30),
+                DoctorClient::with_ssh_key(&endpoint, coordinator_addr.clone(), ssh_key_path)
+            ) => {
+                match result {
+                    Ok(client) => client.context("Failed to connect and authenticate with coordinator")?,
+                    Err(_) => {
+                        warn!("Timeout connecting to coordinator, coordinator may be offline");
+                        return Err(anyhow::anyhow!("Timeout connecting to coordinator"));
+                    }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received Ctrl+C during coordinator connection, shutting down...");
+                return Err(anyhow::anyhow!("Cancelled by user"));
+            }
+        };
 
         // Register with coordinator
-        let register_response = doctor_client
-            .register(
+        let register_response = tokio::select! {
+            result = doctor_client.register(
                 config.capabilities.clone(),
                 config.name.clone(),
                 network_report.clone(),
-            )
-            .await
-            .context("Failed to register with coordinator")?;
+            ) => {
+                result.context("Failed to register with coordinator")?
+            }
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received Ctrl+C during coordinator registration, shutting down...");
+                return Err(anyhow::anyhow!("Cancelled by user"));
+            }
+        };
 
         let project_id = register_response.project_id;
         info!("Registered with coordinator, project_id: {}", project_id);

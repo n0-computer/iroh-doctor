@@ -1,6 +1,7 @@
 //! Swarm runner implementation
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
+use tokio::sync::broadcast;
 
 use anyhow::Result;
 use futures_lite::StreamExt;
@@ -26,9 +27,12 @@ async fn assignment_processing_task(
     is_testing_initiator: Arc<AtomicBool>,
     endpoint: Arc<Endpoint>,
     stats: Arc<SwarmStats>,
+    mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     // Get new assignments
-    match client.get_assignments().await {
+    tokio::select! {
+        result = client.get_assignments() => {
+            match result {
         Ok(assignments) => {
             if !assignments.is_empty() {
                 let completed = completed_assignments.read().await;
@@ -174,18 +178,29 @@ async fn assignment_processing_task(
                     }
                 }
             }
+            }
+            Err(e) => {
+                warn!("Failed to get assignments: {}", e);
+            }
         }
-        Err(e) => {
-            warn!("Failed to get assignments: {}", e);
+        }
+        _ = shutdown_rx.recv() => {
+            debug!("Assignment processing task received shutdown signal");
+            return;
         }
     }
 }
 
 /// Background task to continuously update cached network report
-async fn network_report_caching_task(client: Arc<SwarmClient>, endpoint: Arc<iroh::Endpoint>) {
+async fn network_report_caching_task(
+    client: Arc<SwarmClient>, 
+    endpoint: Arc<iroh::Endpoint>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) {
     debug!("Starting continuous network report caching (updates every 5 seconds)");
     let mut net_report_stream = endpoint.net_report().stream();
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Helper function to convert report to structured format
     let convert_report_to_network_report =
@@ -219,6 +234,10 @@ async fn network_report_caching_task(client: Arc<SwarmClient>, endpoint: Arc<iro
                     }
                 }
             }
+            _ = shutdown_rx.recv() => {
+                info!("Network report caching task received shutdown signal");
+                break;
+            }
         }
     }
 }
@@ -228,10 +247,13 @@ async fn incoming_connection_handler_task(
     endpoint: Arc<iroh::Endpoint>,
     _node_id: iroh::NodeId,
     is_testing_responder: Arc<AtomicBool>,
+    mut shutdown_rx: broadcast::Receiver<()>,
 ) {
     loop {
-        match endpoint.accept().await {
-            Some(incoming) => {
+        tokio::select! {
+            incoming = endpoint.accept() => {
+                match incoming {
+                    Some(incoming) => {
                 let connecting = match incoming.accept() {
                     Ok(c) => c,
                     Err(e) => {
@@ -278,9 +300,15 @@ async fn incoming_connection_handler_task(
                         warn!("Failed to establish connection: {}", e);
                     }
                 }
+                    }
+                    None => {
+                        debug!("Endpoint closed, stopping accept loop");
+                        break;
+                    }
+                }
             }
-            None => {
-                debug!("Endpoint closed, stopping accept loop");
+            _ = shutdown_rx.recv() => {
+                info!("Connection handler task received shutdown signal");
                 break;
             }
         }
@@ -476,10 +504,14 @@ pub async fn run_swarm_client(
 
     info!("Connected to coordinator, starting swarm operations as a client node");
 
+    // Create shutdown broadcast channel
+    let (shutdown_tx, _) = broadcast::channel(1);
+    
     // Spawn background task to continuously update cached network report
     let network_report_handle = tokio::spawn(network_report_caching_task(
         client.clone(),
         endpoint.clone(),
+        shutdown_tx.subscribe(),
     ));
 
     // Wait for DNS discovery to be ready
@@ -505,35 +537,72 @@ pub async fn run_swarm_client(
         endpoint.clone(),
         node_id,
         is_testing_responder.clone(),
+        shutdown_tx.subscribe(),
     ));
 
     // Main loop for getting and executing test assignments
     let stats = Arc::new(SwarmStats::default());
     let mut heartbeat_interval = tokio::time::interval(config.heartbeat_interval);
+    heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut assignment_interval = tokio::time::interval(Duration::from_secs(10));
+    assignment_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let result = {
         loop {
             tokio::select! {
                     _ = heartbeat_interval.tick() => {
-                        // Send heartbeat
-                        if let Err(e) = client.heartbeat().await {
-                            warn!("Failed to send heartbeat: {}", e);
-                        }
+                        // Spawn heartbeat task so it doesn't block Ctrl+C
+                        let client = client.clone();
+                        tokio::spawn(async move {
+                            match tokio::time::timeout(Duration::from_secs(7), client.heartbeat()).await {
+                                Ok(Ok(())) => {
+                                    // Heartbeat successful
+                                }
+                                Ok(Err(e)) => {
+                                    warn!("Failed to send heartbeat: {}", e);
+                                }
+                                Err(_) => {
+                                    warn!("Heartbeat timed out after 7 seconds");
+                                }
+                            }
+                        });
                     }
                     _ = tokio::signal::ctrl_c() => {
                         info!("Received shutdown signal, stopping swarm client");
+                        // Broadcast shutdown to all tasks
+                        let _ = shutdown_tx.send(());
                         break Ok(());
                     }
                     _ = assignment_interval.tick() => {
-                        assignment_processing_task(
-                            client.clone(),
-                            completed_assignments.clone(),
-                            node_id,
-                            is_testing_initiator.clone(),
-                            endpoint.clone(),
-                            stats.clone(),
-                        ).await;
+                        // Spawn assignment processing task so it doesn't block Ctrl+C
+                        let client = client.clone();
+                        let completed_assignments = completed_assignments.clone();
+                        let is_testing_initiator = is_testing_initiator.clone();
+                        let endpoint = endpoint.clone();
+                        let stats = stats.clone();
+                        let shutdown_rx = shutdown_tx.subscribe();
+                        
+                        tokio::spawn(async move {
+                            match tokio::time::timeout(
+                                Duration::from_secs(15),
+                                assignment_processing_task(
+                                    client,
+                                    completed_assignments,
+                                    node_id,
+                                    is_testing_initiator,
+                                    endpoint,
+                                    stats,
+                                    shutdown_rx,
+                                )
+                            ).await {
+                                Ok(()) => {
+                                    // Assignment processing completed
+                                }
+                                Err(_) => {
+                                    warn!("Assignment processing timed out after 15 seconds");
+                                }
+                            }
+                        });
                     }
             }
         }

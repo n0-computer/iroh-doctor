@@ -124,16 +124,22 @@ impl DoctorClient {
         &mut self,
         network_report: Option<NetworkReport>,
     ) -> Result<DoctorHeartbeatResponse> {
-        let response = self
-            .client
-            .rpc(DoctorHeartbeat { network_report })
-            .await
-            .map_err(|e| {
-                // Mark connection as dead on RPC failure
-                self.mark_disconnected();
-                anyhow::anyhow!("Failed to send heartbeat request: {}", e)
-            })?
-            .map_err(|e| anyhow::anyhow!("Heartbeat failed: {:?}", e))?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.client.rpc(DoctorHeartbeat { network_report })
+        )
+        .await
+        .map_err(|_| {
+            // Mark connection as dead on timeout
+            self.mark_disconnected();
+            anyhow::anyhow!("Heartbeat RPC timed out after 5 seconds")
+        })?
+        .map_err(|e| {
+            // Mark connection as dead on RPC failure
+            self.mark_disconnected();
+            anyhow::anyhow!("Failed to send heartbeat request: {}", e)
+        })?
+        .map_err(|e| anyhow::anyhow!("Heartbeat failed: {:?}", e))?;
 
         Ok(response)
     }
@@ -157,7 +163,14 @@ impl DoctorClient {
             }
         }
 
-        let response_result = self.client.rpc(GetTestAssignments {}).await;
+        let response_result = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.client.rpc(GetTestAssignments {})
+        ).await.map_err(|_| {
+            // Mark connection as dead on timeout
+            self.mark_disconnected();
+            anyhow::anyhow!("GetAssignments RPC timed out after 10 seconds")
+        })?;
 
         match response_result {
             Ok(result) => {
