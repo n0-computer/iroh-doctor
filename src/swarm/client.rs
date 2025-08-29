@@ -18,7 +18,7 @@ use crate::swarm::{
 };
 
 /// ALPN protocol identifier for doctor RPC
-pub const DOCTOR_ALPN: &[u8] = b"n0des-doctor/1";
+pub const DOCTOR_ALPN: &[u8] = b"n0/n0des-doctor/1";
 
 /// Swarm client for network testing
 #[derive(Debug)]

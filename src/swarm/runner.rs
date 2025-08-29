@@ -6,6 +6,7 @@ use tokio::sync::broadcast;
 use anyhow::Result;
 use futures_lite::StreamExt;
 use iroh::{Endpoint, NodeId};
+use iroh_n0des;
 use n0_watcher::Watcher;
 use portable_atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -502,6 +503,14 @@ pub async fn run_swarm_client(
     let endpoint = client.endpoint();
     let node_id = client.node_id();
 
+    // Create n0des client for metrics collection using coordinator
+    info!("Creating iroh_n0des::Client for metrics collection to coordinator {}", config.coordinator_node_id);
+    let rpc_client = iroh_n0des::Client::builder(&endpoint)
+        .ssh_key_from_file(ssh_key_path)
+        .await?
+        .build(config.coordinator_node_id)
+        .await?;
+
     info!("Connected to coordinator, starting swarm operations as a client node");
 
     // Create shutdown broadcast channel
@@ -621,5 +630,9 @@ pub async fn run_swarm_client(
     .await;
 
     info!("Swarm client shutdown complete");
+    
+    // Keep rpc_client alive until function end for metrics collection
+    drop(rpc_client);
+    
     result
 }

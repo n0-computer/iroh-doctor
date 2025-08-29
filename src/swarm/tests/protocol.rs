@@ -7,7 +7,7 @@ use postcard;
 use serde::{Deserialize, Serialize};
 
 /// ALPN protocol identifier for doctor swarm tests
-pub const DOCTOR_SWARM_ALPN: &[u8] = b"doctor-swarm";
+pub const DOCTOR_SWARM_ALPN: &[u8] = b"n0/doctor-swarm/1";
 
 /// Test protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
