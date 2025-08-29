@@ -414,6 +414,8 @@ pub struct ConnectivityResult {
     #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub error: Option<String>,
+    /// Real connection type determined by iroh (only available when connected=true)
+    pub connection_type: Option<ConnectionType>,
 }
 
 /// Result for latency tests
@@ -430,6 +432,8 @@ pub struct LatencyResult {
     #[serde(with = "serde_duration_ms")]
     pub duration_ms: u128,
     pub error: Option<String>,
+    /// Real connection type determined by iroh
+    pub connection_type: Option<ConnectionType>,
 }
 
 /// Result for throughput tests
@@ -450,6 +454,8 @@ pub struct ThroughputResult {
     pub chunk_size_kb: usize,
     pub statistics: Option<TestStats>,
     pub error: Option<String>,
+    /// Real connection type determined by iroh
+    pub connection_type: Option<ConnectionType>,
 }
 
 /// Result for fingerprint tests (combined)

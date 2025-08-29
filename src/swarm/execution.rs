@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use iroh::{endpoint::Connection, Endpoint, NodeId};
+use iroh::{endpoint::{Connection, ConnectionType}, Endpoint, NodeId, Watcher};
 use tracing::{debug, info, trace, warn};
 
 use crate::swarm::{
@@ -35,6 +35,14 @@ fn parse_test_config(assignment: &TestAssignment) -> Option<TestConfig> {
 // Add a data transfer timeout function
 fn data_transfer_timeout() -> Duration {
     Duration::from_secs(30) // 30 seconds should be enough for most transfers
+}
+
+/// Helper function to get the real connection type from the endpoint
+fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<ConnectionType> {
+    endpoint.conn_type(peer_id).map(|mut watcher| {
+        // Get the current connection type from the watcher
+        watcher.get()
+    })
 }
 
 /// Extract throughput configuration with defaults
@@ -324,6 +332,7 @@ async fn execute_throughput_test(
                             chunk_size_kb: chunk_size_bytes / 1024,
                             statistics: result.statistics,
                             error: None,
+                            connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
                         };
 
                         return Ok((true, TestAssignmentResult::Throughput(throughput_result)));
@@ -540,6 +549,7 @@ async fn execute_fingerprint_test(
                     peer: assignment.peer_node_id.to_string(),
                     duration_ms: connection_time.as_millis(),
                     error: None,
+                    connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
                 });
                 connection = Some(conn);
                 break;
@@ -562,6 +572,7 @@ async fn execute_fingerprint_test(
             peer: assignment.peer_node_id.to_string(),
             duration_ms: start.elapsed().as_millis(),
             error: Some(last_error),
+            connection_type: None, // No connection established
         });
 
         // Skip other tests if connectivity failed - return error result
@@ -697,6 +708,7 @@ async fn execute_fingerprint_test(
             success_rate: Some(latencies.len() as f64 / iterations as f64),
             duration_ms: start.elapsed().as_millis(),
             error: None,
+            connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
         })
     } else {
         Some(LatencyResult {
@@ -710,6 +722,7 @@ async fn execute_fingerprint_test(
             success_rate: None,
             duration_ms: start.elapsed().as_millis(),
             error: Some("No successful latency measurements".to_string()),
+            connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
         })
     };
 
@@ -764,6 +777,7 @@ async fn execute_fingerprint_test(
                 chunk_size_kb: chunk_size_bytes / 1024,
                 statistics: result.statistics,
                 error: None,
+                connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
             })
         }
         Ok(Err(e)) => {
@@ -783,6 +797,7 @@ async fn execute_fingerprint_test(
                 chunk_size_kb: chunk_size_bytes / 1024,
                 statistics: None,
                 error: Some(e.to_string()),
+                connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
             })
         }
         Err(_) => {
@@ -802,6 +817,7 @@ async fn execute_fingerprint_test(
                 chunk_size_kb: chunk_size_bytes / 1024,
                 statistics: None,
                 error: Some("Test timed out after 30 seconds".to_string()),
+                connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
             })
         }
     };

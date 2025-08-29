@@ -7,7 +7,7 @@ use iroh::{Endpoint, NodeId};
 use tracing::{info, trace, warn};
 
 use super::{
-    connectivity::resolve_node_addr,
+    connectivity::{get_connection_type, resolve_node_addr},
     protocol::{LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN},
 };
 use crate::swarm::types::{LatencyResult, TestResult};
@@ -136,6 +136,7 @@ pub async fn run_latency_test_with_config(
             success_rate: None,
             duration_ms: start.elapsed().as_millis(),
             error: Some("No successful ping measurements".to_string()),
+            connection_type: None, // Connection may have failed
         }));
     }
 
@@ -175,5 +176,6 @@ pub async fn run_latency_test_with_config(
         success_rate: Some(latencies.len() as f64 / iterations as f64),
         duration_ms: start.elapsed().as_millis(),
         error: None,
+        connection_type: get_connection_type(endpoint, peer_node_id),
     }))
 }

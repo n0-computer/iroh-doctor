@@ -4,11 +4,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures_lite::StreamExt;
-use iroh::{Endpoint, NodeAddr, NodeId};
+use iroh::{endpoint::ConnectionType, Endpoint, NodeAddr, NodeId, Watcher};
 use tracing::{info, warn};
 
 use super::protocol::DOCTOR_SWARM_ALPN;
 use crate::swarm::types::{ConnectivityResult, TestResult};
+
+/// Helper function to get the real connection type from the endpoint
+pub(crate) fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<ConnectionType> {
+    endpoint.conn_type(peer_id).map(|mut watcher| {
+        watcher.get()
+    })
+}
 
 /// Helper function to resolve node address using discovery
 pub(crate) async fn resolve_node_addr(
@@ -104,6 +111,7 @@ pub async fn run_connectivity_test(
                 error: Some(format!(
                     "Failed to resolve node address after {max_dns_attempts} attempts"
                 )),
+                connection_type: None, // No connection established
             }));
         }
     };
@@ -129,6 +137,7 @@ pub async fn run_connectivity_test(
                 peer: peer_node_id.to_string(),
                 duration_ms: connection_time.as_millis(),
                 error: None,
+                connection_type: get_connection_type(endpoint, peer_node_id),
             }))
         }
         Err(e) => {
@@ -139,6 +148,7 @@ pub async fn run_connectivity_test(
                 peer: peer_node_id.to_string(),
                 duration_ms: start.elapsed().as_millis(),
                 error: Some(e.to_string()),
+                connection_type: None, // No connection established
             }))
         }
     }
