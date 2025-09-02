@@ -7,7 +7,8 @@ use iroh::{
     endpoint::{Connection, ConnectionType},
     Endpoint, NodeId, Watcher,
 };
-use tracing::{debug, info, trace, warn};
+use rand::Rng;
+use tracing::{info, trace, warn};
 
 use crate::swarm::{
     rpc::TestAssignment,
@@ -19,21 +20,9 @@ use crate::swarm::{
     },
     types::{
         ConnectivityResult, ErrorResult, FingerprintResult, InternalSkipResult, LatencyResult,
-        TestAssignmentResult, TestConfig, TestType, ThroughputResult,
+        TestAssignmentResult, TestType, ThroughputResult,
     },
 };
-
-// Helper function to parse test config from JSON string
-fn parse_test_config(assignment: &TestAssignment) -> Option<TestConfig> {
-    assignment.test_config.as_ref().and_then(|json_str| {
-        serde_json::from_str(json_str)
-            .map_err(|e| {
-                warn!("Failed to parse test_config JSON: {}", e);
-                e
-            })
-            .ok()
-    })
-}
 
 // Add a data transfer timeout function
 fn data_transfer_timeout() -> Duration {
@@ -50,41 +39,19 @@ fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<Connectio
 
 /// Extract throughput configuration with defaults
 fn extract_throughput_config(assignment: &TestAssignment) -> (usize, usize) {
-    // Parse test config from JSON string
-    if let Some(test_config) = parse_test_config(assignment) {
-        debug!(
-            "Test config present: duration_secs={:?}, size_bytes={:?}",
-            test_config.duration_secs, test_config.size_bytes
-        );
+    let throughput_config = &assignment
+        .test_config
+        .advanced
+        .as_ref()
+        .and_then(|c| c.throughput.as_ref());
 
-        if let Some(advanced) = &test_config.advanced {
-            debug!("Advanced config present");
-            if let Some(throughput) = &advanced.throughput {
-                debug!(
-                    "Throughput config: parallel_streams={:?}, chunk_size_kb={:?}",
-                    throughput.parallel_streams, throughput.chunk_size_kb
-                );
-            } else {
-                debug!("No throughput config in advanced");
-            }
-        } else {
-            debug!("No advanced config in test_config");
-        }
-    } else {
-        debug!("No test_config in assignment");
-    }
-
-    let advanced_config = parse_test_config(assignment)
-        .and_then(|c| c.advanced)
-        .and_then(|a| a.throughput);
-
-    let parallel_streams = advanced_config
+    let parallel_streams = throughput_config
         .as_ref()
         .and_then(|c| c.parallel_streams)
         .unwrap_or(4) // default: 4 streams
         .clamp(1, 16) as usize; // enforce range: 1-16
 
-    let chunk_size_kb = advanced_config
+    let chunk_size_kb = throughput_config
         .as_ref()
         .and_then(|c| c.chunk_size_kb)
         .unwrap_or(64) // default: 64KB
@@ -97,19 +64,23 @@ fn extract_throughput_config(assignment: &TestAssignment) -> (usize, usize) {
 
 /// Extract connection timeout from network config
 fn extract_connection_timeout(assignment: &TestAssignment) -> Duration {
-    parse_test_config(assignment)
-        .and_then(|c| c.advanced)
-        .and_then(|a| a.network)
-        .and_then(|n| n.connection_timeout_secs)
-        .map(|secs| Duration::from_secs(secs as u64))
+    assignment
+        .test_config
+        .advanced
+        .as_ref()
+        .and_then(|a| a.network.as_ref())
+        .and_then(|n| n.connection_timeout_secs.as_ref())
+        .map(|secs| Duration::from_secs(*secs as u64))
         .unwrap_or_else(|| Duration::from_secs(20)) // default: 20 seconds
 }
 
 /// Extract latency test configuration with defaults
 fn extract_latency_config(assignment: &TestAssignment) -> (Duration, Duration) {
-    let advanced_config = parse_test_config(assignment)
-        .and_then(|c| c.advanced)
-        .and_then(|a| a.latency);
+    let advanced_config = assignment
+        .test_config
+        .advanced
+        .as_ref()
+        .and_then(|a| a.latency.as_ref());
 
     let ping_interval_ms = advanced_config
         .as_ref()
@@ -280,13 +251,10 @@ async fn execute_throughput_test(
             Ok(Ok(conn)) => {
                 // Connection successful, proceed with test
                 // Use configured size or generate random size
-                let data_size = parse_test_config(&assignment)
-                    .and_then(|c| c.size_bytes)
-                    .unwrap_or_else(|| {
-                        use rand::Rng;
-                        let mut rng = rand::thread_rng();
-                        rng.gen_range(10..=50) * 1024 * 1024
-                    });
+                let data_size = assignment
+                    .test_config
+                    .size_bytes
+                    .unwrap_or_else(|| rand::thread_rng().gen_range(10..=50) * 1024 * 1024);
 
                 // Extract advanced configuration
                 let (parallel_streams, chunk_size_bytes) = extract_throughput_config(&assignment);
@@ -401,9 +369,7 @@ async fn execute_latency_test(
     start: std::time::Instant,
 ) -> Result<(bool, TestAssignmentResult)> {
     // Add retry logic for latency tests
-    let iterations = parse_test_config(&assignment)
-        .and_then(|c| c.iterations)
-        .unwrap_or(10);
+    let iterations = assignment.test_config.iterations.unwrap_or(10);
 
     let max_attempts = 3;
     let mut last_error = None;
@@ -736,8 +702,9 @@ async fn execute_fingerprint_test(
     info!("Phase 3/3: Testing throughput...");
 
     // Use configured size or default
-    let data_size = parse_test_config(&assignment)
-        .and_then(|c| c.size_bytes)
+    let data_size = assignment
+        .test_config
+        .size_bytes
         .unwrap_or(10 * 1024 * 1024); // 10MB default for fingerprint
 
     // Extract advanced configuration for consistent behavior with regular throughput test

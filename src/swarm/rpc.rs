@@ -186,12 +186,11 @@ impl DoctorClient {
                         // Log details of received assignments
                         for (i, assignment) in response.assignments.iter().enumerate() {
                             debug!(
-                                "Assignment {}: test_run={}, peer={}, type={:?}, has_config={}",
+                                "Assignment {}: test_run={}, peer={}, type={:?}",
                                 i,
                                 assignment.test_run_id,
                                 assignment.peer_node_id,
                                 assignment.test_type,
-                                assignment.test_config.is_some()
                             );
                         }
 
@@ -411,7 +410,7 @@ pub struct TestAssignment {
     /// Peer's relay URL for discovery
     pub peer_relay_url: Option<String>,
     /// Test configuration (as JSON string for PostCard compatibility)
-    pub test_config: Option<String>,
+    pub test_config: TestConfig,
     /// Retry count for this assignment (0 for original, 1+ for retries)
     #[serde(default)]
     pub retry_count: i32,
