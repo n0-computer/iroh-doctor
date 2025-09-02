@@ -12,9 +12,7 @@ use crate::swarm::types::{ConnectivityResult, TestResult};
 
 /// Helper function to get the real connection type from the endpoint
 pub(crate) fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<ConnectionType> {
-    endpoint.conn_type(peer_id).map(|mut watcher| {
-        watcher.get()
-    })
+    endpoint.conn_type(peer_id).map(|mut watcher| watcher.get())
 }
 
 /// Helper function to resolve node address using discovery

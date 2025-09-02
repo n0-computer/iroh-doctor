@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use iroh::endpoint::ConnectionType;
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
@@ -134,79 +135,6 @@ impl DoctorCaps {
         Self {
             can_register: true,
             can_report_results: true,
-        }
-    }
-}
-
-/// Network report with processed information from iroh's NetReport
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkReport {
-    /// UDP connectivity over IPv4
-    pub udp_v4: bool,
-    /// UDP connectivity over IPv6
-    pub udp_v6: bool,
-    /// Whether the NAT mapping varies by destination IPv4 address
-    pub mapping_varies_by_dest_ipv4: Option<bool>,
-    /// Whether the NAT mapping varies by destination IPv6 address
-    pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// Preferred relay server URL
-    pub preferred_relay: Option<String>,
-    /// Combined mapping varies by destination (IPv4 or IPv6)
-    pub mapping_varies_by_dest: Option<bool>,
-    /// Whether mapping varies by destination port (derived from mapping_varies logic)
-    pub mapping_varies_by_dest_port: Option<bool>,
-    /// Relay latency in milliseconds
-    pub relay_latency_ms: Option<f64>,
-    /// Global IPv4 address
-    pub global_v4: Option<String>,
-    /// Global IPv6 address
-    pub global_v6: Option<String>,
-    /// Whether behind a captive portal
-    pub captive_portal: Option<bool>,
-    /// Debug string for relay latency
-    pub relay_latency_debug: Option<String>,
-}
-
-impl NetworkReport {
-    /// Convert from iroh's NetReport to our structured NetworkReport
-    pub fn from_iroh_report(report: iroh::net_report::Report) -> Self {
-        // Parse relay latency from debug format
-        let report_str = format!("{:?}", report.relay_latency);
-        let relay_latency_ms = if report_str.contains("ms") {
-            report_str
-                .split("ms")
-                .next()
-                .and_then(|s| s.rsplit(": ").next())
-                .and_then(|s| s.parse::<f64>().ok())
-        } else {
-            None
-        };
-
-        // Determine combined mapping varies by destination
-        let mapping_varies = report
-            .mapping_varies_by_dest_ipv4
-            .or(report.mapping_varies_by_dest_ipv6);
-
-        // For port-level mapping, use the same logic as destination mapping
-        // If we have evidence that mapping varies by destination, it likely varies by port too
-        let mapping_varies_by_dest_port = mapping_varies;
-
-        Self {
-            udp_v4: report.udp_v4,
-            udp_v6: report.udp_v6,
-            mapping_varies_by_dest_ipv4: report.mapping_varies_by_dest_ipv4,
-            mapping_varies_by_dest_ipv6: report.mapping_varies_by_dest_ipv6,
-            preferred_relay: report
-                .preferred_relay
-                .as_ref()
-                .map(|relay| relay.to_string()),
-            mapping_varies_by_dest: mapping_varies,
-            mapping_varies_by_dest_port,
-            relay_latency_ms,
-            global_v4: report.global_v4.map(|addr| addr.to_string()),
-            global_v6: report.global_v6.map(|addr| addr.to_string()),
-            captive_portal: report.captive_portal,
-            relay_latency_debug: Some(report_str),
         }
     }
 }

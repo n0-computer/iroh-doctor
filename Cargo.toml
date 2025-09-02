@@ -20,10 +20,11 @@ futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
-iroh = { version = "0.91", features = ["metrics"] }
+# iroh = { version = "0.91", features = ["metrics"] }
+iroh = { git = "https://github.com/n0-computer/iroh", branch = "arqu/nat_probes", features = ["metrics"] }
 iroh-metrics = { version = "0.35", features = ["service", "static_core"] }
-iroh-n0des = "0.2.0"
-iroh-relay = "0.91"
+iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "arqu/nat_probes" }
+iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "arqu/nat_probes" }
 netwatch = { version = "0.7" }
 n0-watcher = "0.3"
 pkarr = { version = "2.2.0", default-features = false }
@@ -50,12 +51,12 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 ed25519-dalek = "2.1"
-irpc = { version = "0.7.0", features = ["derive", "default"] }
-irpc-iroh = "0.7.0"
+irpc = { git = "https://github.com/n0-computer/irpc", branch = "arqu/nat_probes", features = ["derive", "default"] }
+irpc-iroh = { git = "https://github.com/n0-computer/irpc", branch = "arqu/nat_probes" }
 rcan = "0.1.0"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 serde_json = "1.0"
 
 [dev-dependencies]
-iroh-base = "0.91"
+iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "arqu/nat_probes" }
 url = "2.5.2"

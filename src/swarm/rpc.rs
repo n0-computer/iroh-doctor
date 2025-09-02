@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, NodeAddr, NodeId};
+use iroh::{net_report::Report, Endpoint, NodeAddr, NodeId};
 use irpc::{channel::oneshot, rpc_requests};
 use irpc_iroh::IrohRemoteConnection;
 use postcard;
@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::swarm::{
     client::DOCTOR_ALPN,
-    types::{DoctorCaps, NetworkReport, TestCapability, TestConfig, TestType},
+    types::{DoctorCaps, TestCapability, TestConfig, TestType},
 };
 
 /// RPC client for communicating with the doctor coordinator
@@ -98,7 +98,7 @@ impl DoctorClient {
         &self,
         capabilities: Vec<TestCapability>,
         name: Option<String>,
-        network_report: Option<NetworkReport>,
+        network_report: Option<Report>,
     ) -> Result<DoctorRegisterResponse> {
         let response = self
             .client
@@ -122,11 +122,11 @@ impl DoctorClient {
     /// Send heartbeat with network report
     pub async fn heartbeat_with_network_report(
         &mut self,
-        network_report: Option<NetworkReport>,
+        network_report: Option<Report>,
     ) -> Result<DoctorHeartbeatResponse> {
         let response = tokio::time::timeout(
             Duration::from_secs(5),
-            self.client.rpc(DoctorHeartbeat { network_report })
+            self.client.rpc(DoctorHeartbeat { network_report }),
         )
         .await
         .map_err(|_| {
@@ -165,8 +165,10 @@ impl DoctorClient {
 
         let response_result = tokio::time::timeout(
             Duration::from_secs(10),
-            self.client.rpc(GetTestAssignments {})
-        ).await.map_err(|_| {
+            self.client.rpc(GetTestAssignments {}),
+        )
+        .await
+        .map_err(|_| {
             // Mark connection as dead on timeout
             self.mark_disconnected();
             anyhow::anyhow!("GetAssignments RPC timed out after 10 seconds")
@@ -365,7 +367,7 @@ pub struct DoctorRegister {
     /// Optional human-readable name for this node
     pub name: Option<String>,
     /// Network report for NAT detection (structured data)
-    pub network_report: Option<NetworkReport>,
+    pub network_report: Option<Report>,
 }
 
 /// Response to doctor registration
@@ -381,7 +383,7 @@ pub struct DoctorRegisterResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoctorHeartbeat {
     /// Optional network report update (structured data)
-    pub network_report: Option<NetworkReport>,
+    pub network_report: Option<Report>,
 }
 
 /// Response to heartbeat

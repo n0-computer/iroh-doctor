@@ -1,7 +1,6 @@
 //! Swarm runner implementation
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::sync::broadcast;
 
 use anyhow::Result;
 use futures_lite::StreamExt;
@@ -9,7 +8,7 @@ use iroh::{Endpoint, NodeId};
 use iroh_n0des;
 use n0_watcher::Watcher;
 use portable_atomic::{AtomicBool, AtomicU64, Ordering};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
@@ -18,7 +17,7 @@ use crate::swarm::{
     config::SwarmConfig,
     execution::perform_test_assignment,
     tests::protocol::{LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN},
-    types::{ErrorResult, NetworkReport, SwarmStats, TestAssignmentResult, TestType},
+    types::{ErrorResult, SwarmStats, TestAssignmentResult, TestType},
 };
 /// Background task to process test assignments from the coordinator
 async fn assignment_processing_task(
@@ -187,6 +186,7 @@ async fn assignment_processing_task(
         }
         _ = shutdown_rx.recv() => {
             debug!("Assignment processing task received shutdown signal");
+            #[allow(clippy::needless_return)]
             return;
         }
     }
@@ -194,7 +194,7 @@ async fn assignment_processing_task(
 
 /// Background task to continuously update cached network report
 async fn network_report_caching_task(
-    client: Arc<SwarmClient>, 
+    client: Arc<SwarmClient>,
     endpoint: Arc<iroh::Endpoint>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
@@ -202,10 +202,6 @@ async fn network_report_caching_task(
     let mut net_report_stream = endpoint.net_report().stream();
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    // Helper function to convert report to structured format
-    let convert_report_to_network_report =
-        |report: iroh::net_report::Report| NetworkReport::from_iroh_report(report);
 
     loop {
         tokio::select! {
@@ -220,10 +216,8 @@ async fn network_report_caching_task(
                         debug!("Got network report update: udp_v4={:?}, udp_v6={:?}",
                             report.udp_v4, report.udp_v6);
 
-                        let network_report = convert_report_to_network_report(report);
-
                         // Update cached network report
-                        client.set_cached_network_report(Some(network_report)).await;
+                        client.set_cached_network_report(Some(report)).await;
                         debug!("Successfully updated cached network report from stream");
                     }
                     Some(None) => {
@@ -504,7 +498,10 @@ pub async fn run_swarm_client(
     let node_id = client.node_id();
 
     // Create n0des client for metrics collection using coordinator
-    info!("Creating iroh_n0des::Client for metrics collection to coordinator {}", config.coordinator_node_id);
+    info!(
+        "Creating iroh_n0des::Client for metrics collection to coordinator {}",
+        config.coordinator_node_id
+    );
     let rpc_client = iroh_n0des::Client::builder(&endpoint)
         .ssh_key_from_file(ssh_key_path)
         .await?
@@ -515,7 +512,7 @@ pub async fn run_swarm_client(
 
     // Create shutdown broadcast channel
     let (shutdown_tx, _) = broadcast::channel(1);
-    
+
     // Spawn background task to continuously update cached network report
     let network_report_handle = tokio::spawn(network_report_caching_task(
         client.clone(),
@@ -590,7 +587,7 @@ pub async fn run_swarm_client(
                         let endpoint = endpoint.clone();
                         let stats = stats.clone();
                         let shutdown_rx = shutdown_tx.subscribe();
-                        
+
                         tokio::spawn(async move {
                             match tokio::time::timeout(
                                 Duration::from_secs(15),
@@ -630,9 +627,9 @@ pub async fn run_swarm_client(
     .await;
 
     info!("Swarm client shutdown complete");
-    
+
     // Keep rpc_client alive until function end for metrics collection
     drop(rpc_client);
-    
+
     result
 }

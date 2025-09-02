@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
-use iroh::{endpoint, Endpoint, NodeAddr, NodeId, RelayMode};
+use iroh::{endpoint, net_report::Report, Endpoint, NodeAddr, NodeId, RelayMode};
 use n0_watcher::Watcher;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -14,7 +14,7 @@ use crate::swarm::{
     config::SwarmConfig,
     rpc::{self, DoctorClient, TestAssignment, TestResultReport},
     tests::protocol::DOCTOR_SWARM_ALPN,
-    types::{NetworkReport, TestAssignmentResult},
+    types::TestAssignmentResult,
 };
 
 /// ALPN protocol identifier for doctor RPC
@@ -30,7 +30,7 @@ pub struct SwarmClient {
     /// IRPC client for coordinator communication
     doctor_client: Arc<tokio::sync::Mutex<rpc::DoctorClient>>,
     /// Cached network report shared between tasks
-    cached_network_report: Arc<RwLock<Option<NetworkReport>>>,
+    cached_network_report: Arc<RwLock<Option<Report>>>,
 }
 
 impl SwarmClient {
@@ -160,11 +160,11 @@ impl SwarmClient {
                     match result {
                         Ok(Some(Some(report))) => {
                             info!("Collected network report for NAT detection");
-                            info!("Network report details: udp_v4={:?}, udp_v6={:?}, mapping_varies_by_dest_ipv4={:?}, mapping_varies_by_dest_ipv6={:?}", 
+                            info!("Network report details: udp_v4={:?}, udp_v6={:?}, mapping_varies_by_dest_ipv4={:?}, mapping_varies_by_dest_ipv6={:?}",
                                 report.udp_v4, report.udp_v6, report.mapping_varies_by_dest_ipv4, report.mapping_varies_by_dest_ipv6);
 
-                            // Convert iroh NetReport to our structured NetworkReport
-                            Some(NetworkReport::from_iroh_report(report))
+                            // Use iroh's Report directly
+                            Some(report)
                         }
                         Ok(Some(None)) => {
                             warn!("Network report stream returned None report");
@@ -235,13 +235,13 @@ impl SwarmClient {
     }
 
     /// Set the cached network report
-    pub async fn set_cached_network_report(&self, network_report: Option<NetworkReport>) {
+    pub async fn set_cached_network_report(&self, network_report: Option<Report>) {
         let mut cached = self.cached_network_report.write().await;
         *cached = network_report;
     }
 
     /// Get the cached network report
-    pub async fn get_cached_network_report(&self) -> Option<NetworkReport> {
+    pub async fn get_cached_network_report(&self) -> Option<Report> {
         let cached = self.cached_network_report.read().await;
         cached.clone()
     }

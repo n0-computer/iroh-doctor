@@ -3,7 +3,10 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use iroh::{endpoint::{Connection, ConnectionType}, Endpoint, NodeId, Watcher};
+use iroh::{
+    endpoint::{Connection, ConnectionType},
+    Endpoint, NodeId, Watcher,
+};
 use tracing::{debug, info, trace, warn};
 
 use crate::swarm::{
@@ -332,7 +335,10 @@ async fn execute_throughput_test(
                             chunk_size_kb: chunk_size_bytes / 1024,
                             statistics: result.statistics,
                             error: None,
-                            connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+                            connection_type: get_connection_type(
+                                &endpoint,
+                                assignment.peer_node_id,
+                            ),
                         };
 
                         return Ok((true, TestAssignmentResult::Throughput(throughput_result)));

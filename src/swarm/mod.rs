@@ -24,7 +24,6 @@ pub use rpc::{
 pub use runner::run_swarm_client;
 pub use tests::throughput::BidirectionalThroughputResult;
 pub use types::{
-    AdvancedTestConfig, DoctorCaps, LatencyAdvancedConfig, NetworkAdvancedConfig, NetworkReport,
-    StreamStats, SwarmStats, TestCapability, TestConfig, TestStats, TestType,
-    ThroughputAdvancedConfig,
+    AdvancedTestConfig, DoctorCaps, LatencyAdvancedConfig, NetworkAdvancedConfig, StreamStats,
+    SwarmStats, TestCapability, TestConfig, TestStats, TestType, ThroughputAdvancedConfig,
 };
