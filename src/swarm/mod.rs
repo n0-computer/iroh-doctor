@@ -1,29 +1,45 @@
 //! Swarm module for doctor network testing
 
-pub mod client;
-pub mod config;
-pub mod execution;
-pub mod rpc;
-pub mod runner;
-pub mod tests;
-pub mod types;
+mod client;
+mod config;
+mod execution;
+mod rpc;
+mod runner;
+mod tests;
+mod types;
 
-// Re-export main types for backward compatibility
-pub use client::{SwarmClient, DOCTOR_ALPN};
-pub use config::{SwarmConfig, TransportConfig};
-pub use execution::execute_test;
-// Re-export RPC and domain types
-pub use rpc::{
-    Auth, AuthResponse, CreateTestRun, CreateTestRunResponse, DoctorClient, DoctorError,
-    DoctorHeartbeat, DoctorHeartbeatResponse, DoctorProtocol, DoctorRegister,
-    DoctorRegisterResponse, DoctorService, GetNodeInfo, GetNodeInfoResponse, GetTestAssignments,
-    GetTestAssignmentsResponse, GetTestRunStatus, GetTestRunStatusResponse, MarkTestStarted,
-    MarkTestStartedResponse, PutMetrics, PutMetricsResponse, TestAssignment, TestPair,
-    TestPairResult, TestResultReport, TestResultReportResponse,
-};
+// Public API exports
+// Main entry point for swarm functionality
 pub use runner::run_swarm_client;
-pub use tests::throughput::BidirectionalThroughputResult;
+
+// Client types
+pub use client::{SwarmClient, DOCTOR_ALPN};
+
+// Configuration types
+pub use config::{SwarmConfig, TransportConfig};
+
+// Test types and results
 pub use types::{
-    AdvancedTestConfig, DoctorCaps, LatencyAdvancedConfig, NetworkAdvancedConfig, StreamStats,
-    SwarmStats, TestCapability, TestConfig, TestStats, TestType, ThroughputAdvancedConfig,
+    TestType, TestConfig, TestCapability, TestStats, StreamStats, SwarmStats,
+    AdvancedTestConfig, ThroughputAdvancedConfig, LatencyAdvancedConfig, NetworkAdvancedConfig,
+    DoctorCaps, ErrorResult, TestAssignmentResult,
+};
+
+// RPC protocol and service types
+pub use rpc::{
+    DoctorError, TestAssignment, TestPair, TestPairResult,
+    DoctorProtocol, DoctorMessage, DoctorService,
+    // Request/Response types
+    Auth, AuthResponse,
+    DoctorRegister, DoctorRegisterResponse,
+    DoctorHeartbeat, DoctorHeartbeatResponse,
+    GetNodeInfo, GetNodeInfoResponse,
+    GetTestAssignments, GetTestAssignmentsResponse,
+    PutMetrics, PutMetricsResponse,
+    TestResultReport, TestResultReportResponse,
+    CreateTestRun, CreateTestRunResponse,
+    GetTestRunStatus, GetTestRunStatusResponse,
+    MarkTestStarted, MarkTestStartedResponse,
+    // Client
+    DoctorClient,
 };

@@ -8,10 +8,7 @@ use tracing::{info, warn};
 
 use crate::{
     metrics::IrohMetricsRegistry,
-    swarm::{
-        types::{TestCapability, TestType},
-        SwarmConfig,
-    },
+    swarm::{SwarmConfig, TestCapability, TestType},
 };
 
 /// Run the swarm client command
