@@ -45,10 +45,6 @@ pub async fn run_swarm_client(
                 test_type: TestType::Latency,
                 max_bandwidth_mbps: None,
             }),
-            "relay" => Some(TestCapability {
-                test_type: TestType::RelayPerformance,
-                max_bandwidth_mbps: None,
-            }),
             "fingerprint" => Some(TestCapability {
                 test_type: TestType::Fingerprint,
                 max_bandwidth_mbps: Some(10000),

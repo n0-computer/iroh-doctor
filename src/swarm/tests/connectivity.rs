@@ -105,11 +105,12 @@ pub async fn run_connectivity_test(
                 connected: false,
                 connection_time_ms: None,
                 peer: peer_node_id.to_string(),
-                duration_ms: start.elapsed().as_millis(),
+                duration: start.elapsed(),
                 error: Some(format!(
                     "Failed to resolve node address after {max_dns_attempts} attempts"
                 )),
                 connection_type: None, // No connection established
+                ..Default::default()
             }));
         }
     };
@@ -133,9 +134,10 @@ pub async fn run_connectivity_test(
                 connected: true,
                 connection_time_ms: Some(connection_time.as_millis() as u64),
                 peer: peer_node_id.to_string(),
-                duration_ms: connection_time.as_millis(),
+                duration: connection_time,
                 error: None,
                 connection_type: get_connection_type(endpoint, peer_node_id),
+                ..Default::default()
             }))
         }
         Err(e) => {
@@ -144,9 +146,10 @@ pub async fn run_connectivity_test(
                 connected: false,
                 connection_time_ms: None,
                 peer: peer_node_id.to_string(),
-                duration_ms: start.elapsed().as_millis(),
+                duration: start.elapsed(),
                 error: Some(e.to_string()),
                 connection_type: None, // No connection established
+                ..Default::default()
             }))
         }
     }

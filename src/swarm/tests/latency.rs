@@ -134,7 +134,7 @@ pub async fn run_latency_test_with_config(
             failed_pings: failures,
             total_iterations: iterations,
             success_rate: None,
-            duration_ms: start.elapsed().as_millis(),
+            duration: start.elapsed(),
             error: Some("No successful ping measurements".to_string()),
             connection_type: None, // Connection may have failed
         }));
@@ -174,8 +174,9 @@ pub async fn run_latency_test_with_config(
         failed_pings: failures,
         total_iterations: iterations,
         success_rate: Some(latencies.len() as f64 / iterations as f64),
-        duration_ms: start.elapsed().as_millis(),
+        duration: start.elapsed(),
         error: None,
         connection_type: get_connection_type(endpoint, peer_node_id),
+            ..Default::default()
     }))
 }

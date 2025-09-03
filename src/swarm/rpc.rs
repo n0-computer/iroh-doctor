@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::swarm::{
     client::DOCTOR_ALPN,
-    types::{DoctorCaps, TestCapability, TestConfig, TestType},
+    types::{DoctorCaps, TestAssignmentResult, TestCapability, TestConfig, TestType},
 };
 
 /// RPC client for communicating with the doctor coordinator
@@ -481,10 +481,12 @@ pub struct TestResultReport {
     pub node_b_id: NodeId,
     /// Whether the test succeeded
     pub success: bool,
-    /// Test metrics/results (as JSON string for PostCard compatibility)
-    pub test_result: String,
+    /// Error message if test failed
+    pub error: Option<String>,
     /// Request ID for idempotency (optional for backward compatibility)
     pub request_id: Option<Uuid>,
+    /// Full test result data
+    pub result_data: TestAssignmentResult,
 }
 
 /// Response to result report
@@ -506,7 +508,8 @@ pub struct TestPairResult {
     pub node_a_id: NodeId,
     pub node_b_id: NodeId,
     pub status: String,
-    pub result_json: Option<String>,
+    pub success: bool,
+    pub error: Option<String>,
 }
 
 /// Test run status response

@@ -20,7 +20,7 @@ use crate::swarm::{
     },
     types::{
         ConnectivityResult, ErrorResult, FingerprintResult, InternalSkipResult, LatencyResult,
-        TestAssignmentResult, TestType, ThroughputResult,
+        TestAssignmentResult, TestResultType, TestType, ThroughputResult,
     },
 };
 
@@ -132,9 +132,13 @@ pub async fn perform_test_assignment(
         // The test will be handled when the peer connects to us
         return Ok((
             true,
-            TestAssignmentResult::InternalSkip(InternalSkipResult {
-                reason: "acting_as_responder".to_string(),
-            }),
+            TestAssignmentResult {
+                result_type: TestResultType::InternalSkip,
+                internal_skip: Some(InternalSkipResult {
+                    reason: "acting_as_responder".to_string(),
+                }),
+            ..Default::default()
+        },
         ));
     }
 
@@ -142,9 +146,6 @@ pub async fn perform_test_assignment(
         TestType::Connectivity => execute_connectivity_test(assignment, endpoint, start).await,
         TestType::Throughput => execute_throughput_test(assignment, endpoint, start).await,
         TestType::Latency => execute_latency_test(assignment, endpoint, start).await,
-        TestType::RelayPerformance => {
-            execute_relay_performance_test(assignment, endpoint, start).await
-        }
         TestType::Fingerprint => execute_fingerprint_test(assignment, endpoint, start).await,
     }
 }
@@ -167,7 +168,11 @@ async fn execute_connectivity_test(
         match run_connectivity_test(&endpoint, assignment.peer_node_id).await {
             Ok(test_result) => {
                 if test_result.success {
-                    return Ok((true, TestAssignmentResult::Connectivity(test_result.data)));
+                    return Ok((true, TestAssignmentResult {
+                        result_type: TestResultType::Connectivity,
+                        connectivity: Some(test_result.data),
+                        ..Default::default()
+                    }));
                 } else {
                     last_error = Some(test_result.data.error.unwrap_or("Test failed".to_string()));
                     if attempt < max_attempts {
@@ -188,12 +193,16 @@ async fn execute_connectivity_test(
     warn!("All connectivity test attempts failed");
     Ok((
         false,
-        TestAssignmentResult::Error(ErrorResult {
-            error: last_error.unwrap_or_else(|| "All connection attempts failed".to_string()),
-            duration_ms: start.elapsed().as_millis(),
-            test_type: Some(assignment.test_type),
-            peer: Some(assignment.peer_node_id.to_string()),
-        }),
+        TestAssignmentResult {
+            result_type: TestResultType::Error,
+            error: Some(ErrorResult {
+                error: last_error.unwrap_or_else(|| "All connection attempts failed".to_string()),
+                duration: start.elapsed(),
+                test_type: Some(assignment.test_type),
+                peer: Some(assignment.peer_node_id.to_string()),
+            }),
+            ..Default::default()
+        },
     ))
 }
 
@@ -289,7 +298,7 @@ async fn execute_throughput_test(
                         let throughput_result = ThroughputResult {
                             test_type: assignment.test_type,
                             peer: assignment.peer_node_id.to_string(),
-                            duration_ms: start.elapsed().as_millis(),
+                            duration: start.elapsed(),
                             data_size_mb: data_size / (1024 * 1024),
                             bytes_sent: result.bytes_sent,
                             bytes_received: result.bytes_received,
@@ -305,32 +314,45 @@ async fn execute_throughput_test(
                                 &endpoint,
                                 assignment.peer_node_id,
                             ),
+                            ..Default::default()
                         };
 
-                        return Ok((true, TestAssignmentResult::Throughput(throughput_result)));
+                        return Ok((true, TestAssignmentResult {
+                            result_type: TestResultType::Throughput,
+                            throughput: Some(throughput_result),
+                            ..Default::default()
+                        }));
                     }
                     Ok(Err(e)) => {
                         warn!("Throughput test error: {}", e);
                         return Ok((
                             false,
-                            TestAssignmentResult::Error(ErrorResult {
+                            TestAssignmentResult {
+            result_type: TestResultType::Error,
+            error: Some(ErrorResult {
                                 error: e.to_string(),
-                                duration_ms: start.elapsed().as_millis(),
+                                duration: start.elapsed(),
                                 test_type: Some(assignment.test_type),
                                 peer: Some(assignment.peer_node_id.to_string()),
                             }),
+            ..Default::default()
+        },
                         ));
                     }
                     Err(_) => {
                         warn!("Throughput test timed out");
                         return Ok((
                             false,
-                            TestAssignmentResult::Error(ErrorResult {
+                            TestAssignmentResult {
+            result_type: TestResultType::Error,
+            error: Some(ErrorResult {
                                 error: "Test timed out after 30 seconds".to_string(),
-                                duration_ms: start.elapsed().as_millis(),
+                                duration: start.elapsed(),
                                 test_type: Some(assignment.test_type),
                                 peer: Some(assignment.peer_node_id.to_string()),
                             }),
+            ..Default::default()
+        },
                         ));
                     }
                 }
@@ -352,12 +374,16 @@ async fn execute_throughput_test(
     warn!("All throughput test connection attempts failed");
     Ok((
         false,
-        TestAssignmentResult::Error(ErrorResult {
-            error: last_error,
-            duration_ms: start.elapsed().as_millis(),
-            test_type: Some(assignment.test_type),
-            peer: Some(assignment.peer_node_id.to_string()),
-        }),
+        TestAssignmentResult {
+            result_type: TestResultType::Error,
+            error: Some(ErrorResult {
+                error: last_error,
+                duration: start.elapsed(),
+                test_type: Some(assignment.test_type),
+                peer: Some(assignment.peer_node_id.to_string()),
+            }),
+            ..Default::default()
+        },
     ))
 }
 
@@ -370,7 +396,7 @@ async fn execute_latency_test(
     let iterations = assignment.test_config.iterations.unwrap_or(10);
 
     let max_attempts = 3;
-    let mut last_error = None;
+    let mut last_error: Option<TestAssignmentResult> = None;
 
     for attempt in 1..=max_attempts {
         if attempt > 1 {
@@ -397,21 +423,33 @@ async fn execute_latency_test(
         {
             Ok(test_result) => {
                 if test_result.success {
-                    return Ok((true, TestAssignmentResult::Latency(test_result.data)));
+                    return Ok((true, TestAssignmentResult {
+                        result_type: TestResultType::Latency,
+                        latency: Some(test_result.data),
+                        ..Default::default()
+                    }));
                 } else {
-                    last_error = Some(TestAssignmentResult::Latency(test_result.data));
+                    last_error = Some(TestAssignmentResult {
+                        result_type: TestResultType::Latency,
+                        latency: Some(test_result.data),
+                        ..Default::default()
+                    });
                     if attempt < max_attempts {
                         warn!("Latency test failed, retrying...");
                     }
                 }
             }
             Err(e) => {
-                last_error = Some(TestAssignmentResult::Error(ErrorResult {
-                    error: e.to_string(),
-                    duration_ms: start.elapsed().as_millis(),
-                    test_type: Some(assignment.test_type),
-                    peer: Some(assignment.peer_node_id.to_string()),
-                }));
+                last_error = Some(TestAssignmentResult {
+                    result_type: TestResultType::Error,
+                    error: Some(ErrorResult {
+                        error: e.to_string(),
+                        duration: start.elapsed(),
+                        test_type: Some(assignment.test_type),
+                        peer: Some(assignment.peer_node_id.to_string()),
+                    }),
+                    ..Default::default()
+                });
                 if attempt < max_attempts {
                     warn!("Latency test error: {}, retrying...", e);
                 }
@@ -424,29 +462,16 @@ async fn execute_latency_test(
     Ok((
         false,
         last_error.unwrap_or_else(|| {
-            TestAssignmentResult::Error(ErrorResult {
-                error: "All latency test attempts failed".to_string(),
-                duration_ms: start.elapsed().as_millis(),
-                test_type: Some(assignment.test_type),
-                peer: Some(assignment.peer_node_id.to_string()),
-            })
-        }),
-    ))
-}
-
-async fn execute_relay_performance_test(
-    assignment: TestAssignment,
-    _endpoint: Arc<Endpoint>,
-    start: std::time::Instant,
-) -> Result<(bool, TestAssignmentResult)> {
-    // Not implemented yet
-    Ok((
-        false,
-        TestAssignmentResult::Error(ErrorResult {
-            error: "Relay performance test not implemented".to_string(),
-            duration_ms: start.elapsed().as_millis(),
-            test_type: Some(assignment.test_type),
-            peer: None,
+            TestAssignmentResult {
+                result_type: TestResultType::Error,
+                error: Some(ErrorResult {
+                    error: "All latency test attempts failed".to_string(),
+                    duration: start.elapsed(),
+                    test_type: Some(assignment.test_type),
+                    peer: Some(assignment.peer_node_id.to_string()),
+                }),
+                ..Default::default()
+            }
         }),
     ))
 }
@@ -517,9 +542,10 @@ async fn execute_fingerprint_test(
                     connected: true,
                     connection_time_ms: Some(connection_time.as_millis() as u64),
                     peer: assignment.peer_node_id.to_string(),
-                    duration_ms: connection_time.as_millis(),
+                    duration: connection_time,
                     error: None,
                     connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+                    ..Default::default()
                 });
                 connection = Some(conn);
                 break;
@@ -540,24 +566,30 @@ async fn execute_fingerprint_test(
             connected: false,
             connection_time_ms: None,
             peer: assignment.peer_node_id.to_string(),
-            duration_ms: start.elapsed().as_millis(),
+            duration: start.elapsed(),
             error: Some(last_error),
             connection_type: None, // No connection established
+            ..Default::default()
         });
 
         // Skip other tests if connectivity failed - return error result
         return Ok((
             false,
-            TestAssignmentResult::Fingerprint(FingerprintResult {
-                test_type: assignment.test_type,
-                peer: assignment.peer_node_id.to_string(),
-                duration_ms: start.elapsed().as_millis(),
-                connectivity: connectivity_result,
-                latency: None,
-                throughput: None,
-                error: Some("Connectivity test failed".to_string()),
-            }),
+            TestAssignmentResult {
+                result_type: TestResultType::Fingerprint,
+                fingerprint: Some(FingerprintResult {
+                    test_type: assignment.test_type,
+                    peer: assignment.peer_node_id.to_string(),
+                    duration: start.elapsed(),
+                    connectivity: connectivity_result,
+                    latency: None,
+                    throughput: None,
+                    error: Some("Connectivity test failed".to_string()),
+                }),
+                ..Default::default()
+            },
         ));
+
     }
 
     let connection = connection.unwrap();
@@ -676,7 +708,7 @@ async fn execute_fingerprint_test(
             failed_pings: latency_failures,
             total_iterations: iterations,
             success_rate: Some(latencies.len() as f64 / iterations as f64),
-            duration_ms: start.elapsed().as_millis(),
+            duration: start.elapsed(),
             error: None,
             connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
         })
@@ -690,7 +722,7 @@ async fn execute_fingerprint_test(
             failed_pings: latency_failures,
             total_iterations: iterations,
             success_rate: None,
-            duration_ms: start.elapsed().as_millis(),
+            duration: start.elapsed(),
             error: Some("No successful latency measurements".to_string()),
             connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
         })
@@ -736,7 +768,7 @@ async fn execute_fingerprint_test(
             Some(ThroughputResult {
                 test_type: TestType::Throughput,
                 peer: assignment.peer_node_id.to_string(),
-                duration_ms: start.elapsed().as_millis(),
+                duration: start.elapsed(),
                 data_size_mb: data_size / (1024 * 1024),
                 bytes_sent: result.bytes_sent,
                 bytes_received: result.bytes_received,
@@ -756,7 +788,7 @@ async fn execute_fingerprint_test(
             Some(ThroughputResult {
                 test_type: TestType::Throughput,
                 peer: assignment.peer_node_id.to_string(),
-                duration_ms: start.elapsed().as_millis(),
+                duration: start.elapsed(),
                 data_size_mb: data_size / (1024 * 1024),
                 bytes_sent: 0,
                 bytes_received: 0,
@@ -776,7 +808,7 @@ async fn execute_fingerprint_test(
             Some(ThroughputResult {
                 test_type: TestType::Throughput,
                 peer: assignment.peer_node_id.to_string(),
-                duration_ms: start.elapsed().as_millis(),
+                duration: start.elapsed(),
                 data_size_mb: data_size / (1024 * 1024),
                 bytes_sent: 0,
                 bytes_received: 0,
@@ -802,7 +834,7 @@ async fn execute_fingerprint_test(
     let fingerprint_result = FingerprintResult {
         test_type: assignment.test_type,
         peer: assignment.peer_node_id.to_string(),
-        duration_ms: start.elapsed().as_millis(),
+        duration: start.elapsed(),
         connectivity: connectivity_result,
         latency: latency_result,
         throughput: throughput_result,
@@ -812,7 +844,11 @@ async fn execute_fingerprint_test(
     info!("Fingerprint test completed. Success: {}", overall_success);
     Ok((
         overall_success,
-        TestAssignmentResult::Fingerprint(fingerprint_result),
+        TestAssignmentResult {
+            result_type: TestResultType::Fingerprint,
+            fingerprint: Some(fingerprint_result),
+            ..Default::default()
+        },
     ))
 }
 

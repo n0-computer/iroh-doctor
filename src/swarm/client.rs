@@ -309,11 +309,9 @@ impl SwarmClient {
             node_a_id,
             node_b_id,
             success,
-            test_result: serde_json::to_string(&result_data).unwrap_or_else(|e| {
-                warn!("Failed to serialize test result to JSON: {}", e);
-                "{}".to_string()
-            }),
+            error: if success { None } else { Some("Test failed".to_string()) },
             request_id: Some(Uuid::new_v4()), // For idempotency
+            result_data: result_data.clone(),
         };
 
         client.report_result(report).await?;

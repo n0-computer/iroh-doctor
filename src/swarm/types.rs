@@ -1,52 +1,19 @@
 //! Types for swarm test statistics and results
 
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use iroh::endpoint::ConnectionType;
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
-/// Custom serde module for u128 duration in milliseconds
-/// Handles both integer and string values for backward compatibility
-mod serde_duration_ms {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.to_string().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-        use serde_json::Value;
-
-        let value = Value::deserialize(deserializer)?;
-        match value {
-            Value::Number(n) => {
-                if let Some(int_val) = n.as_u64() {
-                    Ok(int_val as u128)
-                } else {
-                    Err(Error::custom("Invalid number format"))
-                }
-            }
-            Value::String(s) => s.parse().map_err(Error::custom),
-            _ => Err(Error::custom("Expected number or string")),
-        }
-    }
-}
 
 /// Test types supported by doctor nodes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TestType {
+    #[default]
     Connectivity,
     Throughput,
     Latency,
-    RelayPerformance,
     /// Combined test: connectivity + throughput + latency
     Fingerprint,
 }
@@ -57,21 +24,20 @@ impl fmt::Display for TestType {
             TestType::Connectivity => write!(f, "connectivity"),
             TestType::Throughput => write!(f, "throughput"),
             TestType::Latency => write!(f, "latency"),
-            TestType::RelayPerformance => write!(f, "relay_performance"),
             TestType::Fingerprint => write!(f, "fingerprint"),
         }
     }
 }
 
 /// Capability declaration for a specific test type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestCapability {
     pub test_type: TestType,
     pub max_bandwidth_mbps: Option<u32>,
 }
 
 /// Configuration for a test run
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestConfig {
     pub test_type: TestType,
     pub duration_secs: Option<u64>,
@@ -82,7 +48,7 @@ pub struct TestConfig {
 }
 
 /// Advanced configuration for fine-tuning test parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AdvancedTestConfig {
     /// Throughput-specific settings
     pub throughput: Option<ThroughputAdvancedConfig>,
@@ -96,7 +62,7 @@ pub struct AdvancedTestConfig {
 ///
 /// Note: Transport-level buffer settings (send/receive windows) are configured
 /// globally via SwarmConfig.transport, not per-test
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThroughputAdvancedConfig {
     /// Number of parallel streams (default: 4, range: 1-16)
     pub parallel_streams: Option<u32>,
@@ -105,7 +71,7 @@ pub struct ThroughputAdvancedConfig {
 }
 
 /// Advanced configuration for latency tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LatencyAdvancedConfig {
     /// Interval between pings in milliseconds (default: 10)
     pub ping_interval_ms: Option<u32>,
@@ -114,14 +80,14 @@ pub struct LatencyAdvancedConfig {
 }
 
 /// Advanced network configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkAdvancedConfig {
     /// Connection establishment timeout in seconds (default: 20)
     pub connection_timeout_secs: Option<u32>,
 }
 
 /// Doctor-specific capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DoctorCaps {
     /// Can register as doctor node
     pub can_register: bool,
@@ -140,7 +106,7 @@ impl DoctorCaps {
 }
 
 /// Statistics for a single stream in a throughput test
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamStats {
     /// Stream identifier (0-based index)
     pub stream_id: usize,
@@ -155,7 +121,7 @@ pub struct StreamStats {
 }
 
 /// QUIC connection statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuicStats {
     /// Round-trip time in milliseconds
     pub rtt_ms: Option<f64>,
@@ -182,7 +148,7 @@ pub struct QuicStats {
 }
 
 /// Aggregate test statistics across all streams
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestStats {
     /// Per-stream statistics
     pub per_stream_stats: Vec<StreamStats>,
@@ -311,7 +277,7 @@ impl SwarmStats {
 }
 
 /// Base result type for all test outcomes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestResult<T> {
     pub success: bool,
     pub data: T,
@@ -334,20 +300,22 @@ impl<T> TestResult<T> {
 }
 
 /// Result for connectivity tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectivityResult {
     pub connected: bool,
     pub connection_time_ms: Option<u64>,
     pub peer: String,
-    #[serde(with = "serde_duration_ms")]
-    pub duration_ms: u128,
+    pub duration: Duration,
     pub error: Option<String>,
     /// Real connection type determined by iroh (only available when connected=true)
     pub connection_type: Option<ConnectionType>,
+    /// Detailed connection statistics
+    #[serde(default)]
+    pub connection_stats: Option<()>, // TODO: Add proper connection stats type
 }
 
 /// Result for latency tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LatencyResult {
     pub avg_latency_ms: Option<f64>,
     pub min_latency_ms: Option<f64>,
@@ -357,20 +325,18 @@ pub struct LatencyResult {
     pub failed_pings: u32,
     pub total_iterations: u32,
     pub success_rate: Option<f64>,
-    #[serde(with = "serde_duration_ms")]
-    pub duration_ms: u128,
+    pub duration: Duration,
     pub error: Option<String>,
     /// Real connection type determined by iroh
     pub connection_type: Option<ConnectionType>,
 }
 
 /// Result for throughput tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThroughputResult {
     pub test_type: TestType,
     pub peer: String,
-    #[serde(with = "serde_duration_ms")]
-    pub duration_ms: u128,
+    pub duration: Duration,
     pub data_size_mb: u64,
     pub bytes_sent: u64,
     pub bytes_received: u64,
@@ -387,12 +353,11 @@ pub struct ThroughputResult {
 }
 
 /// Result for fingerprint tests (combined)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FingerprintResult {
     pub test_type: TestType,
     pub peer: String,
-    #[serde(with = "serde_duration_ms")]
-    pub duration_ms: u128,
+    pub duration: Duration,
     pub connectivity: Option<ConnectivityResult>,
     pub latency: Option<LatencyResult>,
     pub throughput: Option<ThroughputResult>,
@@ -400,32 +365,67 @@ pub struct FingerprintResult {
 }
 
 /// Generic error result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ErrorResult {
     pub error: String,
-    #[serde(with = "serde_duration_ms")]
-    pub duration_ms: u128,
+    pub duration: Duration,
     pub test_type: Option<TestType>,
     pub peer: Option<String>,
 }
 
 /// Internal skip result (when acting as responder)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InternalSkipResult {
     pub reason: String,
 }
 
+
+/// Simple enum for test result types (PostCard-compatible)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TestResultType {
+    Connectivity,
+    Latency,
+    Throughput,
+    Fingerprint,
+    InternalSkip,
+    #[default]
+    Error,
+}
+
 /// Unified result type for all test assignments
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "result_type")]
-#[allow(clippy::large_enum_variant)]
-pub enum TestAssignmentResult {
-    Connectivity(ConnectivityResult),
-    Latency(LatencyResult),
-    Throughput(ThroughputResult),
-    Fingerprint(FingerprintResult),
-    InternalSkip(InternalSkipResult),
-    Error(ErrorResult),
+/// 
+/// Note: Changed from tagged enum to struct with optional fields due to PostCard limitations.
+/// PostCard cannot serialize tagged enums with complex nested data.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TestAssignmentResult {
+    /// Indicates which type of test result this represents
+    pub result_type: TestResultType,
+    /// Connectivity test result (present when result_type = Connectivity)
+    pub connectivity: Option<ConnectivityResult>,
+    /// Latency test result (present when result_type = Latency) 
+    pub latency: Option<LatencyResult>,
+    /// Throughput test result (present when result_type = Throughput)
+    pub throughput: Option<ThroughputResult>,
+    /// Fingerprint test result (present when result_type = Fingerprint)
+    pub fingerprint: Option<FingerprintResult>,
+    /// Internal skip result (present when result_type = InternalSkip)
+    pub internal_skip: Option<InternalSkipResult>,
+    /// Error result (present when result_type = Error)
+    pub error: Option<ErrorResult>,
+}
+
+impl TestAssignmentResult {
+    /// Extract duration from the appropriate result type based on result_type field
+    pub fn duration(&self) -> Duration {
+        match self.result_type {
+            TestResultType::Connectivity => self.connectivity.as_ref().map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::Latency => self.latency.as_ref().map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::Throughput => self.throughput.as_ref().map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::Fingerprint => self.fingerprint.as_ref().map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::Error => self.error.as_ref().map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::InternalSkip => Duration::ZERO, // No duration for skipped tests
+        }
+    }
 }
 
 #[cfg(test)]

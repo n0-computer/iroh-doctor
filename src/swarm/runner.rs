@@ -17,7 +17,7 @@ use crate::swarm::{
     config::SwarmConfig,
     execution::perform_test_assignment,
     tests::protocol::{LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN},
-    types::{ErrorResult, SwarmStats, TestAssignmentResult, TestType},
+    types::{ErrorResult, SwarmStats, TestAssignmentResult, TestResultType, TestType},
 };
 /// Background task to process test assignments from the coordinator
 async fn assignment_processing_task(
@@ -115,18 +115,22 @@ async fn assignment_processing_task(
                                     error!("Failed to perform test: {}", e);
                                     (
                                         false,
-                                        TestAssignmentResult::Error(ErrorResult {
-                                            error: e.to_string(),
-                                            duration_ms: 0,
-                                            test_type: None,
-                                            peer: None,
-                                        }),
+                                        TestAssignmentResult {
+                                            result_type: TestResultType::Error,
+                                            error: Some(ErrorResult {
+                                                error: e.to_string(),
+                                                duration: Duration::from_secs(0),
+                                                test_type: None,
+                                                peer: None,
+                                            }),
+                                            ..Default::default()
+                                        },
                                     )
                                 }
                             };
 
                             // Check if this is an internal skip (we're just the responder)
-                            if matches!(result_data, TestAssignmentResult::InternalSkip(_)) {
+                            if matches!(result_data.result_type, TestResultType::InternalSkip) {
                                 // Don't submit result - we're acting as responder only
                                 // Mark as completed so we don't try again
                                 completed.write().await.insert((

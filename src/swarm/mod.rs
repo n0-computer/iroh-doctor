@@ -22,7 +22,7 @@ pub use config::{SwarmConfig, TransportConfig};
 pub use types::{
     TestType, TestConfig, TestCapability, TestStats, StreamStats, SwarmStats,
     AdvancedTestConfig, ThroughputAdvancedConfig, LatencyAdvancedConfig, NetworkAdvancedConfig,
-    DoctorCaps, ErrorResult, TestAssignmentResult,
+    DoctorCaps, ErrorResult, TestAssignmentResult, TestResultType,
 };
 
 // RPC protocol and service types
