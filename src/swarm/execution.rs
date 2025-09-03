@@ -23,6 +23,9 @@ use crate::swarm::{
     },
 };
 
+// Data transfer timeout constant
+const DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30); // 30 seconds should be enough for most transfers
+
 // Helper function to parse test config from JSON string
 fn parse_test_config(assignment: &TestAssignment) -> Option<TestConfig> {
     assignment.test_config.as_ref().and_then(|json_str| {
@@ -35,10 +38,6 @@ fn parse_test_config(assignment: &TestAssignment) -> Option<TestConfig> {
     })
 }
 
-// Add a data transfer timeout function
-fn data_transfer_timeout() -> Duration {
-    Duration::from_secs(30) // 30 seconds should be enough for most transfers
-}
 
 /// Helper function to get the real connection type from the endpoint
 fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<ConnectionType> {
@@ -299,7 +298,7 @@ async fn execute_throughput_test(
 
                 // Run the bidirectional throughput test with timeout using the connection
                 let transfer_result = tokio::time::timeout(
-                    data_transfer_timeout(),
+                    DATA_TRANSFER_TIMEOUT,
                     run_bidirectional_throughput_test_with_config(
                         &conn,
                         data_size,
@@ -751,7 +750,7 @@ async fn execute_fingerprint_test(
 
     // Run the same parallel streams throughput test as regular throughput
     let throughput_result = match tokio::time::timeout(
-        data_transfer_timeout(),
+        DATA_TRANSFER_TIMEOUT,
         run_bidirectional_throughput_test_with_config(
             &connection,
             data_size,
