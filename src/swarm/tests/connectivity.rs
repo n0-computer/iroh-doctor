@@ -11,8 +11,8 @@ use super::protocol::DOCTOR_SWARM_ALPN;
 use crate::swarm::types::{ConnectivityResult, TestResult};
 
 /// Helper function to get the real connection type from the endpoint
-pub(crate) fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<ConnectionType> {
-    endpoint.conn_type(peer_id).map(|mut watcher| watcher.get())
+pub(crate) fn get_connection_type(endpoint: &Endpoint, node_id: NodeId) -> Option<ConnectionType> {
+    endpoint.conn_type(node_id).map(|mut watcher| watcher.get())
 }
 
 /// Helper function to resolve node address using discovery
@@ -57,7 +57,7 @@ pub(crate) async fn resolve_node_addr(
 /// Run a connectivity test between two nodes
 pub async fn run_connectivity_test(
     endpoint: &Endpoint,
-    peer_node_id: NodeId,
+    node_id: NodeId,
 ) -> Result<TestResult<ConnectivityResult>> {
     let start = Instant::now();
 
@@ -74,11 +74,11 @@ pub async fn run_connectivity_test(
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
 
-        match resolve_node_addr(endpoint, peer_node_id).await {
+        match resolve_node_addr(endpoint, node_id).await {
             Ok(Some(addr)) => {
                 info!(
                     "Successfully resolved {} to {:?} on attempt {}",
-                    peer_node_id, addr, attempt
+                    node_id, addr, attempt
                 );
                 node_addr = Some(addr);
                 break;
@@ -86,13 +86,13 @@ pub async fn run_connectivity_test(
             Ok(None) => {
                 warn!(
                     "No address found for {} on attempt {}",
-                    peer_node_id, attempt
+                    node_id, attempt
                 );
             }
             Err(e) => {
                 warn!(
                     "Error resolving {} on attempt {}: {}",
-                    peer_node_id, attempt, e
+                    node_id, attempt, e
                 );
             }
         }
@@ -104,7 +104,7 @@ pub async fn run_connectivity_test(
             return Ok(TestResult::failure(ConnectivityResult {
                 connected: false,
                 connection_time_ms: None,
-                peer: peer_node_id.to_string(),
+                node_id: node_id,
                 duration: start.elapsed(),
                 error: Some(format!(
                     "Failed to resolve node address after {max_dns_attempts} attempts"
@@ -117,7 +117,7 @@ pub async fn run_connectivity_test(
 
     info!(
         "Attempting to connect to {} at {:?}",
-        peer_node_id, node_addr
+        node_id, node_addr
     );
 
     match endpoint.connect(node_addr, DOCTOR_SWARM_ALPN).await {
@@ -125,7 +125,7 @@ pub async fn run_connectivity_test(
             let connection_time = start.elapsed();
             info!(
                 "Successfully connected to {} in {:?}",
-                peer_node_id, connection_time
+                node_id, connection_time
             );
 
             conn.close(0u32.into(), b"connectivity test complete");
@@ -133,19 +133,19 @@ pub async fn run_connectivity_test(
             Ok(TestResult::success(ConnectivityResult {
                 connected: true,
                 connection_time_ms: Some(connection_time.as_millis() as u64),
-                peer: peer_node_id.to_string(),
+                node_id: node_id,
                 duration: connection_time,
                 error: None,
-                connection_type: get_connection_type(endpoint, peer_node_id),
+                connection_type: get_connection_type(endpoint, node_id),
                 ..Default::default()
             }))
         }
         Err(e) => {
-            warn!("Failed to connect to {}: {}", peer_node_id, e);
+            warn!("Failed to connect to {}: {}", node_id, e);
             Ok(TestResult::failure(ConnectivityResult {
                 connected: false,
                 connection_time_ms: None,
-                peer: peer_node_id.to_string(),
+                node_id: node_id,
                 duration: start.elapsed(),
                 error: Some(e.to_string()),
                 connection_type: None, // No connection established

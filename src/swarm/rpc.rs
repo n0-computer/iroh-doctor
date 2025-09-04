@@ -146,6 +146,8 @@ impl DoctorClient {
 
     /// Get test assignments
     pub async fn get_assignments(&mut self) -> Result<GetTestAssignmentsResponse> {
+        let my_node_id = self.endpoint.node_id();
+        info!("Sending GetTestAssignments request from node_id={}", my_node_id);
         debug!("Sending GetTestAssignments request");
 
         // Debug: Try to serialize the request to see what we're sending
@@ -186,10 +188,10 @@ impl DoctorClient {
                         // Log details of received assignments
                         for (i, assignment) in response.assignments.iter().enumerate() {
                             debug!(
-                                "Assignment {}: test_run={}, peer={}, type={:?}",
+                                "Assignment {}: test_run={}, node={}, type={:?}",
                                 i,
                                 assignment.test_run_id,
-                                assignment.peer_node_id,
+                                assignment.node_id,
                                 assignment.test_type,
                             );
                         }
@@ -403,8 +405,8 @@ pub struct GetTestAssignments {
 pub struct TestAssignment {
     /// Test run ID
     pub test_run_id: Uuid,
-    /// Peer node to test with
-    pub peer_node_id: NodeId,
+    /// Target node to test with
+    pub node_id: NodeId,
     /// Type of test to run
     pub test_type: TestType,
     /// Peer's relay URL for discovery

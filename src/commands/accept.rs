@@ -59,14 +59,14 @@ pub async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = connection.remote_node_id() else {
+                        let Ok(remote_node_id) = connection.remote_node_id() else {
                             return;
                         };
-                        println!("Accepted connection from {remote_peer_id}");
+                        println!("Accepted connection from {remote_node_id}");
                         let t0 = Instant::now();
-                        let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
-                            log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
+                        let gui = Gui::new(endpoint.clone(), remote_node_id);
+                        if let Some(conn_type) = endpoint.conn_type(remote_node_id) {
+                            log_connection_changes(gui.mp.clone(), remote_node_id, conn_type);
                         }
                         let res = active_side(&connection, &config, Some(&gui)).await;
                         gui.clear();

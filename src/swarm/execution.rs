@@ -19,7 +19,7 @@ use crate::swarm::{
         run_latency_test_with_config,
     },
     types::{
-        ConnectivityResult, ErrorResult, FingerprintResult, InternalSkipResult, LatencyResult,
+        ConnectivityResult, ErrorResult, FingerprintResult, LatencyResult,
         TestAssignmentResult, TestResultType, TestType, ThroughputResult,
     },
 };
@@ -28,8 +28,8 @@ use crate::swarm::{
 const DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30); // 30 seconds should be enough for most transfers
 
 /// Helper function to get the real connection type from the endpoint
-fn get_connection_type(endpoint: &Endpoint, peer_id: NodeId) -> Option<ConnectionType> {
-    endpoint.conn_type(peer_id).map(|mut watcher| {
+fn get_connection_type(endpoint: &Endpoint, node_id: NodeId) -> Option<ConnectionType> {
+    endpoint.conn_type(node_id).map(|mut watcher| {
         // Get the current connection type from the watcher
         watcher.get()
     })
@@ -106,42 +106,6 @@ pub async fn perform_test_assignment(
 ) -> Result<(bool, TestAssignmentResult)> {
     let start = std::time::Instant::now();
 
-    // For bidirectional tests like Fingerprint, only the node with lower ID initiates
-    // This prevents both nodes from trying to initiate the same test
-    let should_initiate = match assignment.test_type {
-        TestType::Fingerprint | TestType::Throughput => {
-            let initiates = node_id < assignment.peer_node_id;
-            info!(
-                "Bidirectional test: my_id={} < peer_id={} = {} (I {} initiate)",
-                node_id,
-                assignment.peer_node_id,
-                initiates,
-                if initiates { "will" } else { "won't" }
-            );
-            initiates
-        }
-        _ => true, // Other tests can be initiated by any node
-    };
-
-    if !should_initiate {
-        info!(
-            "Skipping test initiation - peer {} will initiate (my ID: {})",
-            assignment.peer_node_id, node_id
-        );
-        // Don't submit any result - we're just the responder
-        // The test will be handled when the peer connects to us
-        return Ok((
-            true,
-            TestAssignmentResult {
-                result_type: TestResultType::InternalSkip,
-                internal_skip: Some(InternalSkipResult {
-                    reason: "acting_as_responder".to_string(),
-                }),
-            ..Default::default()
-        },
-        ));
-    }
-
     match assignment.test_type {
         TestType::Connectivity => execute_connectivity_test(assignment, endpoint, start).await,
         TestType::Throughput => execute_throughput_test(assignment, endpoint, start).await,
@@ -165,7 +129,7 @@ async fn execute_connectivity_test(
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
 
-        match run_connectivity_test(&endpoint, assignment.peer_node_id).await {
+        match run_connectivity_test(&endpoint, assignment.node_id).await {
             Ok(test_result) => {
                 if test_result.success {
                     return Ok((true, TestAssignmentResult {
@@ -199,7 +163,7 @@ async fn execute_connectivity_test(
                 error: last_error.unwrap_or_else(|| "All connection attempts failed".to_string()),
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
-                peer: Some(assignment.peer_node_id.to_string()),
+                node_id: Some(assignment.node_id),
             }),
             ..Default::default()
         },
@@ -212,8 +176,8 @@ async fn execute_throughput_test(
     start: std::time::Instant,
 ) -> Result<(bool, TestAssignmentResult)> {
     info!(
-        "Starting throughput test with peer {}",
-        assignment.peer_node_id
+        "Starting throughput test with node {}",
+        assignment.node_id
     );
 
     // Try multiple times to resolve and connect
@@ -225,15 +189,15 @@ async fn execute_throughput_test(
         }
 
         // Try to resolve the node address
-        let node_addr = match resolve_node_addr(&endpoint, assignment.peer_node_id).await {
+        let node_addr = match resolve_node_addr(&endpoint, assignment.node_id).await {
             Ok(Some(addr)) => {
-                info!("Resolved peer address: {:?}", addr);
+                info!("Resolved node address: {:?}", addr);
                 addr
             }
             Ok(None) => {
                 last_error = format!(
-                            "Failed to resolve node address for {} (attempt {}). The peer may not be publishing its address yet.",
-                            assignment.peer_node_id, attempt
+                            "Failed to resolve node address for {} (attempt {}). The node may not be publishing its address yet.",
+                            assignment.node_id, attempt
                         );
                 warn!("{}", last_error);
                 continue;
@@ -297,7 +261,7 @@ async fn execute_throughput_test(
 
                         let throughput_result = ThroughputResult {
                             test_type: assignment.test_type,
-                            peer: assignment.peer_node_id.to_string(),
+                            node_id: assignment.node_id,
                             duration: start.elapsed(),
                             data_size_mb: data_size / (1024 * 1024),
                             bytes_sent: result.bytes_sent,
@@ -312,7 +276,7 @@ async fn execute_throughput_test(
                             error: None,
                             connection_type: get_connection_type(
                                 &endpoint,
-                                assignment.peer_node_id,
+                                assignment.node_id,
                             ),
                             ..Default::default()
                         };
@@ -333,7 +297,7 @@ async fn execute_throughput_test(
                                 error: e.to_string(),
                                 duration: start.elapsed(),
                                 test_type: Some(assignment.test_type),
-                                peer: Some(assignment.peer_node_id.to_string()),
+                                node_id: Some(assignment.node_id),
                             }),
             ..Default::default()
         },
@@ -349,7 +313,7 @@ async fn execute_throughput_test(
                                 error: "Test timed out after 30 seconds".to_string(),
                                 duration: start.elapsed(),
                                 test_type: Some(assignment.test_type),
-                                peer: Some(assignment.peer_node_id.to_string()),
+                                node_id: Some(assignment.node_id),
                             }),
             ..Default::default()
         },
@@ -380,7 +344,7 @@ async fn execute_throughput_test(
                 error: last_error,
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
-                peer: Some(assignment.peer_node_id.to_string()),
+                node_id: Some(assignment.node_id),
             }),
             ..Default::default()
         },
@@ -414,7 +378,7 @@ async fn execute_latency_test(
 
         match run_latency_test_with_config(
             &endpoint,
-            assignment.peer_node_id,
+            assignment.node_id,
             iterations,
             ping_interval,
             ping_timeout,
@@ -446,7 +410,7 @@ async fn execute_latency_test(
                         error: e.to_string(),
                         duration: start.elapsed(),
                         test_type: Some(assignment.test_type),
-                        peer: Some(assignment.peer_node_id.to_string()),
+                        node_id: Some(assignment.node_id),
                     }),
                     ..Default::default()
                 });
@@ -468,7 +432,7 @@ async fn execute_latency_test(
                     error: "All latency test attempts failed".to_string(),
                     duration: start.elapsed(),
                     test_type: Some(assignment.test_type),
-                    peer: Some(assignment.peer_node_id.to_string()),
+                    node_id: Some(assignment.node_id),
                 }),
                 ..Default::default()
             }
@@ -483,8 +447,8 @@ async fn execute_fingerprint_test(
 ) -> Result<(bool, TestAssignmentResult)> {
     // Combined test: connectivity + latency + throughput
     info!(
-        "Starting fingerprint test with peer {}",
-        assignment.peer_node_id
+        "Starting fingerprint test with node {}",
+        assignment.node_id
     );
 
     let mut connectivity_result: Option<ConnectivityResult> = None;
@@ -506,15 +470,15 @@ async fn execute_fingerprint_test(
         }
 
         // Try to resolve the node address
-        let node_addr = match resolve_node_addr(&endpoint, assignment.peer_node_id).await {
+        let node_addr = match resolve_node_addr(&endpoint, assignment.node_id).await {
             Ok(Some(addr)) => {
-                info!("Resolved peer address: {:?}", addr);
+                info!("Resolved node address: {:?}", addr);
                 addr
             }
             Ok(None) => {
                 last_error = format!(
                             "Failed to resolve node address for {} (attempt {}). DNS/pkarr may still be propagating.",
-                            assignment.peer_node_id, attempt
+                            assignment.node_id, attempt
                         );
                 warn!("{}", last_error);
                 continue;
@@ -541,10 +505,10 @@ async fn execute_fingerprint_test(
                 connectivity_result = Some(ConnectivityResult {
                     connected: true,
                     connection_time_ms: Some(connection_time.as_millis() as u64),
-                    peer: assignment.peer_node_id.to_string(),
+                    node_id: assignment.node_id,
                     duration: connection_time,
                     error: None,
-                    connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+                    connection_type: get_connection_type(&endpoint, assignment.node_id),
                     ..Default::default()
                 });
                 connection = Some(conn);
@@ -565,7 +529,7 @@ async fn execute_fingerprint_test(
         connectivity_result = Some(ConnectivityResult {
             connected: false,
             connection_time_ms: None,
-            peer: assignment.peer_node_id.to_string(),
+            node_id: assignment.node_id,
             duration: start.elapsed(),
             error: Some(last_error),
             connection_type: None, // No connection established
@@ -579,7 +543,7 @@ async fn execute_fingerprint_test(
                 result_type: TestResultType::Fingerprint,
                 fingerprint: Some(FingerprintResult {
                     test_type: assignment.test_type,
-                    peer: assignment.peer_node_id.to_string(),
+                    node_id: assignment.node_id,
                     duration: start.elapsed(),
                     connectivity: connectivity_result,
                     latency: None,
@@ -710,7 +674,7 @@ async fn execute_fingerprint_test(
             success_rate: Some(latencies.len() as f64 / iterations as f64),
             duration: start.elapsed(),
             error: None,
-            connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+            connection_type: get_connection_type(&endpoint, assignment.node_id),
         })
     } else {
         Some(LatencyResult {
@@ -724,7 +688,7 @@ async fn execute_fingerprint_test(
             success_rate: None,
             duration: start.elapsed(),
             error: Some("No successful latency measurements".to_string()),
-            connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+            connection_type: get_connection_type(&endpoint, assignment.node_id),
         })
     };
 
@@ -767,7 +731,7 @@ async fn execute_fingerprint_test(
 
             Some(ThroughputResult {
                 test_type: TestType::Throughput,
-                peer: assignment.peer_node_id.to_string(),
+                node_id: assignment.node_id,
                 duration: start.elapsed(),
                 data_size_mb: data_size / (1024 * 1024),
                 bytes_sent: result.bytes_sent,
@@ -780,14 +744,14 @@ async fn execute_fingerprint_test(
                 chunk_size_kb: chunk_size_bytes / 1024,
                 statistics: result.statistics,
                 error: None,
-                connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+                connection_type: get_connection_type(&endpoint, assignment.node_id),
             })
         }
         Ok(Err(e)) => {
             warn!("Throughput test error: {}", e);
             Some(ThroughputResult {
                 test_type: TestType::Throughput,
-                peer: assignment.peer_node_id.to_string(),
+                node_id: assignment.node_id,
                 duration: start.elapsed(),
                 data_size_mb: data_size / (1024 * 1024),
                 bytes_sent: 0,
@@ -800,14 +764,14 @@ async fn execute_fingerprint_test(
                 chunk_size_kb: chunk_size_bytes / 1024,
                 statistics: None,
                 error: Some(e.to_string()),
-                connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+                connection_type: get_connection_type(&endpoint, assignment.node_id),
             })
         }
         Err(_) => {
             warn!("Throughput test timed out");
             Some(ThroughputResult {
                 test_type: TestType::Throughput,
-                peer: assignment.peer_node_id.to_string(),
+                node_id: assignment.node_id,
                 duration: start.elapsed(),
                 data_size_mb: data_size / (1024 * 1024),
                 bytes_sent: 0,
@@ -820,7 +784,7 @@ async fn execute_fingerprint_test(
                 chunk_size_kb: chunk_size_bytes / 1024,
                 statistics: None,
                 error: Some("Test timed out after 30 seconds".to_string()),
-                connection_type: get_connection_type(&endpoint, assignment.peer_node_id),
+                connection_type: get_connection_type(&endpoint, assignment.node_id),
             })
         }
     };
@@ -833,7 +797,7 @@ async fn execute_fingerprint_test(
 
     let fingerprint_result = FingerprintResult {
         test_type: assignment.test_type,
-        peer: assignment.peer_node_id.to_string(),
+        node_id: assignment.node_id,
         duration: start.elapsed(),
         connectivity: connectivity_result,
         latency: latency_result,

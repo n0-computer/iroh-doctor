@@ -15,12 +15,12 @@ use crate::swarm::types::{LatencyResult, TestResult};
 /// Run a latency test between two nodes
 pub async fn run_latency_test(
     endpoint: &Endpoint,
-    peer_node_id: NodeId,
+    node_id: NodeId,
     iterations: u32,
 ) -> Result<TestResult<LatencyResult>> {
     run_latency_test_with_config(
         endpoint,
-        peer_node_id,
+        node_id,
         iterations,
         Duration::from_millis(10),   // default interval
         Duration::from_millis(1000), // default timeout
@@ -31,7 +31,7 @@ pub async fn run_latency_test(
 /// Run a latency test between two nodes with configurable timing
 pub async fn run_latency_test_with_config(
     endpoint: &Endpoint,
-    peer_node_id: NodeId,
+    node_id: NodeId,
     iterations: u32,
     ping_interval: Duration,
     ping_timeout: Duration,
@@ -39,13 +39,13 @@ pub async fn run_latency_test_with_config(
     let start = Instant::now();
 
     // Resolve the node address
-    let node_addr = resolve_node_addr(endpoint, peer_node_id)
+    let node_addr = resolve_node_addr(endpoint, node_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("Failed to resolve node address for {}", peer_node_id))?;
+        .ok_or_else(|| anyhow::anyhow!("Failed to resolve node address for {}", node_id))?;
 
     info!(
         "Starting latency test to {} ({} iterations)",
-        peer_node_id, iterations
+        node_id, iterations
     );
 
     let conn = endpoint.connect(node_addr, DOCTOR_SWARM_ALPN).await?;
@@ -176,7 +176,7 @@ pub async fn run_latency_test_with_config(
         success_rate: Some(latencies.len() as f64 / iterations as f64),
         duration: start.elapsed(),
         error: None,
-        connection_type: get_connection_type(endpoint, peer_node_id),
+        connection_type: get_connection_type(endpoint, node_id),
             ..Default::default()
     }))
 }

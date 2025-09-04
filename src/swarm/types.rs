@@ -2,7 +2,7 @@
 
 use std::{fmt, time::Duration};
 
-use iroh::endpoint::ConnectionType;
+use iroh::{endpoint::ConnectionType, NodeId};
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
@@ -300,11 +300,11 @@ impl<T> TestResult<T> {
 }
 
 /// Result for connectivity tests
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectivityResult {
     pub connected: bool,
     pub connection_time_ms: Option<u64>,
-    pub peer: String,
+    pub node_id: NodeId,
     pub duration: Duration,
     pub error: Option<String>,
     /// Real connection type determined by iroh (only available when connected=true)
@@ -312,6 +312,20 @@ pub struct ConnectivityResult {
     /// Detailed connection statistics
     #[serde(default)]
     pub connection_stats: Option<()>, // TODO: Add proper connection stats type
+}
+
+impl Default for ConnectivityResult {
+    fn default() -> Self {
+        Self {
+            connected: false,
+            connection_time_ms: None,
+            node_id: NodeId::from_bytes(&[0; 32]).unwrap(), // Default to zero node ID
+            duration: Duration::ZERO,
+            error: None,
+            connection_type: None,
+            connection_stats: None,
+        }
+    }
 }
 
 /// Result for latency tests
@@ -332,10 +346,10 @@ pub struct LatencyResult {
 }
 
 /// Result for throughput tests
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThroughputResult {
     pub test_type: TestType,
-    pub peer: String,
+    pub node_id: NodeId,
     pub duration: Duration,
     pub data_size_mb: u64,
     pub bytes_sent: u64,
@@ -348,20 +362,55 @@ pub struct ThroughputResult {
     pub chunk_size_kb: usize,
     pub statistics: Option<TestStats>,
     pub error: Option<String>,
-    /// Real connection type determined by iroh
     pub connection_type: Option<ConnectionType>,
 }
 
+impl Default for ThroughputResult {
+    fn default() -> Self {
+        Self {
+            test_type: TestType::default(),
+            node_id: NodeId::from_bytes(&[0; 32]).unwrap(),
+            duration: Duration::ZERO,
+            data_size_mb: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
+            transfer_duration_ms: None,
+            throughput_mbps: 0.0,
+            upload_mbps: 0.0,
+            download_mbps: 0.0,
+            parallel_streams: 0,
+            chunk_size_kb: 0,
+            statistics: None,
+            error: None,
+            connection_type: None,
+        }
+    }
+}
+
 /// Result for fingerprint tests (combined)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintResult {
     pub test_type: TestType,
-    pub peer: String,
+    pub node_id: NodeId,
     pub duration: Duration,
     pub connectivity: Option<ConnectivityResult>,
     pub latency: Option<LatencyResult>,
     pub throughput: Option<ThroughputResult>,
     pub error: Option<String>,
+}
+
+impl Default for FingerprintResult {
+    fn default() -> Self {
+        Self {
+            test_type: TestType::default(),
+            node_id: NodeId::from_bytes(&[0; 32]).unwrap(),
+            duration: Duration::ZERO,
+            connectivity: None,
+            latency: None,
+            throughput: None,
+            error: None,
+        }
+    }
 }
 
 /// Generic error result
@@ -370,14 +419,9 @@ pub struct ErrorResult {
     pub error: String,
     pub duration: Duration,
     pub test_type: Option<TestType>,
-    pub peer: Option<String>,
+    pub node_id: Option<NodeId>,
 }
 
-/// Internal skip result (when acting as responder)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct InternalSkipResult {
-    pub reason: String,
-}
 
 
 /// Simple enum for test result types (PostCard-compatible)
@@ -387,7 +431,6 @@ pub enum TestResultType {
     Latency,
     Throughput,
     Fingerprint,
-    InternalSkip,
     #[default]
     Error,
 }
@@ -408,8 +451,6 @@ pub struct TestAssignmentResult {
     pub throughput: Option<ThroughputResult>,
     /// Fingerprint test result (present when result_type = Fingerprint)
     pub fingerprint: Option<FingerprintResult>,
-    /// Internal skip result (present when result_type = InternalSkip)
-    pub internal_skip: Option<InternalSkipResult>,
     /// Error result (present when result_type = Error)
     pub error: Option<ErrorResult>,
 }
@@ -423,7 +464,6 @@ impl TestAssignmentResult {
             TestResultType::Throughput => self.throughput.as_ref().map_or(Duration::ZERO, |r| r.duration),
             TestResultType::Fingerprint => self.fingerprint.as_ref().map_or(Duration::ZERO, |r| r.duration),
             TestResultType::Error => self.error.as_ref().map_or(Duration::ZERO, |r| r.duration),
-            TestResultType::InternalSkip => Duration::ZERO, // No duration for skipped tests
         }
     }
 }

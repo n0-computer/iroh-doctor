@@ -33,160 +33,130 @@ async fn assignment_processing_task(
     tokio::select! {
         result = client.get_assignments() => {
             match result {
-        Ok(assignments) => {
-            if !assignments.is_empty() {
-                let completed = completed_assignments.read().await;
+                Ok(assignments) => {
+                    if !assignments.is_empty() {
+                        let completed = completed_assignments.read().await;
 
-                // Filter out completed assignments
-                let new_assignments: Vec<_> = assignments
-                    .into_iter()
-                    .filter(|a| {
-                        let key = (a.test_run_id, a.peer_node_id, a.retry_count);
-                        !completed.contains(&key)
-                    })
-                    .collect();
+                        // Filter out completed assignments
+                        let new_assignments: Vec<_> = assignments
+                            .into_iter()
+                            .filter(|a| {
+                                let key = (a.test_run_id, a.node_id, a.retry_count);
+                                !completed.contains(&key)
+                            })
+                            .collect();
 
-                if !new_assignments.is_empty() {
-                    info!("Received {} new test assignments", new_assignments.len());
+                        if !new_assignments.is_empty() {
+                            info!("Received {} new test assignments", new_assignments.len());
 
-                    // Execute each new assignment
-                    for assignment in new_assignments {
-                        let test_run_id = assignment.test_run_id;
-                        let peer_node_id = assignment.peer_node_id;
+                            // Execute each new assignment
+                            for assignment in new_assignments {
+                                let test_run_id = assignment.test_run_id;
 
-                        // Check if we're already initiating a test
-                        if is_testing_initiator.load(Ordering::Acquire) {
-                            info!(
-                                "Skipping assignment {} -> {} - already initiating another test",
-                                node_id, peer_node_id
-                            );
-                            continue;
-                        }
-
-                        // Check if we should initiate this test
-                        let should_initiate = match assignment.test_type {
-                            TestType::Fingerprint | TestType::Throughput => node_id < peer_node_id,
-                            _ => true,
-                        };
-
-                        // Only mark test as started if we're the initiator
-                        if should_initiate {
-                            match client
-                                .mark_test_started(test_run_id, node_id, peer_node_id)
-                                .await
-                            {
-                                Ok(success) => {
-                                    if !success {
-                                        warn!("Test already started by another node, skipping");
-                                        continue;
-                                    }
+                                // Check if we're already initiating a test
+                                if is_testing_initiator.load(Ordering::Acquire) {
+                                    info!(
+                                        "Skipping assignment {} -> {} - already initiating another test",
+                                        node_id, assignment.node_id
+                                    );
+                                    continue;
                                 }
-                                Err(e) => {
-                                    warn!("Failed to mark test as started: {}", e);
-                                    // Continue anyway - might be a transient error
-                                }
-                            }
-                        } else {
-                            info!("Not marking test as started - we're the responder");
-                        }
 
-                        // Mark this node as actively initiating a test
-                        is_testing_initiator.store(true, Ordering::Release);
+                                // Extract values first
+                                let retry_count = assignment.retry_count;
+                                let target_node_id = assignment.node_id;
 
-                        let retry_count = assignment.retry_count;
-                        let client = client.clone();
-                        let endpoint = endpoint.clone();
-                        let stats = stats.clone();
-                        let completed = completed_assignments.clone();
-                        let is_testing_task = is_testing_initiator.clone();
-
-                        tokio::spawn(async move {
-                            info!("Executing test assignment: {} -> {}", node_id, peer_node_id);
-
-                            let (success, result_data) = match perform_test_assignment(
-                                assignment,
-                                endpoint.clone(),
-                                node_id,
-                            )
-                            .await
-                            {
-                                Ok(result) => result,
-                                Err(e) => {
-                                    error!("Failed to perform test: {}", e);
-                                    (
-                                        false,
-                                        TestAssignmentResult {
-                                            result_type: TestResultType::Error,
-                                            error: Some(ErrorResult {
-                                                error: e.to_string(),
-                                                duration: Duration::from_secs(0),
-                                                test_type: None,
-                                                peer: None,
-                                            }),
-                                            ..Default::default()
-                                        },
-                                    )
-                                }
-                            };
-
-                            // Check if this is an internal skip (we're just the responder)
-                            if matches!(result_data.result_type, TestResultType::InternalSkip) {
-                                // Don't submit result - we're acting as responder only
-                                // Mark as completed so we don't try again
-                                completed.write().await.insert((
-                                    test_run_id,
-                                    peer_node_id,
-                                    retry_count,
-                                ));
-                                debug!("Skipped submitting result - acting as responder only");
-                            } else {
-                                // Submit result
+                                // Mark test as started in database (for status tracking)
                                 if let Err(e) = client
-                                    .submit_result(
-                                        test_run_id,
-                                        node_id,
-                                        peer_node_id,
-                                        success,
-                                        result_data,
-                                    )
+                                    .mark_test_started(test_run_id, node_id, target_node_id)
                                     .await
                                 {
-                                    error!("Failed to submit result: {}", e);
-                                } else {
-                                    // Mark as completed
-                                    completed.write().await.insert((
-                                        test_run_id,
-                                        peer_node_id,
-                                        retry_count,
-                                    ));
-
-                                    // Update stats
-                                    if success {
-                                        stats.increment_completed();
-                                    } else {
-                                        stats.increment_failed();
-                                    }
-
-                                    // Cool-down period between tests
-                                    info!("Test completed, entering 1-second cool-down period");
-                                    tokio::time::sleep(Duration::from_secs(1)).await;
+                                    warn!("Failed to mark test as started: {}", e);
+                                    // Continue anyway - the test will still run
                                 }
+
+                                // Mark this node as actively initiating a test
+                                is_testing_initiator.store(true, Ordering::Release);
+                                let client = client.clone();
+                                let endpoint = endpoint.clone();
+                                let stats = stats.clone();
+                                let completed = completed_assignments.clone();
+                                let is_testing_task = is_testing_initiator.clone();
+
+                                tokio::spawn(async move {
+                                    info!("Executing test assignment: {} -> {}", node_id, target_node_id);
+
+                                    let (success, result_data) = match perform_test_assignment(
+                                        assignment,
+                                        endpoint.clone(),
+                                        node_id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(result) => result,
+                                        Err(e) => {
+                                            error!("Failed to perform test: {}", e);
+                                            (
+                                                false,
+                                                TestAssignmentResult {
+                                                    result_type: TestResultType::Error,
+                                                    error: Some(ErrorResult {
+                                                        error: e.to_string(),
+                                                        duration: Duration::from_secs(0),
+                                                        test_type: None,
+                                                        node_id: None,
+                                                    }),
+                                                    ..Default::default()
+                                                },
+                                            )
+                                        }
+                                    };
+
+                                    if let Err(e) = client
+                                            .submit_result(
+                                                test_run_id,
+                                                node_id,
+                                                target_node_id,
+                                                success,
+                                                result_data,
+                                            )
+                                            .await
+                                        {
+                                            error!("Failed to submit result: {}", e);
+                                        } else {
+                                            // Mark as completed
+                                            completed.write().await.insert((
+                                                test_run_id,
+                                                target_node_id,
+                                                retry_count,
+                                            ));
+
+                                            // Update stats
+                                            if success {
+                                                stats.increment_completed();
+                                            } else {
+                                                stats.increment_failed();
+                                            }
+
+                                            // Cool-down period between tests
+                                            info!("Test completed, entering 1-second cool-down period");
+                                            tokio::time::sleep(Duration::from_secs(1)).await;
+                                        }
+
+                                    // Clear test active flag
+                                    is_testing_task.store(false, Ordering::Release);
+                                });
+
+                                // Break after starting one test to prevent concurrent execution
+                                break;
                             }
-
-                            // Clear test active flag
-                            is_testing_task.store(false, Ordering::Release);
-                        });
-
-                        // Break after starting one test to prevent concurrent execution
-                        break;
+                        }
                     }
                 }
+                Err(e) => {
+                    warn!("Failed to get assignments: {}", e);
+                }
             }
-            }
-            Err(e) => {
-                warn!("Failed to get assignments: {}", e);
-            }
-        }
         }
         _ = shutdown_rx.recv() => {
             debug!("Assignment processing task received shutdown signal");
@@ -529,7 +499,7 @@ pub async fn run_swarm_client(
     tokio::time::sleep(Duration::from_secs(10)).await;
 
     // Track completed assignments to avoid duplicates
-    // Key: (test_run_id, peer_node_id, retry_count)
+    // Key: (test_run_id, node_id, retry_count)
     let completed_assignments = Arc::new(RwLock::new(
         HashSet::<(uuid::Uuid, iroh::NodeId, i32)>::new(),
     ));
