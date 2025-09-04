@@ -139,8 +139,8 @@ async fn assignment_processing_task(
                                             }
 
                                             // Cool-down period between tests
-                                            info!("Test completed, entering 1-second cool-down period");
-                                            tokio::time::sleep(Duration::from_secs(1)).await;
+                                            info!("Test completed, entering 0.5-second cool-down period");
+                                            tokio::time::sleep(Duration::from_millis(500)).await;
                                         }
 
                                     // Clear test active flag
@@ -524,7 +524,7 @@ pub async fn run_swarm_client(
     let stats = Arc::new(SwarmStats::default());
     let mut heartbeat_interval = tokio::time::interval(config.heartbeat_interval);
     heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut assignment_interval = tokio::time::interval(Duration::from_secs(10));
+    let mut assignment_interval = tokio::time::interval(Duration::from_secs(2));
     assignment_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let result = {
