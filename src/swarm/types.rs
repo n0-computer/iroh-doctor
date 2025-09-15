@@ -6,14 +6,12 @@ use iroh::{endpoint::ConnectionType, NodeId};
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
-
 /// Test types supported by doctor nodes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TestType {
     #[default]
-    Connectivity,
-    Throughput,
     Latency,
+    Throughput,
     /// Combined test: connectivity + throughput + latency
     Fingerprint,
 }
@@ -21,19 +19,11 @@ pub enum TestType {
 impl fmt::Display for TestType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestType::Connectivity => write!(f, "connectivity"),
             TestType::Throughput => write!(f, "throughput"),
             TestType::Latency => write!(f, "latency"),
             TestType::Fingerprint => write!(f, "fingerprint"),
         }
     }
-}
-
-/// Capability declaration for a specific test type
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TestCapability {
-    pub test_type: TestType,
-    pub max_bandwidth_mbps: Option<u32>,
 }
 
 /// Configuration for a test run
@@ -114,41 +104,68 @@ pub struct StreamStats {
     pub bytes_sent: u64,
     /// Total bytes received on this stream
     pub bytes_received: u64,
-    /// Duration of the stream test in milliseconds
-    pub duration_ms: f64,
+    /// Duration of the stream test
+    pub duration: Duration,
     /// Calculated throughput in Mbps
     pub throughput_mbps: f64,
 }
 
-/// QUIC connection statistics
+/// Connection statistics extracted from quinn::ConnectionStats
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct QuicStats {
+pub struct ConnectionStats {
     /// Round-trip time in milliseconds
-    pub rtt_ms: Option<f64>,
-    /// Smoothed RTT in milliseconds
-    pub smoothed_rtt_ms: Option<f64>,
-    /// RTT variance
-    pub rtt_variance_ms: Option<f64>,
-    /// Number of congestion events
-    pub congestion_events: Option<u64>,
-    /// Packet loss rate (0.0 to 1.0)
-    pub packet_loss_rate: Option<f64>,
-    /// Connection-level throughput in Mbps
-    pub connection_throughput_mbps: Option<f64>,
-    /// Congestion window size in bytes
-    pub congestion_window: Option<u64>,
-    /// Number of packets sent
-    pub packets_sent: Option<u64>,
-    /// Number of packets lost
-    pub packets_lost: Option<u64>,
-    /// Number of bytes sent
-    pub bytes_sent: Option<u64>,
-    /// Number of bytes received  
-    pub bytes_received: Option<u64>,
+    pub rtt_ms: u32,
+    /// Smoothed round-trip time in milliseconds  
+    pub smoothed_rtt_ms: u32,
+    /// Latest RTT sample in milliseconds
+    pub latest_rtt_ms: u32,
+    /// RTT variance in milliseconds
+    pub rtt_variance_ms: u32,
+    /// Congestion window in bytes
+    pub cwnd: u64,
+    /// Total packets sent on this path
+    pub sent_packets: u64,
+    /// Total packets lost on this path
+    pub lost_packets: u64,
+    /// Total bytes sent on this path
+    pub sent_bytes: u64,
+    /// Total bytes received on this path
+    pub recv_bytes: u64,
+    /// Number of congestion events on this path
+    pub congestion_events: u64,
+    /// Number of packets sent containing only ACK frames
+    pub sent_ack_only_packets: u64,
+    /// Number of packets sent with PLPMTU probe frames
+    pub sent_plpmtu_probes: u64,
+    /// Number of packets lost with PLPMTU probe frames
+    pub lost_plpmtu_probes: u64,
+    /// Number of black hole events detected (when packets suddenly stop being delivered)
+    pub black_hole_detected: u64,
+}
+
+impl From<quinn::ConnectionStats> for ConnectionStats {
+    fn from(stats: quinn::ConnectionStats) -> Self {
+        Self {
+            rtt_ms: stats.path.rtt.as_millis() as u32,
+            smoothed_rtt_ms: 0, // Not available in iroh-quinn
+            latest_rtt_ms: 0,   // Not available in iroh-quinn
+            rtt_variance_ms: 0, // Not available in iroh-quinn
+            cwnd: stats.path.cwnd,
+            sent_packets: stats.path.sent_packets,
+            lost_packets: stats.path.lost_packets,
+            sent_bytes: stats.udp_tx.bytes,
+            recv_bytes: stats.udp_rx.bytes,
+            congestion_events: stats.path.congestion_events,
+            sent_ack_only_packets: 0, // Not available in iroh-quinn
+            sent_plpmtu_probes: stats.path.sent_plpmtud_probes,
+            lost_plpmtu_probes: stats.path.lost_plpmtud_probes,
+            black_hole_detected: stats.path.black_holes_detected,
+        }
+    }
 }
 
 /// Aggregate test statistics across all streams
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestStats {
     /// Per-stream statistics
     pub per_stream_stats: Vec<StreamStats>,
@@ -162,13 +179,13 @@ pub struct TestStats {
     pub min_stream_throughput: f64,
     /// Maximum throughput observed across streams (Mbps)
     pub max_stream_throughput: f64,
-    /// QUIC connection statistics (optional)
-    pub quic_stats: Option<QuicStats>,
+    /// Connection-level statistics from quinn
+    pub connection_stats: ConnectionStats,
 }
 
 impl TestStats {
-    /// Calculate statistics from stream results
-    pub fn from_streams(streams: Vec<StreamStats>) -> Self {
+    /// Calculate statistics from stream results and connection stats
+    pub fn from_streams(streams: Vec<StreamStats>, connection_stats: ConnectionStats) -> Self {
         if streams.is_empty() {
             return Self {
                 per_stream_stats: vec![],
@@ -177,7 +194,7 @@ impl TestStats {
                 stream_balance_score: 1.0,
                 min_stream_throughput: 0.0,
                 max_stream_throughput: 0.0,
-                quic_stats: None,
+                connection_stats,
             };
         }
 
@@ -233,7 +250,7 @@ impl TestStats {
             stream_balance_score,
             min_stream_throughput,
             max_stream_throughput,
-            quic_stats: None, // Will be populated by the throughput test
+            connection_stats,
         }
     }
 }
@@ -276,58 +293,6 @@ impl SwarmStats {
     }
 }
 
-/// Base result type for all test outcomes
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TestResult<T> {
-    pub success: bool,
-    pub data: T,
-}
-
-impl<T> TestResult<T> {
-    pub fn success(data: T) -> Self {
-        Self {
-            success: true,
-            data,
-        }
-    }
-
-    pub fn failure(data: T) -> Self {
-        Self {
-            success: false,
-            data,
-        }
-    }
-}
-
-/// Result for connectivity tests
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectivityResult {
-    pub connected: bool,
-    pub connection_time_ms: Option<u64>,
-    pub node_id: NodeId,
-    pub duration: Duration,
-    pub error: Option<String>,
-    /// Real connection type determined by iroh (only available when connected=true)
-    pub connection_type: Option<ConnectionType>,
-    /// Detailed connection statistics
-    #[serde(default)]
-    pub connection_stats: Option<()>, // TODO: Add proper connection stats type
-}
-
-impl Default for ConnectivityResult {
-    fn default() -> Self {
-        Self {
-            connected: false,
-            connection_time_ms: None,
-            node_id: NodeId::from_bytes(&[0; 32]).unwrap(), // Default to zero node ID
-            duration: Duration::ZERO,
-            error: None,
-            connection_type: None,
-            connection_stats: None,
-        }
-    }
-}
-
 /// Result for latency tests
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LatencyResult {
@@ -336,9 +301,7 @@ pub struct LatencyResult {
     pub max_latency_ms: Option<f64>,
     pub std_dev_ms: Option<f64>,
     pub successful_pings: usize,
-    pub failed_pings: u32,
     pub total_iterations: u32,
-    pub success_rate: Option<f64>,
     pub duration: Duration,
     pub error: Option<String>,
     /// Real connection type determined by iroh
@@ -354,8 +317,7 @@ pub struct ThroughputResult {
     pub data_size_mb: u64,
     pub bytes_sent: u64,
     pub bytes_received: u64,
-    pub transfer_duration_ms: Option<u64>,
-    pub throughput_mbps: f64, // For backward compatibility
+    pub transfer_duration: Option<Duration>,
     pub upload_mbps: f64,
     pub download_mbps: f64,
     pub parallel_streams: usize,
@@ -374,8 +336,7 @@ impl Default for ThroughputResult {
             data_size_mb: 0,
             bytes_sent: 0,
             bytes_received: 0,
-            transfer_duration_ms: None,
-            throughput_mbps: 0.0,
+            transfer_duration: None,
             upload_mbps: 0.0,
             download_mbps: 0.0,
             parallel_streams: 0,
@@ -393,7 +354,6 @@ pub struct FingerprintResult {
     pub test_type: TestType,
     pub node_id: NodeId,
     pub duration: Duration,
-    pub connectivity: Option<ConnectivityResult>,
     pub latency: Option<LatencyResult>,
     pub throughput: Option<ThroughputResult>,
     pub error: Option<String>,
@@ -405,7 +365,6 @@ impl Default for FingerprintResult {
             test_type: TestType::default(),
             node_id: NodeId::from_bytes(&[0; 32]).unwrap(),
             duration: Duration::ZERO,
-            connectivity: None,
             latency: None,
             throughput: None,
             error: None,
@@ -422,12 +381,9 @@ pub struct ErrorResult {
     pub node_id: Option<NodeId>,
 }
 
-
-
 /// Simple enum for test result types (PostCard-compatible)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TestResultType {
-    Connectivity,
     Latency,
     Throughput,
     Fingerprint,
@@ -436,16 +392,14 @@ pub enum TestResultType {
 }
 
 /// Unified result type for all test assignments
-/// 
+///
 /// Note: Changed from tagged enum to struct with optional fields due to PostCard limitations.
 /// PostCard cannot serialize tagged enums with complex nested data.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestAssignmentResult {
     /// Indicates which type of test result this represents
     pub result_type: TestResultType,
-    /// Connectivity test result (present when result_type = Connectivity)
-    pub connectivity: Option<ConnectivityResult>,
-    /// Latency test result (present when result_type = Latency) 
+    /// Latency test result (present when result_type = Latency)
     pub latency: Option<LatencyResult>,
     /// Throughput test result (present when result_type = Throughput)
     pub throughput: Option<ThroughputResult>,
@@ -459,10 +413,15 @@ impl TestAssignmentResult {
     /// Extract duration from the appropriate result type based on result_type field
     pub fn duration(&self) -> Duration {
         match self.result_type {
-            TestResultType::Connectivity => self.connectivity.as_ref().map_or(Duration::ZERO, |r| r.duration),
             TestResultType::Latency => self.latency.as_ref().map_or(Duration::ZERO, |r| r.duration),
-            TestResultType::Throughput => self.throughput.as_ref().map_or(Duration::ZERO, |r| r.duration),
-            TestResultType::Fingerprint => self.fingerprint.as_ref().map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::Throughput => self
+                .throughput
+                .as_ref()
+                .map_or(Duration::ZERO, |r| r.duration),
+            TestResultType::Fingerprint => self
+                .fingerprint
+                .as_ref()
+                .map_or(Duration::ZERO, |r| r.duration),
             TestResultType::Error => self.error.as_ref().map_or(Duration::ZERO, |r| r.duration),
         }
     }
@@ -480,19 +439,19 @@ mod tests {
                 stream_id: 0,
                 bytes_sent: 10_000_000,
                 bytes_received: 10_000_000,
-                duration_ms: 1000.0,
+                duration: Duration::from_millis(1000),
                 throughput_mbps: 80.0,
             },
             StreamStats {
                 stream_id: 1,
                 bytes_sent: 10_000_000,
                 bytes_received: 10_000_000,
-                duration_ms: 1000.0,
+                duration: Duration::from_millis(1000),
                 throughput_mbps: 80.0,
             },
         ];
 
-        let stats = TestStats::from_streams(streams);
+        let stats = TestStats::from_streams(streams, ConnectionStats::default());
         assert_eq!(stats.aggregate_throughput_mbps, 160.0);
         assert_eq!(stats.throughput_variance, 0.0);
         assert_eq!(stats.stream_balance_score, 1.0);
@@ -508,19 +467,19 @@ mod tests {
                 stream_id: 0,
                 bytes_sent: 10_000_000,
                 bytes_received: 10_000_000,
-                duration_ms: 1000.0,
+                duration: Duration::from_millis(1000),
                 throughput_mbps: 100.0,
             },
             StreamStats {
                 stream_id: 1,
                 bytes_sent: 5_000_000,
                 bytes_received: 5_000_000,
-                duration_ms: 1000.0,
+                duration: Duration::from_millis(1000),
                 throughput_mbps: 40.0,
             },
         ];
 
-        let stats = TestStats::from_streams(streams);
+        let stats = TestStats::from_streams(streams, ConnectionStats::default());
         assert_eq!(stats.aggregate_throughput_mbps, 140.0);
         assert!(stats.throughput_variance > 0.0);
         assert!(stats.stream_balance_score < 1.0);
@@ -531,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_empty_stats() {
-        let stats = TestStats::from_streams(vec![]);
+        let stats = TestStats::from_streams(vec![], ConnectionStats::default());
         assert_eq!(stats.aggregate_throughput_mbps, 0.0);
         assert_eq!(stats.throughput_variance, 0.0);
         assert_eq!(stats.stream_balance_score, 1.0);

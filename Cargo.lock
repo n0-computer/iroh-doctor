@@ -1274,7 +1274,7 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows 0.61.3",
+ "windows 0.59.0",
 ]
 
 [[package]]
@@ -1620,7 +1620,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.59.0",
 ]
 
 [[package]]
@@ -1884,7 +1884,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "0.91.2"
-source = "git+https://github.com/n0-computer/iroh?branch=arqu%2Fnat_probes#50582e49ba3ddb655a456494380021e0c5913b5d"
+source = "git+https://github.com/n0-computer/iroh?branch=main#e8eb1dd9d9008874b0ad48c3d05f5ee8cb8ec2e3"
 dependencies = [
  "aead",
  "backon",
@@ -1944,7 +1944,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "0.91.2"
-source = "git+https://github.com/n0-computer/iroh?branch=arqu%2Fnat_probes#50582e49ba3ddb655a456494380021e0c5913b5d"
+source = "git+https://github.com/n0-computer/iroh?branch=main#e8eb1dd9d9008874b0ad48c3d05f5ee8cb8ec2e3"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1965,6 +1965,7 @@ version = "0.91.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "bytes",
  "clap",
  "crossterm",
  "derive_more 1.0.0",
@@ -1995,7 +1996,6 @@ dependencies = [
  "reqwest",
  "rustls",
  "serde",
- "serde_json",
  "serde_with",
  "ssh-key",
  "tokio",
@@ -2044,7 +2044,7 @@ dependencies = [
 [[package]]
 name = "iroh-n0des"
 version = "0.2.0"
-source = "git+https://github.com/n0-computer/iroh-n0des?branch=arqu%2Fnat_probes#0af6ff4afa069984d65de3d3879c92d85f93604d"
+source = "git+https://github.com/n0-computer/iroh-n0des?branch=main#d4411b296e33fae28a7a956a7ebb5cc2ff413970"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2077,7 +2077,7 @@ dependencies = [
 [[package]]
 name = "iroh-n0des-macro"
 version = "0.2.0"
-source = "git+https://github.com/n0-computer/iroh-n0des?branch=arqu%2Fnat_probes#0af6ff4afa069984d65de3d3879c92d85f93604d"
+source = "git+https://github.com/n0-computer/iroh-n0des?branch=main#d4411b296e33fae28a7a956a7ebb5cc2ff413970"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2142,7 +2142,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "0.91.2"
-source = "git+https://github.com/n0-computer/iroh?branch=arqu%2Fnat_probes#50582e49ba3ddb655a456494380021e0c5913b5d"
+source = "git+https://github.com/n0-computer/iroh?branch=main#e8eb1dd9d9008874b0ad48c3d05f5ee8cb8ec2e3"
 dependencies = [
  "blake3",
  "bytes",
@@ -2191,7 +2191,7 @@ dependencies = [
 [[package]]
 name = "irpc"
 version = "0.7.0"
-source = "git+https://github.com/n0-computer/irpc?branch=arqu%2Fnat_probes#5af0a655b0709915036d055d09532904b7582625"
+source = "git+https://github.com/n0-computer/irpc?branch=main#ca56cd85358cf7dda8cb997d8daf44006e0743b4"
 dependencies = [
  "anyhow",
  "futures-buffered",
@@ -2213,7 +2213,7 @@ dependencies = [
 [[package]]
 name = "irpc-derive"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/irpc?branch=arqu%2Fnat_probes#5af0a655b0709915036d055d09532904b7582625"
+source = "git+https://github.com/n0-computer/irpc?branch=main#ca56cd85358cf7dda8cb997d8daf44006e0743b4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2223,7 +2223,7 @@ dependencies = [
 [[package]]
 name = "irpc-iroh"
 version = "0.7.0"
-source = "git+https://github.com/n0-computer/irpc?branch=arqu%2Fnat_probes#5af0a655b0709915036d055d09532904b7582625"
+source = "git+https://github.com/n0-computer/irpc?branch=main#ca56cd85358cf7dda8cb997d8daf44006e0743b4"
 dependencies = [
  "anyhow",
  "getrandom 0.3.3",

@@ -3,43 +3,55 @@
 mod client;
 mod config;
 mod execution;
+pub mod net_report_ext;
 mod rpc;
 mod runner;
 mod tests;
+mod transfer_utils;
 mod types;
 
 // Public API exports
 // Main entry point for swarm functionality
-pub use runner::run_swarm_client;
-
 // Client types
 pub use client::{SwarmClient, DOCTOR_ALPN};
-
 // Configuration types
-pub use config::{SwarmConfig, TransportConfig};
-
-// Test types and results
-pub use types::{
-    TestType, TestConfig, TestCapability, TestStats, StreamStats, SwarmStats,
-    AdvancedTestConfig, ThroughputAdvancedConfig, LatencyAdvancedConfig, NetworkAdvancedConfig,
-    DoctorCaps, ErrorResult, TestAssignmentResult, TestResultType,
-};
-
+pub use config::{PortVariationConfig, SwarmConfig, TransportConfig};
+// Extended network report
+pub use net_report_ext::{probe_port_variation, ExtendedNetworkReport, PortVariationResult};
 // RPC protocol and service types
 pub use rpc::{
-    DoctorError, TestAssignment, TestPair, TestPairResult,
-    DoctorProtocol, DoctorMessage, DoctorService,
     // Request/Response types
-    Auth, AuthResponse,
-    DoctorRegister, DoctorRegisterResponse,
-    DoctorHeartbeat, DoctorHeartbeatResponse,
-    GetNodeInfo, GetNodeInfoResponse,
-    GetTestAssignments, GetTestAssignmentsResponse,
-    PutMetrics, PutMetricsResponse,
-    TestResultReport, TestResultReportResponse,
-    CreateTestRun, CreateTestRunResponse,
-    GetTestRunStatus, GetTestRunStatusResponse,
-    MarkTestStarted, MarkTestStartedResponse,
+    Auth,
+    AuthResponse,
+    CreateTestRun,
+    CreateTestRunResponse,
     // Client
     DoctorClient,
+    DoctorError,
+    DoctorMessage,
+    DoctorProtocol,
+    DoctorRegister,
+    DoctorRegisterResponse,
+    DoctorService,
+    GetNodeInfo,
+    GetNodeInfoResponse,
+    GetTestAssignments,
+    GetTestAssignmentsResponse,
+    GetTestRunStatus,
+    GetTestRunStatusResponse,
+    MarkTestStarted,
+    MarkTestStartedResponse,
+    PutMetrics,
+    PutMetricsResponse,
+    TestAssignment,
+    TestPair,
+    TestPairResult,
+    TestResultReport,
+};
+pub use runner::run_swarm_client;
+// Test types and results
+pub use types::{
+    AdvancedTestConfig, DoctorCaps, ErrorResult, FingerprintResult, LatencyAdvancedConfig,
+    LatencyResult, NetworkAdvancedConfig, StreamStats, SwarmStats, TestAssignmentResult,
+    TestConfig, TestResultType, TestStats, TestType, ThroughputAdvancedConfig, ThroughputResult,
 };

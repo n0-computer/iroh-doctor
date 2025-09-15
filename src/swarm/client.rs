@@ -1,18 +1,17 @@
 //! Main SwarmClient implementation
 
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use futures_lite::StreamExt;
-use iroh::{endpoint, net_report::Report, Endpoint, NodeAddr, NodeId, RelayMode};
-use n0_watcher::Watcher;
-use tokio::sync::RwLock;
+use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::swarm::{
     config::SwarmConfig,
-    rpc::{self, DoctorClient, TestAssignment, TestResultReport},
+    net_report_ext::{self, probe_port_variation, ExtendedNetworkReport},
+    rpc::{DoctorClient, TestAssignment, TestResultReport},
     tests::protocol::DOCTOR_SWARM_ALPN,
     types::TestAssignmentResult,
 };
@@ -28,9 +27,9 @@ pub struct SwarmClient {
     /// ID of the project in the coordinator
     project_id: Uuid,
     /// IRPC client for coordinator communication
-    doctor_client: Arc<tokio::sync::Mutex<rpc::DoctorClient>>,
-    /// Cached network report shared between tasks
-    cached_network_report: Arc<RwLock<Option<Report>>>,
+    doctor_client: Arc<Mutex<DoctorClient>>,
+    /// Port variation detection results (stored separately as they're not part of iroh's report)
+    port_variation_result: Arc<RwLock<Option<net_report_ext::PortVariationResult>>>,
 }
 
 impl SwarmClient {
@@ -41,7 +40,7 @@ impl SwarmClient {
     /// Connect to a coordinator node using RCAN authentication
     pub async fn connect(
         config: SwarmConfig,
-        ssh_key_path: &std::path::Path,
+        ssh_key_path: &Path,
         metrics_registry: crate::metrics::IrohMetricsRegistry,
     ) -> Result<Self> {
         let node_id = config.secret_key.public();
@@ -58,46 +57,39 @@ impl SwarmClient {
             RelayMode::Default
         };
 
-        // Configure transport for optimal throughput
+        // Start with quinn/iroh default transport config
         let mut transport_config = endpoint::TransportConfig::default();
 
-        // Apply transport configuration from config or use defaults
+        // Only modify transport config when explicitly requested
         if let Some(ref transport) = config.transport {
-            // Concurrent bidirectional streams (default: 10)
-            let max_streams = transport.max_concurrent_bidi_streams.unwrap_or(10);
-            transport_config.max_concurrent_bidi_streams(max_streams.into());
-
-            // Send and receive windows (default: 10MB)
-            let send_window_kb = transport.send_window_kb.unwrap_or(10240); // 10MB
-            let receive_window_kb = transport.receive_window_kb.unwrap_or(10240); // 10MB
-            transport_config.send_window((send_window_kb * 1024) as u64);
-            transport_config.receive_window((receive_window_kb * 1024).into());
-
-            // Keep-alive (default: disabled for throughput tests)
-            if transport.keep_alive.unwrap_or(false) {
-                transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
-            } else {
-                transport_config.keep_alive_interval(None);
+            if let Some(max_streams) = transport.max_concurrent_bidi_streams {
+                transport_config.max_concurrent_bidi_streams(max_streams.into());
             }
 
-            // Idle timeout (default: 60 seconds)
-            let idle_timeout_secs = transport.idle_timeout_secs.unwrap_or(60);
-            transport_config.max_idle_timeout(Some(
-                Duration::from_secs(idle_timeout_secs as u64)
-                    .try_into()
-                    .unwrap(),
-            ));
-        } else {
-            // Use existing defaults when no transport config is provided
-            transport_config.max_concurrent_bidi_streams(10u32.into());
-            transport_config.receive_window((10 * 1024 * 1024u32).into());
-            transport_config.send_window(10 * 1024 * 1024);
-            transport_config.keep_alive_interval(None);
-            transport_config.max_idle_timeout(Some(Duration::from_secs(60).try_into().unwrap()));
-        }
+            if let Some(send_window_kb) = transport.send_window_kb {
+                transport_config.send_window((send_window_kb * 1024) as u64);
+            }
 
-        // Note: BBR congestion control would need to be set at quinn level
-        // think that iroh currently doesn't expose congestion control configuration
+            if let Some(receive_window_kb) = transport.receive_window_kb {
+                transport_config.receive_window((receive_window_kb * 1024).into());
+            }
+
+            if let Some(keep_alive) = transport.keep_alive {
+                if keep_alive {
+                    transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
+                } else {
+                    transport_config.keep_alive_interval(None);
+                }
+            }
+
+            if let Some(idle_timeout_secs) = transport.idle_timeout_secs {
+                transport_config.max_idle_timeout(Some(
+                    Duration::from_secs(idle_timeout_secs as u64)
+                        .try_into()
+                        .unwrap(),
+                ));
+            }
+        }
 
         let endpoint = Endpoint::builder()
             .secret_key(config.secret_key.clone())
@@ -126,7 +118,6 @@ impl SwarmClient {
         }
 
         // Connect to coordinator
-        let coordinator_addr = NodeAddr::new(config.coordinator_node_id);
         info!(
             "Connecting to coordinator at {}",
             config.coordinator_node_id
@@ -135,92 +126,83 @@ impl SwarmClient {
         // Wait for endpoint to initialize (relay connection, direct addresses, etc.)
         info!("Waiting for endpoint initialization...");
         let mut direct_addrs = endpoint.direct_addresses();
-        tokio::select! {
-            result = tokio::time::timeout(
-                Duration::from_secs(10),
-                direct_addrs.initialized(),
-            ) => {
-                match result {
-                    Ok(_) => info!("Endpoint initialized successfully"),
-                    Err(_) => warn!("Timeout waiting for endpoint initialization"),
-                }
-            }
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C during endpoint initialization, shutting down...");
-                return Err(anyhow::anyhow!("Cancelled by user"));
-            }
+        match tokio::time::timeout(Duration::from_secs(10), direct_addrs.initialized()).await {
+            Ok(_) => info!("Endpoint initialized successfully"),
+            Err(_) => warn!("Timeout waiting for endpoint initialization"),
         }
 
-        // Collect initial network report for NAT detection
-        // We'll wait briefly for an initial report
-        let network_report = {
-            let mut net_report_stream = endpoint.net_report().stream();
-            tokio::select! {
-                result = tokio::time::timeout(Duration::from_secs(3), net_report_stream.next()) => {
-                    match result {
-                        Ok(Some(Some(report))) => {
-                            info!("Collected network report for NAT detection");
-                            info!("Network report details: udp_v4={:?}, udp_v6={:?}, mapping_varies_by_dest_ipv4={:?}, mapping_varies_by_dest_ipv6={:?}",
-                                report.udp_v4, report.udp_v6, report.mapping_varies_by_dest_ipv4, report.mapping_varies_by_dest_ipv6);
-
-                            // Use iroh's Report directly
-                            Some(report)
-                        }
-                        Ok(Some(None)) => {
-                            warn!("Network report stream returned None report");
-                            None
-                        }
-                        Ok(None) => {
-                            warn!("Network report stream ended unexpectedly");
-                            None
-                        }
-                        Err(_) => {
-                            warn!("Timeout waiting for network report, proceeding without NAT detection");
-                            None
-                        }
-                    }
+        // Wait for initial network report
+        let mut net_report_watcher = endpoint.net_report();
+        let initialized_watcher = net_report_watcher.initialized();
+        let base_network_report = match tokio::time::timeout(
+            Duration::from_secs(3),
+            initialized_watcher,
+        )
+        .await
+        {
+            Ok(_) => {
+                let report = net_report_watcher.get();
+                if let Some(ref r) = report {
+                    info!("Collected network report for NAT detection");
+                    info!("Network report details: udp_v4={:?}, udp_v6={:?}, mapping_varies_by_dest_ipv4={:?}, mapping_varies_by_dest_ipv6={:?}",
+                        r.udp_v4, r.udp_v6, r.mapping_varies_by_dest_ipv4, r.mapping_varies_by_dest_ipv6);
                 }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Received Ctrl+C during network report collection, shutting down...");
-                    return Err(anyhow::anyhow!("Cancelled by user"));
-                }
+                report
+            }
+            Err(_) => {
+                warn!("Timeout waiting for network report, proceeding without NAT detection");
+                None
             }
         };
 
-        // Create doctor client with SSH key authentication and connect to coordinator
-        let doctor_client = tokio::select! {
-            result = tokio::time::timeout(
-                Duration::from_secs(30),
-                DoctorClient::with_ssh_key(&endpoint, coordinator_addr.clone(), ssh_key_path)
-            ) => {
-                match result {
-                    Ok(client) => client.context("Failed to connect and authenticate with coordinator")?,
-                    Err(_) => {
-                        warn!("Timeout connecting to coordinator, coordinator may be offline");
-                        return Err(anyhow::anyhow!("Timeout connecting to coordinator"));
-                    }
+        // Run port variation detection if enabled
+        let port_variation_result = if config.port_variation.enabled {
+            debug!("Running port variation detection probe");
+            match probe_port_variation(&config.port_variation, config.coordinator_node_id).await {
+                Ok(result) => {
+                    debug!(
+                        "Port variation detection complete: IPv4 varies: {:?}, IPv6 varies: {:?}",
+                        result.ipv4_varies, result.ipv6_varies
+                    );
+                    Some(result)
+                }
+                Err(e) => {
+                    warn!("Port variation detection failed: {}", e);
+                    None
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C during coordinator connection, shutting down...");
-                return Err(anyhow::anyhow!("Cancelled by user"));
+        } else {
+            debug!("Port variation detection disabled");
+            None
+        };
+
+        // Create extended network report for registration
+        let extended_network_report = if let Some(ref port_result) = port_variation_result {
+            ExtendedNetworkReport::from_base_report(base_network_report)
+                .with_port_variation(port_result.ipv4_varies, port_result.ipv6_varies)
+        } else {
+            ExtendedNetworkReport::from_base_report(base_network_report)
+        };
+
+        // Create doctor client with SSH key authentication and connect to coordinator
+        let doctor_client = match tokio::time::timeout(
+            Duration::from_secs(30),
+            DoctorClient::with_ssh_key(&endpoint, config.coordinator_node_id, ssh_key_path),
+        )
+        .await
+        {
+            Ok(client) => client.context("Failed to connect and authenticate with coordinator")?,
+            Err(_) => {
+                warn!("Timeout connecting to coordinator, coordinator may be offline");
+                return Err(anyhow::anyhow!("Timeout connecting to coordinator"));
             }
         };
 
         // Register with coordinator
-        let register_response = tokio::select! {
-            result = doctor_client.register(
-                config.capabilities.clone(),
-                config.name.clone(),
-                network_report.clone(),
-            ) => {
-                result.context("Failed to register with coordinator")?
-            }
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C during coordinator registration, shutting down...");
-                return Err(anyhow::anyhow!("Cancelled by user"));
-            }
-        };
+        let register_response = doctor_client
+            .register(config.name.clone(), Some(extended_network_report.clone()))
+            .await
+            .context("Failed to register with coordinator")?;
 
         let project_id = register_response.project_id;
         info!("Registered with coordinator, project_id: {}", project_id);
@@ -229,27 +211,38 @@ impl SwarmClient {
             endpoint: Arc::new(endpoint),
             node_id,
             project_id,
-            doctor_client: Arc::new(tokio::sync::Mutex::new(doctor_client)),
-            cached_network_report: Arc::new(RwLock::new(network_report)),
+            doctor_client: Arc::new(Mutex::new(doctor_client)),
+            port_variation_result: Arc::new(RwLock::new(port_variation_result)),
         })
     }
 
-    /// Set the cached network report
-    pub async fn set_cached_network_report(&self, network_report: Option<Report>) {
-        let mut cached = self.cached_network_report.write().await;
-        *cached = network_report;
+    /// Get the current network report as an ExtendedNetworkReport
+    pub async fn get_extended_network_report(&self) -> ExtendedNetworkReport {
+        let base_report = self.endpoint.net_report().get();
+        let port_variation = self.port_variation_result.read().await;
+
+        if let Some(ref port_result) = *port_variation {
+            ExtendedNetworkReport::from_base_report(base_report)
+                .with_port_variation(port_result.ipv4_varies, port_result.ipv6_varies)
+        } else {
+            ExtendedNetworkReport::from_base_report(base_report)
+        }
     }
 
-    /// Get the cached network report
-    pub async fn get_cached_network_report(&self) -> Option<Report> {
-        let cached = self.cached_network_report.read().await;
-        cached.clone()
+    /// Update the port variation result
+    pub async fn update_port_variation(&self, result: Option<net_report_ext::PortVariationResult>) {
+        let mut port_variation = self.port_variation_result.write().await;
+        *port_variation = result;
     }
 
     /// Get assignments from coordinator with retry logic
+    /// Always includes network report in the request (acts as heartbeat)
     pub async fn get_assignments(&self) -> Result<Vec<TestAssignment>> {
         let mut retries = 3;
         let mut last_error = None;
+
+        // Get network report to send with request (acts as heartbeat)
+        let network_report = self.get_extended_network_report().await;
 
         while retries > 0 {
             let mut client = self.doctor_client.lock().await;
@@ -257,8 +250,8 @@ impl SwarmClient {
             // Try to ensure connection is alive
             match client.ensure_connected().await {
                 Ok(()) => {
-                    // Connection is good, try to get assignments
-                    match client.get_assignments().await {
+                    // Connection is good, try to get assignments with network report
+                    match client.get_assignments(network_report.clone()).await {
                         Ok(response) => return Ok(response.assignments),
                         Err(e) => {
                             warn!("Failed to get assignments: {}", e);
@@ -309,64 +302,16 @@ impl SwarmClient {
             node_a_id,
             node_b_id,
             success,
-            error: if success { None } else { Some("Test failed".to_string()) },
+            error: if success {
+                None
+            } else {
+                Some("Test failed".to_string())
+            },
             request_id: Some(Uuid::new_v4()), // For idempotency
             result_data: result_data.clone(),
         };
 
         client.report_result(report).await?;
-        Ok(())
-    }
-
-    /// Send heartbeat to coordinator with retry logic
-    pub async fn heartbeat(&self) -> Result<()> {
-        let mut retries = 2; // Fewer retries for heartbeat since it's called frequently
-        let mut last_error = None;
-
-        // Get the cached network report to include in heartbeat
-        let network_report = self.get_cached_network_report().await;
-
-        while retries > 0 {
-            let mut client = self.doctor_client.lock().await;
-
-            // Try to ensure connection is alive
-            match client.ensure_connected().await {
-                Ok(()) => {
-                    // Connection is good, try to send heartbeat with network report
-                    match client
-                        .heartbeat_with_network_report(network_report.clone())
-                        .await
-                    {
-                        Ok(_response) => return Ok(()), // Ignore the heartbeat response
-                        Err(e) => {
-                            debug!("Failed to send heartbeat: {}", e);
-                            last_error = Some(e);
-                            retries -= 1;
-                            if retries > 0 {
-                                // Wait before retry
-                                drop(client); // Release lock before sleeping
-                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to ensure connection for heartbeat: {}", e);
-                    last_error = Some(e);
-                    retries -= 1;
-                    if retries > 0 {
-                        // Wait before retry
-                        drop(client); // Release lock before sleeping
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    }
-                }
-            }
-        }
-
-        // Don't propagate heartbeat errors - just log them
-        if let Some(e) = last_error {
-            warn!("Failed to send heartbeat after retries: {}", e);
-        }
         Ok(())
     }
 

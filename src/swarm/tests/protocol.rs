@@ -14,7 +14,6 @@ pub const DOCTOR_SWARM_ALPN: &[u8] = b"n0/doctor-swarm/1";
 pub enum TestProtocolType {
     Throughput,
     Latency,
-    Connectivity,
 }
 
 impl TestProtocolType {
@@ -22,7 +21,6 @@ impl TestProtocolType {
         match self {
             Self::Throughput => "THROUGHPUT",
             Self::Latency => "LATENCY",
-            Self::Connectivity => "CONNECTIVITY",
         }
     }
 }
@@ -34,7 +32,6 @@ impl std::str::FromStr for TestProtocolType {
         match s {
             "THROUGHPUT" => Ok(Self::Throughput),
             "LATENCY" => Ok(Self::Latency),
-            "CONNECTIVITY" => Ok(Self::Connectivity),
             _ => Err(()),
         }
     }
@@ -54,20 +51,34 @@ pub enum LatencyMessage {
 }
 
 impl LatencyMessage {
-    pub fn ping(number: u32) -> String {
-        format!("PING {number}")
+    pub fn ping(number: u32) -> Self {
+        LatencyMessage::Ping(number)
     }
 
-    pub fn pong_from_ping(ping_str: &str) -> Option<String> {
-        if ping_str.starts_with("PING") {
-            Some(ping_str.replace("PING", "PONG"))
-        } else {
-            None
+    pub fn pong(number: u32) -> Self {
+        LatencyMessage::Pong(number)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            LatencyMessage::Ping(n) => format!("PING {n}").into_bytes(),
+            LatencyMessage::Pong(n) => format!("PONG {n}").into_bytes(),
         }
     }
 
-    pub fn is_pong_response(msg: &str) -> bool {
-        msg.to_uppercase().contains("PONG")
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let s = String::from_utf8_lossy(data);
+        let parts: Vec<&str> = s.split_whitespace().collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let number = parts[1].parse::<u32>().ok()?;
+        match parts[0].to_uppercase().as_str() {
+            "PING" => Some(LatencyMessage::Ping(number)),
+            "PONG" => Some(LatencyMessage::Pong(number)),
+            _ => None,
+        }
     }
 }
 
@@ -105,14 +116,8 @@ impl TestProtocolHeader {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let header_bytes = postcard::to_allocvec(self).unwrap_or_else(|_| {
-            let mut bytes = Vec::new();
-            bytes.push(self.test_type as u8);
-            bytes.extend_from_slice(&self.data_size.to_le_bytes());
-            bytes.extend_from_slice(&self.parallel_streams.unwrap_or(0).to_le_bytes());
-            bytes.extend_from_slice(&self.chunk_size.unwrap_or(0).to_le_bytes());
-            bytes
-        });
+        let header_bytes =
+            postcard::to_allocvec(self).expect("failed to serialize protocol header");
         let header_len = header_bytes.len() as u16;
 
         let mut result = Vec::new();

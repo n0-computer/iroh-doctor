@@ -1,7 +1,7 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
-use iroh::{net_report::Report, Endpoint, NodeAddr, NodeId};
+use iroh::{Endpoint, NodeAddr, NodeId};
 use irpc::{channel::oneshot, rpc_requests};
 use irpc_iroh::IrohRemoteConnection;
 use postcard;
@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 use crate::swarm::{
     client::DOCTOR_ALPN,
-    types::{DoctorCaps, TestAssignmentResult, TestCapability, TestConfig, TestType},
+    net_report_ext::ExtendedNetworkReport,
+    types::{DoctorCaps, TestAssignmentResult, TestConfig, TestType},
 };
 
 /// RPC client for communicating with the doctor coordinator
@@ -36,9 +37,9 @@ impl std::fmt::Debug for DoctorClient {
 
 impl DoctorClient {
     /// Create a new client with SSH key authentication
-    pub async fn with_ssh_key<P: AsRef<std::path::Path>>(
+    pub async fn with_ssh_key<P: AsRef<Path>, N: Into<NodeAddr>>(
         endpoint: &Endpoint,
-        node_addr: NodeAddr,
+        node_addr: N,
         ssh_key_path: P,
     ) -> Result<Self> {
         // Load SSH key from file
@@ -63,7 +64,7 @@ impl DoctorClient {
 
         let auth = Auth { caps: rcan };
 
-        Self::new(endpoint.clone(), node_addr, auth).await
+        Self::new(endpoint.clone(), node_addr.into(), auth).await
     }
 
     /// Create a new client and authenticate
@@ -73,14 +74,15 @@ impl DoctorClient {
             IrohRemoteConnection::new(endpoint.clone(), node_addr.clone(), DOCTOR_ALPN.to_vec());
         let client = DoctorServiceClient::boxed(conn);
 
-        info!("Connected to doctor server at {}", node_addr.node_id);
+        info!("Connecting to doctor server at {}", node_addr.node_id);
 
         debug!("Sending auth message with RCAN");
         let auth_resp = client
             .rpc(auth.clone())
             .await
             .context("Failed to send auth request")?
-            .map_err(|e| anyhow::anyhow!("Authentication failed: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("Authentication failed")?;
 
         info!("Authenticated with project: {}", auth_resp.project_id);
 
@@ -96,62 +98,36 @@ impl DoctorClient {
     /// Register with the doctor coordinator
     pub async fn register(
         &self,
-        capabilities: Vec<TestCapability>,
         name: Option<String>,
-        network_report: Option<Report>,
+        network_report: Option<ExtendedNetworkReport>,
     ) -> Result<DoctorRegisterResponse> {
         let response = self
             .client
             .rpc(DoctorRegister {
-                capabilities,
                 name,
                 network_report,
             })
             .await
             .context("Failed to send register request")?
-            .map_err(|e| anyhow::anyhow!("Register failed: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("Register failed")?;
 
         Ok(response)
     }
 
-    /// Send heartbeat
-    pub async fn heartbeat(&mut self) -> Result<DoctorHeartbeatResponse> {
-        self.heartbeat_with_network_report(None).await
-    }
-
-    /// Send heartbeat with network report
-    pub async fn heartbeat_with_network_report(
+    /// Get test assignments with network report
+    pub async fn get_assignments(
         &mut self,
-        network_report: Option<Report>,
-    ) -> Result<DoctorHeartbeatResponse> {
-        let response = tokio::time::timeout(
-            Duration::from_secs(5),
-            self.client.rpc(DoctorHeartbeat { network_report }),
-        )
-        .await
-        .map_err(|_| {
-            // Mark connection as dead on timeout
-            self.mark_disconnected();
-            anyhow::anyhow!("Heartbeat RPC timed out after 5 seconds")
-        })?
-        .map_err(|e| {
-            // Mark connection as dead on RPC failure
-            self.mark_disconnected();
-            anyhow::anyhow!("Failed to send heartbeat request: {}", e)
-        })?
-        .map_err(|e| anyhow::anyhow!("Heartbeat failed: {:?}", e))?;
-
-        Ok(response)
-    }
-
-    /// Get test assignments
-    pub async fn get_assignments(&mut self) -> Result<GetTestAssignmentsResponse> {
+        network_report: ExtendedNetworkReport,
+    ) -> Result<GetTestAssignmentsResponse> {
         let my_node_id = self.endpoint.node_id();
-        info!("Sending GetTestAssignments request from node_id={}", my_node_id);
+        info!(
+            "Sending GetTestAssignments request from node_id={}",
+            my_node_id
+        );
         debug!("Sending GetTestAssignments request");
 
-        // Debug: Try to serialize the request to see what we're sending
-        let test_msg = GetTestAssignments {};
+        let test_msg = GetTestAssignments { network_report };
         match postcard::to_allocvec(&test_msg) {
             Ok(bytes) => {
                 debug!("GetTestAssignments serialized to {} bytes", bytes.len());
@@ -165,16 +141,13 @@ impl DoctorClient {
             }
         }
 
-        let response_result = tokio::time::timeout(
-            Duration::from_secs(10),
-            self.client.rpc(GetTestAssignments {}),
-        )
-        .await
-        .map_err(|_| {
-            // Mark connection as dead on timeout
-            self.mark_disconnected();
-            anyhow::anyhow!("GetAssignments RPC timed out after 10 seconds")
-        })?;
+        let response_result =
+            tokio::time::timeout(Duration::from_secs(10), self.client.rpc(test_msg))
+                .await
+                .map_err(|_| {
+                    self.mark_disconnected();
+                    anyhow::anyhow!("GetAssignments RPC timed out after 10 seconds")
+                })?;
 
         match response_result {
             Ok(result) => {
@@ -189,10 +162,7 @@ impl DoctorClient {
                         for (i, assignment) in response.assignments.iter().enumerate() {
                             debug!(
                                 "Assignment {}: test_run={}, node={}, type={:?}",
-                                i,
-                                assignment.test_run_id,
-                                assignment.node_id,
-                                assignment.test_type,
+                                i, assignment.test_run_id, assignment.node_id, assignment.test_type,
                             );
                         }
 
@@ -200,22 +170,12 @@ impl DoctorClient {
                     }
                     Err(e) => {
                         warn!("GetAssignments RPC returned error: {:?}", e);
-                        Err(anyhow::anyhow!("GetAssignments failed: {:?}", e))
+                        Err(anyhow::anyhow!("{:?}", e)).context("GetAssignments RPC failed")
                     }
                 }
             }
             Err(e) => {
                 warn!("GetAssignments RPC transport error: {}", e);
-
-                // Check if it's a deserialization error
-                let error_str = format!("{e:?}");
-                if error_str.contains("Hit the end of buffer")
-                    || error_str.contains("end of buffer")
-                {
-                    warn!("DESERIALIZATION ERROR DETECTED: This suggests the backend is sending data that can't be deserialized");
-                    warn!("Full error details: {:#?}", e);
-                }
-
                 // Mark connection as dead on RPC failure
                 self.mark_disconnected();
                 Err(anyhow::anyhow!(
@@ -242,28 +202,26 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send create test run request")?
-            .map_err(|e| anyhow::anyhow!("CreateTestRun failed: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("CreateTestRun failed")?;
 
         Ok(response)
     }
 
     /// Report test result
-    pub async fn report_result(
-        &mut self,
-        report: TestResultReport,
-    ) -> Result<TestResultReportResponse> {
-        let response = self
-            .client
+    pub async fn report_result(&mut self, report: TestResultReport) -> Result<()> {
+        self.client
             .rpc(report)
             .await
-            .map_err(|e| {
+            .inspect_err(|_| {
                 // Mark connection as dead on RPC failure
                 self.mark_disconnected();
-                anyhow::anyhow!("Failed to send report result request: {}", e)
-            })?
-            .map_err(|e| anyhow::anyhow!("ReportResult failed: {:?}", e))?;
+            })
+            .context("Failed to send report result request")?
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("ReportResult failed")?;
 
-        Ok(response)
+        Ok(())
     }
 
     /// Get node info
@@ -273,7 +231,8 @@ impl DoctorClient {
             .rpc(GetNodeInfo {})
             .await
             .context("Failed to send get node info request")?
-            .map_err(|e| anyhow::anyhow!("GetNodeInfo failed: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("GetNodeInfo failed")?;
 
         Ok(response)
     }
@@ -293,12 +252,13 @@ impl DoctorClient {
                 node_b_id,
             })
             .await
-            .map_err(|e| {
+            .inspect_err(|_| {
                 // Mark connection as dead on RPC failure
                 self.mark_disconnected();
-                anyhow::anyhow!("Failed to send mark test started request: {}", e)
-            })?
-            .map_err(|e| anyhow::anyhow!("MarkTestStarted failed: {:?}", e))?;
+            })
+            .context("Failed to send mark test started request")?
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("MarkTestStarted failed")?;
 
         Ok(response)
     }
@@ -310,7 +270,8 @@ impl DoctorClient {
             .rpc(GetTestRunStatus { test_run_id })
             .await
             .context("Failed to send get test run status request")?
-            .map_err(|e| anyhow::anyhow!("GetTestRunStatus failed: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
+            .context("GetTestRunStatus failed")?;
 
         Ok(response)
     }
@@ -363,12 +324,10 @@ pub struct AuthResponse {
 /// Register a doctor node
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoctorRegister {
-    /// Test capabilities this node supports
-    pub capabilities: Vec<TestCapability>,
     /// Optional human-readable name for this node
     pub name: Option<String>,
-    /// Network report for NAT detection (structured data)
-    pub network_report: Option<Report>,
+    /// Extended network report for NAT detection including port variation
+    pub network_report: Option<ExtendedNetworkReport>,
 }
 
 /// Response to doctor registration
@@ -380,24 +339,11 @@ pub struct DoctorRegisterResponse {
     pub project_id: Uuid,
 }
 
-/// Heartbeat from doctor node
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoctorHeartbeat {
-    /// Optional network report update (structured data)
-    pub network_report: Option<Report>,
-}
-
-/// Response to heartbeat
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoctorHeartbeatResponse {
-    /// Acknowledgment
-    pub ok: bool,
-}
-
 /// Request test assignments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetTestAssignments {
-    // Empty - node ID comes from connection
+    /// Network report to send with request (acts as heartbeat)
+    pub network_report: ExtendedNetworkReport,
 }
 
 /// Test assignment for a node
@@ -409,9 +355,7 @@ pub struct TestAssignment {
     pub node_id: NodeId,
     /// Type of test to run
     pub test_type: TestType,
-    /// Peer's relay URL for discovery
-    pub peer_relay_url: Option<String>,
-    /// Test configuration (as JSON string for PostCard compatibility)
+    /// Test configuration
     pub test_config: TestConfig,
     /// Retry count for this assignment (0 for original, 1+ for retries)
     #[serde(default)]
@@ -491,13 +435,6 @@ pub struct TestResultReport {
     pub result_data: TestAssignmentResult,
 }
 
-/// Response to result report
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TestResultReportResponse {
-    /// Confirmation
-    pub status: String,
-}
-
 /// Get test run status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetTestRunStatus {
@@ -535,12 +472,10 @@ pub struct GetNodeInfo {
 /// Node info response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetNodeInfoResponse {
-    /// Node ID
+    /// Node ID for which info is requested
     pub node_id: NodeId,
     /// Project ID the node belongs to
     pub project_id: Uuid,
-    /// Doctor capabilities if registered
-    pub capabilities: Option<Vec<TestCapability>>,
 }
 
 /// Submit metrics update
@@ -577,13 +512,11 @@ pub enum DoctorProtocol {
     Auth(Auth),
     #[rpc(tx = oneshot::Sender<Result<DoctorRegisterResponse, DoctorError>>)]
     Register(DoctorRegister),
-    #[rpc(tx = oneshot::Sender<Result<DoctorHeartbeatResponse, DoctorError>>)]
-    Heartbeat(DoctorHeartbeat),
     #[rpc(tx = oneshot::Sender<Result<GetTestAssignmentsResponse, DoctorError>>)]
     GetAssignments(GetTestAssignments),
     #[rpc(tx = oneshot::Sender<Result<CreateTestRunResponse, DoctorError>>)]
     CreateTestRun(CreateTestRun),
-    #[rpc(tx = oneshot::Sender<Result<TestResultReportResponse, DoctorError>>)]
+    #[rpc(tx = oneshot::Sender<Result<(), DoctorError>>)]
     ReportResult(TestResultReport),
     #[rpc(tx = oneshot::Sender<Result<GetNodeInfoResponse, DoctorError>>)]
     GetNodeInfo(GetNodeInfo),

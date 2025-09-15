@@ -61,7 +61,7 @@ impl std::str::FromStr for SecretKeyOption {
 /// Subcommands for the iroh doctor.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Report on the current network environment, using either an explicitly provided stun host
+    /// Report on the current network environment, using either an explicitly provided relay host
     /// or the settings from the config file.
     ///
     /// When no protocol flags are explicitly set, will run a report with all available probe
@@ -219,18 +219,19 @@ pub enum Commands {
         /// Backend coordinator node ID
         #[clap(long, required = true)]
         coordinator: NodeId,
-        /// Test capabilities (comma-separated: connectivity,throughput,latency,relay,fingerprint)
-        #[clap(
-            long,
-            default_value = "connectivity,throughput,latency,relay,fingerprint"
-        )]
-        capabilities: String,
-        /// Heartbeat interval in seconds
-        #[clap(long, default_value_t = 10)]
-        heartbeat_interval: u64,
+        /// Assignment polling interval in seconds
+        #[clap(long, default_value_t = 2)]
+        assignment_interval: u64,
         /// Optional human-readable name for this node
         #[clap(long)]
         named: Option<String>,
+        /// Disable port variation detection
+        #[clap(long)]
+        no_port_variation: bool,
+        /// The secret key to use for the node.
+        /// Can be "random", "local" (loads from ~/.config/iroh/keypair), or a hex-encoded secret key.
+        #[clap(long, default_value = "random")]
+        secret_key: SecretKeyOption,
     },
 }
 
@@ -945,16 +946,19 @@ pub async fn run(
         Commands::SwarmClient {
             ssh_key,
             coordinator,
-            capabilities,
-            heartbeat_interval,
+            assignment_interval,
             named,
+            no_port_variation,
+            secret_key,
         } => {
+            let secret_key = create_secret_key(secret_key)?;
             commands::swarm_client::run_swarm_client(
                 ssh_key,
                 coordinator,
-                capabilities,
-                heartbeat_interval,
+                assignment_interval,
                 named,
+                !no_port_variation,
+                secret_key,
                 metrics.iroh.clone(),
             )
             .await

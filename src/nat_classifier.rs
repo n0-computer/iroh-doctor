@@ -1,33 +1,21 @@
 //! NAT type classification based on network behavior analysis.
 //!
-//! This module implements proper NAT type detection following RFC 5780 principles
-//! and the traditional STUN NAT classification scheme.
+//! This module classifies NAT types based on iroh's network reports and our extended
+//! port variation detection. It simplifies NAT types into Easy/Medium/Hard categories
+//! based on expected P2P connectivity difficulty, considering both address mapping
+//! behavior and port mapping behavior.
 
-use iroh::net_report::Report;
 use serde::{Deserialize, Serialize};
 
-/// NAT type classification based on observed network behavior.
+use crate::swarm::net_report_ext::ExtendedNetworkReport;
+
+/// NAT type classification based on expected holepunching difficulty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NatType {
-    /// No NAT - direct public IP access. Best possible P2P connectivity.
-    Open,
-    /// Full Cone NAT - most permissive NAT type.
-    /// Once an internal address is mapped to an external address, any external host
-    /// can send packets to the internal host by sending packets to the mapped external address.
-    FullCone,
-    /// Restricted Cone NAT - filters by source IP.
-    /// External hosts can send packets to the internal host only if the internal host
-    /// has previously sent a packet to that external host's IP address.
-    RestrictedCone,
-    /// Port Restricted Cone NAT - filters by source IP and port.
-    /// External hosts can send packets to the internal host only if the internal host
-    /// has previously sent a packet to that external host's IP address and port.
-    PortRestrictedCone,
-    /// Symmetric NAT - most restrictive NAT type.
-    /// Uses different mappings for different destinations. Poor P2P connectivity.
-    Symmetric,
-    /// NAT type could not be determined due to insufficient data or test failures.
+    Easy,
+    Medium,
+    Hard,
     Unknown,
 }
 
@@ -35,12 +23,12 @@ impl NatType {
     /// Returns a human-readable description of this NAT type.
     pub fn description(&self) -> &'static str {
         match self {
-            NatType::Open => "No NAT - direct public IP access. Best possible P2P connectivity.",
-            NatType::FullCone => "One-to-one NAT mapping. Any external host can send packets once a mapping is created. Excellent for P2P connectivity.",
-            NatType::RestrictedCone => "External hosts can only send packets if the internal host sent to them first (IP restricted). Good for P2P connectivity.",
-            NatType::PortRestrictedCone => "Like Restricted Cone NAT, but also restricts by port number. Moderate P2P connectivity.",
-            NatType::Symmetric => "Most restrictive NAT. Different mappings for different destinations. Poor P2P connectivity, often requires relay.",
-            NatType::Unknown => "NAT type could not be determined. Network report may be unavailable.",
+            NatType::Easy => "NAT type allows easy P2P connectivity",
+            NatType::Medium => "NAT type may require additional techniques for P2P connectivity",
+            NatType::Hard => "NAT type is difficult for P2P connectivity",
+            NatType::Unknown => {
+                "NAT type could not be determined. Network report may be unavailable."
+            }
         }
     }
 
@@ -48,12 +36,10 @@ impl NatType {
     /// Lower numbers indicate better P2P connectivity.
     pub fn p2p_difficulty(&self) -> u8 {
         match self {
-            NatType::Open => 0,
-            NatType::FullCone => 1,
-            NatType::RestrictedCone => 2,
-            NatType::PortRestrictedCone => 3,
-            NatType::Symmetric => 4,
-            NatType::Unknown => 5,
+            NatType::Easy => 1,
+            NatType::Medium => 3,
+            NatType::Hard => 5,
+            NatType::Unknown => 4,
         }
     }
 }
@@ -61,11 +47,9 @@ impl NatType {
 impl std::fmt::Display for NatType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            NatType::Open => "Open",
-            NatType::FullCone => "Full Cone",
-            NatType::RestrictedCone => "Restricted Cone",
-            NatType::PortRestrictedCone => "Port Restricted Cone",
-            NatType::Symmetric => "Symmetric",
+            NatType::Easy => "Easy",
+            NatType::Medium => "Medium",
+            NatType::Hard => "Hard",
             NatType::Unknown => "Unknown",
         };
         write!(f, "{name}")
@@ -73,29 +57,32 @@ impl std::fmt::Display for NatType {
 }
 
 /// Classify NAT type based on network report data.
-pub fn classify_nat_type(report: &Report) -> NatType {
+pub fn classify_nat_type(report: &ExtendedNetworkReport) -> NatType {
+    // Check if we have a base report
+    let Some(ref base) = report.base_report else {
+        return NatType::Unknown;
+    };
+
     // Check if we have global addresses (indicates no NAT or open NAT)
-    if report.global_v4.is_some() || report.global_v6.is_some() {
+    if base.global_v4.is_some() || base.global_v6.is_some() {
         // If we have UDP connectivity and global addresses, check for NAT behavior
-        if report.udp_v4 || report.udp_v6 {
-            match (
-                report.mapping_varies_by_dest(),
-                report.mapping_varies_by_dest_port(),
-            ) {
-                // Symmetric NAT: mapping varies by destination IP
-                (Some(true), _) => NatType::Symmetric,
+        if base.udp_v4 || base.udp_v6 {
+            // Check both IPv4 and IPv6 mapping variations
+            let mapping_varies_by_dest = base
+                .mapping_varies_by_dest_ipv4
+                .or(base.mapping_varies_by_dest_ipv6);
+            let mapping_varies_by_dest_port = report
+                .mapping_varies_by_dest_port_ipv4
+                .or(report.mapping_varies_by_dest_port_ipv6);
 
-                // Cone NATs: mapping doesn't vary by destination IP
-                (Some(false), Some(true)) => NatType::PortRestrictedCone, // Port varies
-                (Some(false), Some(false)) => NatType::FullCone, // Port doesn't vary, but still behind NAT
-                (Some(false), None) => NatType::PortRestrictedCone, // Assume more restrictive when port data missing
-
-                // When destination mapping data is missing but port data exists
-                (None, Some(true)) => NatType::PortRestrictedCone, // Port varies, likely NAT
-                (None, Some(false)) => NatType::Open, // No variation detected, could be direct IP
-
-                // No mapping variation data available
-                (None, None) => NatType::Open, // With global IP but no variation data, assume direct connection
+            match (mapping_varies_by_dest, mapping_varies_by_dest_port) {
+                (Some(true), Some(true)) => NatType::Hard,
+                (Some(true), Some(false)) => NatType::Hard,
+                (Some(true), None) => NatType::Hard,
+                (Some(false), Some(true)) => NatType::Medium,
+                (Some(false), None) => NatType::Medium,
+                (Some(false), Some(false)) => NatType::Easy,
+                (None, _) => NatType::Unknown,
             }
         } else {
             NatType::Unknown
@@ -107,82 +94,75 @@ pub fn classify_nat_type(report: &Report) -> NatType {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddrV4};
-
     use super::*;
 
-    fn create_test_report() -> Report {
-        let mut report = Report::default();
-        report.udp_v4 = true;
-        report.global_v4 = Some(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 1), 12345));
-        report
+    fn create_test_report() -> ExtendedNetworkReport {
+        let base = iroh::net_report::Report {
+            udp_v4: true,
+            global_v4: Some(std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::new(203, 0, 113, 1),
+                12345,
+            )),
+            ..Default::default()
+        };
+        ExtendedNetworkReport::from_base_report(Some(base))
     }
 
     #[test]
-    fn test_full_cone_classification() {
+    fn test_easy_nat_classification() {
+        // Easy NAT: No address or port mapping variation
+        // Best case for P2P connectivity
         let mut report = create_test_report();
-        report.mapping_varies_by_dest_ipv4 = Some(false);
+        if let Some(ref mut base) = report.base_report {
+            base.mapping_varies_by_dest_ipv4 = Some(false);
+        }
         report.mapping_varies_by_dest_port_ipv4 = Some(false);
 
         let nat_type = classify_nat_type(&report);
-        assert_eq!(nat_type, NatType::FullCone);
+        assert_eq!(nat_type, NatType::Easy);
     }
 
     #[test]
-    fn test_port_restricted_cone_with_missing_port_data() {
+    fn test_medium_nat_classification() {
+        // Medium NAT: No address variation but port mapping varies
+        // Moderate difficulty for P2P connectivity
         let mut report = create_test_report();
-        report.mapping_varies_by_dest_ipv4 = Some(false);
-        // mapping_varies_by_dest_port_ipv4 = None (missing port variation data)
-
-        let nat_type = classify_nat_type(&report);
-        assert_eq!(nat_type, NatType::PortRestrictedCone); // Assume more restrictive
-    }
-
-    #[test]
-    fn test_port_restricted_cone_classification() {
-        let mut report = create_test_report();
-        report.mapping_varies_by_dest_ipv4 = Some(false);
+        if let Some(ref mut base) = report.base_report {
+            base.mapping_varies_by_dest_ipv4 = Some(false);
+        }
         report.mapping_varies_by_dest_port_ipv4 = Some(true);
 
         let nat_type = classify_nat_type(&report);
-        assert_eq!(nat_type, NatType::PortRestrictedCone);
+        assert_eq!(nat_type, NatType::Medium);
     }
 
     #[test]
-    fn test_symmetric_classification() {
+    fn test_hard_nat_classification() {
+        // Hard NAT: Address mapping varies by destination
+        // Most difficult for P2P connectivity
         let mut report = create_test_report();
-        report.mapping_varies_by_dest_ipv4 = Some(true);
+        if let Some(ref mut base) = report.base_report {
+            base.mapping_varies_by_dest_ipv4 = Some(true);
+        }
 
         let nat_type = classify_nat_type(&report);
-        assert_eq!(nat_type, NatType::Symmetric);
+        assert_eq!(nat_type, NatType::Hard);
     }
 
     #[test]
-    fn test_open_nat_classification() {
+    fn test_missing_variation_data() {
         let report = create_test_report();
-        // No mapping variation data, suggesting direct IP access
-        // mapping_varies_by_dest_ipv4 = None
-        // mapping_varies_by_dest_port_ipv4 = None
+        // When mapping variation data is missing (None), we can't determine NAT type
+        // even though we have global addresses and UDP connectivity
 
-        let nat_type = classify_nat_type(&report);
-        assert_eq!(nat_type, NatType::Open);
-    }
-
-    #[test]
-    fn test_unknown_classification() {
-        let report = Report::default();
         let nat_type = classify_nat_type(&report);
         assert_eq!(nat_type, NatType::Unknown);
     }
 
     #[test]
-    fn test_p2p_difficulty_ordering() {
-        assert!(NatType::Open.p2p_difficulty() < NatType::FullCone.p2p_difficulty());
-        assert!(NatType::FullCone.p2p_difficulty() < NatType::RestrictedCone.p2p_difficulty());
-        assert!(
-            NatType::RestrictedCone.p2p_difficulty() < NatType::PortRestrictedCone.p2p_difficulty()
-        );
-        assert!(NatType::PortRestrictedCone.p2p_difficulty() < NatType::Symmetric.p2p_difficulty());
-        assert!(NatType::Symmetric.p2p_difficulty() < NatType::Unknown.p2p_difficulty());
+    fn test_unknown_classification() {
+        let report = ExtendedNetworkReport::default();
+        let nat_type = classify_nat_type(&report);
+        assert_eq!(nat_type, NatType::Unknown);
     }
 }

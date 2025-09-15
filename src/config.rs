@@ -199,6 +199,7 @@ pub(crate) fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
+    use iroh::defaults::DEFAULT_RELAY_QUIC_PORT;
     use iroh_relay::RelayQuicConfig;
     use url::Url;
 
@@ -226,7 +227,9 @@ mod tests {
 
         let expected = RelayNode {
             url: Url::parse("https://example.org./").unwrap().into(),
-            quic: Some(RelayQuicConfig { port: 7842 }),
+            quic: Some(RelayQuicConfig {
+                port: DEFAULT_RELAY_QUIC_PORT,
+            }),
         };
         assert_eq!(config.relay_nodes, vec![expected]);
     }
