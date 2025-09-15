@@ -21,7 +21,7 @@ use crate::{
             LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN,
         },
         transfer_utils::handle_bidirectional_transfer,
-        types::{ErrorResult, SwarmStats, TestAssignmentResult, TestResultType},
+        types::{ErrorResult, SwarmStats, TestAssignmentResult},
     },
 };
 async fn assignment_processing_task(
@@ -84,16 +84,12 @@ async fn assignment_processing_task(
                                             error!("Failed to perform test: {}", e);
                                             (
                                                 false,
-                                                TestAssignmentResult {
-                                                    result_type: TestResultType::Error,
-                                                    error: Some(ErrorResult {
-                                                        error: e.to_string(),
-                                                        duration: Duration::from_secs(0),
-                                                        test_type: None,
-                                                        node_id: None,
-                                                    }),
-                                                    ..Default::default()
-                                                },
+                                                TestAssignmentResult::Error(ErrorResult {
+                                                    error: e.to_string(),
+                                                    duration: Duration::from_secs(0),
+                                                    test_type: None,
+                                                    node_id: None,
+                                                }),
                                             )
                                         }
                                     };

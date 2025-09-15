@@ -381,48 +381,23 @@ pub struct ErrorResult {
     pub node_id: Option<NodeId>,
 }
 
-/// Simple enum for test result types (PostCard-compatible)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum TestResultType {
-    Latency,
-    Throughput,
-    Fingerprint,
-    #[default]
-    Error,
-}
-
-/// Unified result type for all test assignments
-///
-/// Note: Changed from tagged enum to struct with optional fields due to PostCard limitations.
-/// PostCard cannot serialize tagged enums with complex nested data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TestAssignmentResult {
-    /// Indicates which type of test result this represents
-    pub result_type: TestResultType,
-    /// Latency test result (present when result_type = Latency)
-    pub latency: Option<LatencyResult>,
-    /// Throughput test result (present when result_type = Throughput)
-    pub throughput: Option<ThroughputResult>,
-    /// Fingerprint test result (present when result_type = Fingerprint)
-    pub fingerprint: Option<FingerprintResult>,
-    /// Error result (present when result_type = Error)
-    pub error: Option<ErrorResult>,
+/// Unified result type for all test assignments using tagged enum
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
+pub enum TestAssignmentResult {
+    Latency(LatencyResult),
+    Throughput(ThroughputResult),
+    Fingerprint(FingerprintResult),
+    Error(ErrorResult),
 }
 
 impl TestAssignmentResult {
-    /// Extract duration from the appropriate result type based on result_type field
     pub fn duration(&self) -> Duration {
-        match self.result_type {
-            TestResultType::Latency => self.latency.as_ref().map_or(Duration::ZERO, |r| r.duration),
-            TestResultType::Throughput => self
-                .throughput
-                .as_ref()
-                .map_or(Duration::ZERO, |r| r.duration),
-            TestResultType::Fingerprint => self
-                .fingerprint
-                .as_ref()
-                .map_or(Duration::ZERO, |r| r.duration),
-            TestResultType::Error => self.error.as_ref().map_or(Duration::ZERO, |r| r.duration),
+        match self {
+            TestAssignmentResult::Latency(r) => r.duration,
+            TestAssignmentResult::Throughput(r) => r.duration,
+            TestAssignmentResult::Fingerprint(r) => r.duration,
+            TestAssignmentResult::Error(r) => r.duration,
         }
     }
 }

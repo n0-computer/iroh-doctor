@@ -18,8 +18,8 @@ use crate::swarm::{
         throughput::run_bidirectional_throughput_test_with_config,
     },
     types::{
-        ErrorResult, FingerprintResult, LatencyResult, TestAssignmentResult, TestResultType,
-        TestType, ThroughputResult,
+        ErrorResult, FingerprintResult, LatencyResult, TestAssignmentResult, TestType,
+        ThroughputResult,
     },
 };
 
@@ -198,45 +198,30 @@ async fn execute_throughput_test(
                             ..Default::default()
                         };
 
-                        return Ok((
-                            true,
-                            TestAssignmentResult {
-                                result_type: TestResultType::Throughput,
-                                throughput: Some(throughput_result),
-                                ..Default::default()
-                            },
-                        ));
+                        return Ok((true, TestAssignmentResult::Throughput(throughput_result)));
                     }
                     Ok(Err(e)) => {
                         warn!("Throughput test error: {}", e);
                         return Ok((
                             false,
-                            TestAssignmentResult {
-                                result_type: TestResultType::Error,
-                                error: Some(ErrorResult {
-                                    error: e.to_string(),
-                                    duration: start.elapsed(),
-                                    test_type: Some(assignment.test_type),
-                                    node_id: Some(assignment.node_id),
-                                }),
-                                ..Default::default()
-                            },
+                            TestAssignmentResult::Error(ErrorResult {
+                                error: e.to_string(),
+                                duration: start.elapsed(),
+                                test_type: Some(assignment.test_type),
+                                node_id: Some(assignment.node_id),
+                            }),
                         ));
                     }
                     Err(_) => {
                         warn!("Throughput test timed out");
                         return Ok((
                             false,
-                            TestAssignmentResult {
-                                result_type: TestResultType::Error,
-                                error: Some(ErrorResult {
-                                    error: "Test timed out after 30 seconds".to_string(),
-                                    duration: start.elapsed(),
-                                    test_type: Some(assignment.test_type),
-                                    node_id: Some(assignment.node_id),
-                                }),
-                                ..Default::default()
-                            },
+                            TestAssignmentResult::Error(ErrorResult {
+                                error: "Test timed out after 30 seconds".to_string(),
+                                duration: start.elapsed(),
+                                test_type: Some(assignment.test_type),
+                                node_id: Some(assignment.node_id),
+                            }),
                         ));
                     }
                 }
@@ -258,16 +243,12 @@ async fn execute_throughput_test(
     warn!("All throughput test connection attempts failed");
     Ok((
         false,
-        TestAssignmentResult {
-            result_type: TestResultType::Error,
-            error: Some(ErrorResult {
-                error: last_error,
-                duration: start.elapsed(),
-                test_type: Some(assignment.test_type),
-                node_id: Some(assignment.node_id),
-            }),
-            ..Default::default()
-        },
+        TestAssignmentResult::Error(ErrorResult {
+            error: last_error,
+            duration: start.elapsed(),
+            test_type: Some(assignment.test_type),
+            node_id: Some(assignment.node_id),
+        }),
     ))
 }
 
@@ -306,26 +287,15 @@ async fn execute_latency_test(
         .await
         {
             Ok(result) => {
-                return Ok((
-                    true,
-                    TestAssignmentResult {
-                        result_type: TestResultType::Latency,
-                        latency: Some(result),
-                        ..Default::default()
-                    },
-                ));
+                return Ok((true, TestAssignmentResult::Latency(result)));
             }
             Err(e) => {
-                last_error = Some(TestAssignmentResult {
-                    result_type: TestResultType::Error,
-                    error: Some(ErrorResult {
-                        error: e.to_string(),
-                        duration: start.elapsed(),
-                        test_type: Some(assignment.test_type),
-                        node_id: Some(assignment.node_id),
-                    }),
-                    ..Default::default()
-                });
+                last_error = Some(TestAssignmentResult::Error(ErrorResult {
+                    error: e.to_string(),
+                    duration: start.elapsed(),
+                    test_type: Some(assignment.test_type),
+                    node_id: Some(assignment.node_id),
+                }));
                 if attempt < max_attempts {
                     warn!("Latency test error: {}, retrying...", e);
                 }
@@ -337,15 +307,13 @@ async fn execute_latency_test(
     warn!("All latency test attempts failed");
     Ok((
         false,
-        last_error.unwrap_or_else(|| TestAssignmentResult {
-            result_type: TestResultType::Error,
-            error: Some(ErrorResult {
+        last_error.unwrap_or_else(|| {
+            TestAssignmentResult::Error(ErrorResult {
                 error: "All latency test attempts failed".to_string(),
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
                 node_id: Some(assignment.node_id),
-            }),
-            ..Default::default()
+            })
         }),
     ))
 }
@@ -383,28 +351,24 @@ async fn execute_fingerprint_test(
             warn!("Latency test failed: {}", e);
             return Ok((
                 false,
-                TestAssignmentResult {
-                    result_type: TestResultType::Fingerprint,
-                    fingerprint: Some(FingerprintResult {
-                        test_type: assignment.test_type,
-                        node_id: assignment.node_id,
+                TestAssignmentResult::Fingerprint(FingerprintResult {
+                    test_type: assignment.test_type,
+                    node_id: assignment.node_id,
+                    duration: start.elapsed(),
+                    latency: Some(LatencyResult {
+                        avg_latency_ms: None,
+                        min_latency_ms: None,
+                        max_latency_ms: None,
+                        std_dev_ms: None,
+                        successful_pings: 0,
+                        total_iterations: iterations,
                         duration: start.elapsed(),
-                        latency: Some(LatencyResult {
-                            avg_latency_ms: None,
-                            min_latency_ms: None,
-                            max_latency_ms: None,
-                            std_dev_ms: None,
-                            successful_pings: 0,
-                            total_iterations: iterations,
-                            duration: start.elapsed(),
-                            error: Some(format!("Latency test failed: {e}")),
-                            connection_type: None,
-                        }),
-                        throughput: None,
-                        error: Some(format!("Test failed during latency phase: {e}")),
+                        error: Some(format!("Latency test failed: {e}")),
+                        connection_type: None,
                     }),
-                    ..Default::default()
-                },
+                    throughput: None,
+                    error: Some(format!("Test failed during latency phase: {e}")),
+                }),
             ));
         }
     };
@@ -423,18 +387,14 @@ async fn execute_fingerprint_test(
             // Return with just latency results
             return Ok((
                 true, // Partial success since latency worked
-                TestAssignmentResult {
-                    result_type: TestResultType::Fingerprint,
-                    fingerprint: Some(FingerprintResult {
-                        test_type: assignment.test_type,
-                        node_id: assignment.node_id,
-                        duration: start.elapsed(),
-                        latency: latency_result,
-                        throughput: None,
-                        error: Some(format!("Throughput test skipped: connection failed: {e}")),
-                    }),
-                    ..Default::default()
-                },
+                TestAssignmentResult::Fingerprint(FingerprintResult {
+                    test_type: assignment.test_type,
+                    node_id: assignment.node_id,
+                    duration: start.elapsed(),
+                    latency: latency_result,
+                    throughput: None,
+                    error: Some(format!("Throughput test skipped: connection failed: {e}")),
+                }),
             ));
         }
     };
@@ -520,10 +480,6 @@ async fn execute_fingerprint_test(
     info!("Fingerprint test completed. Success: {}", overall_success);
     Ok((
         overall_success,
-        TestAssignmentResult {
-            result_type: TestResultType::Fingerprint,
-            fingerprint: Some(fingerprint_result),
-            ..Default::default()
-        },
+        TestAssignmentResult::Fingerprint(fingerprint_result),
     ))
 }

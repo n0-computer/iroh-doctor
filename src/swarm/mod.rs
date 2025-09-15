@@ -53,5 +53,5 @@ pub use runner::run_swarm_client;
 pub use types::{
     AdvancedTestConfig, DoctorCaps, ErrorResult, FingerprintResult, LatencyAdvancedConfig,
     LatencyResult, NetworkAdvancedConfig, StreamStats, SwarmStats, TestAssignmentResult,
-    TestConfig, TestResultType, TestStats, TestType, ThroughputAdvancedConfig, ThroughputResult,
+    TestConfig, TestStats, TestType, ThroughputAdvancedConfig, ThroughputResult,
 };
