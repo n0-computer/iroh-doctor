@@ -73,7 +73,7 @@ pub async fn send_data_on_stream(
     stream_size: u64,
     chunk_size: usize,
 ) -> Result<()> {
-    let chunk_size = chunk_size.max(1024).min(16 * 1024 * 1024); // 1KB-16MB range
+    let chunk_size = chunk_size.clamp(1024, 16 * 1024 * 1024); // 1KB-16MB range
 
     // Create data chunk of the specified size
     let data_chunk = vec![0xAB; chunk_size];
