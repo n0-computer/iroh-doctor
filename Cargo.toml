@@ -54,3 +54,8 @@ webpki-roots = "0.26"
 [dev-dependencies]
 iroh-base = "0.91"
 url = "2.5.2"
+
+[patch.crates-io]
+iroh = { git = "https://github.com/n0-computer/iroh", branch = "main" }
+iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "main" }
+iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "iroh-0-92" }
