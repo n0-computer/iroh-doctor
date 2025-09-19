@@ -1,6 +1,9 @@
 //! Relay URLs command implementation
 
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use futures_lite::StreamExt;
 use futures_util::SinkExt;

@@ -18,8 +18,8 @@ use iroh::{
     Endpoint, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
 };
 use iroh_metrics::static_core::Core;
-use n0_watcher::Watcher;
 use iroh_relay::RelayQuicConfig;
+use n0_watcher::Watcher;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -313,7 +313,6 @@ async fn send_blocks(
     }
     Ok(())
 }
-
 
 /// Contains all the GUI state.
 pub struct Gui {
@@ -703,7 +702,6 @@ async fn make_endpoint(
     Ok((endpoint, rpc_client))
 }
 
-
 pub async fn close_endpoint_on_ctrl_c(endpoint: Endpoint) {
     tokio::signal::ctrl_c()
         .await
@@ -719,7 +717,6 @@ pub fn format_addr(addr: SocketAddr) -> String {
         format!("{addr}")
     }
 }
-
 
 /// Logs the connection changes to the multiprogress.
 pub fn log_connection_changes(
@@ -738,8 +735,6 @@ pub fn log_connection_changes(
         }
     });
 }
-
-
 
 /// Creates a [`SecretKey`] from a [`SecretKeyOption`].
 fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
@@ -845,7 +840,9 @@ pub async fn run(
             .await?;
 
             futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-                if let Err(e) = commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await {
+                if let Err(e) =
+                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await
+                {
                     eprintln!("connect error: {e}");
                 }
             })
@@ -894,7 +891,10 @@ pub async fn run(
             protocol,
             local_port,
             timeout_secs,
-        } => commands::port_map::port_map(&protocol, local_port, Duration::from_secs(timeout_secs)).await,
+        } => {
+            commands::port_map::port_map(&protocol, local_port, Duration::from_secs(timeout_secs))
+                .await
+        }
         Commands::PortMapProbe {
             enable_upnp,
             enable_pcp,
@@ -915,9 +915,7 @@ pub async fn run(
             timeframe,
             scrape_url,
             file,
-        } => {
-            commands::plot::plot(interval, metrics, timeframe, scrape_url, file).await
-        }
+        } => commands::plot::plot(interval, metrics, timeframe, scrape_url, file).await,
     };
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
