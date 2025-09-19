@@ -4,13 +4,13 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::swarm::{
     config::SwarmConfig,
-    net_report_ext::{self, probe_port_variation, ExtendedNetworkReport},
+    net_report_ext::ExtendedNetworkReport,
     rpc::{DoctorClient, TestAssignment, TestResultReport},
     tests::protocol::DOCTOR_SWARM_ALPN,
     types::TestAssignmentResult,
@@ -28,8 +28,6 @@ pub struct SwarmClient {
     project_id: Uuid,
     /// IRPC client for coordinator communication
     doctor_client: Arc<Mutex<DoctorClient>>,
-    /// Port variation detection results (stored separately as they're not part of iroh's report)
-    port_variation_result: Arc<RwLock<Option<net_report_ext::PortVariationResult>>>,
 }
 
 impl SwarmClient {
@@ -155,34 +153,8 @@ impl SwarmClient {
             }
         };
 
-        // Run port variation detection if enabled
-        let port_variation_result = if config.port_variation.enabled {
-            debug!("Running port variation detection probe");
-            match probe_port_variation(&config.port_variation, config.coordinator_node_id).await {
-                Ok(result) => {
-                    debug!(
-                        "Port variation detection complete: IPv4 varies: {:?}, IPv6 varies: {:?}",
-                        result.ipv4_varies, result.ipv6_varies
-                    );
-                    Some(result)
-                }
-                Err(e) => {
-                    warn!("Port variation detection failed: {}", e);
-                    None
-                }
-            }
-        } else {
-            debug!("Port variation detection disabled");
-            None
-        };
-
         // Create extended network report for registration
-        let extended_network_report = if let Some(ref port_result) = port_variation_result {
-            ExtendedNetworkReport::from_base_report(base_network_report)
-                .with_port_variation(port_result.ipv4_varies, port_result.ipv6_varies)
-        } else {
-            ExtendedNetworkReport::from_base_report(base_network_report)
-        };
+        let extended_network_report = ExtendedNetworkReport::from_base_report(base_network_report);
 
         // Create doctor client with SSH key authentication and connect to coordinator
         let doctor_client = match tokio::time::timeout(
@@ -212,30 +184,16 @@ impl SwarmClient {
             node_id,
             project_id,
             doctor_client: Arc::new(Mutex::new(doctor_client)),
-            port_variation_result: Arc::new(RwLock::new(port_variation_result)),
         })
     }
 
     /// Get the current network report as an ExtendedNetworkReport
     pub async fn get_extended_network_report(&self) -> ExtendedNetworkReport {
         let base_report = self.endpoint.net_report().get();
-        let port_variation = self.port_variation_result.read().await;
-
-        if let Some(ref port_result) = *port_variation {
-            ExtendedNetworkReport::from_base_report(base_report)
-                .with_port_variation(port_result.ipv4_varies, port_result.ipv6_varies)
-        } else {
-            ExtendedNetworkReport::from_base_report(base_report)
-        }
+        ExtendedNetworkReport::from_base_report(base_report)
     }
 
-    /// Update the port variation result
-    pub async fn update_port_variation(&self, result: Option<net_report_ext::PortVariationResult>) {
-        let mut port_variation = self.port_variation_result.write().await;
-        *port_variation = result;
-    }
-
-    /// Get assignments from coordinator with retry logic
+/// Get assignments from coordinator with retry logic
     /// Always includes network report in the request (acts as heartbeat)
     pub async fn get_assignments(&self) -> Result<Vec<TestAssignment>> {
         let mut retries = 3;

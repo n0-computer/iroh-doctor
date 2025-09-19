@@ -15,9 +15,9 @@ mod types;
 // Client types
 pub use client::{SwarmClient, DOCTOR_ALPN};
 // Configuration types
-pub use config::{PortVariationConfig, SwarmConfig, TransportConfig};
+pub use config::{SwarmConfig, TransportConfig};
 // Extended network report
-pub use net_report_ext::{probe_port_variation, ExtendedNetworkReport, PortVariationResult};
+pub use net_report_ext::ExtendedNetworkReport;
 // RPC protocol and service types
 pub use rpc::{
     // Request/Response types

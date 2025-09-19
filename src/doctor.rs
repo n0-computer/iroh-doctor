@@ -948,7 +948,7 @@ pub async fn run(
             coordinator,
             assignment_interval,
             named,
-            no_port_variation,
+            no_port_variation: _,
             secret_key,
         } => {
             let secret_key = create_secret_key(secret_key)?;
@@ -957,7 +957,6 @@ pub async fn run(
                 coordinator,
                 assignment_interval,
                 named,
-                !no_port_variation,
                 secret_key,
                 metrics.iroh.clone(),
             )

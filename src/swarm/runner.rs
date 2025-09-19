@@ -16,7 +16,6 @@ use crate::{
         client::SwarmClient,
         config::SwarmConfig,
         execution::perform_test_assignment,
-        net_report_ext::probe_port_variation,
         tests::protocol::{
             LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN,
         },
@@ -139,43 +138,6 @@ async fn assignment_processing_task(
     }
 }
 
-/// Background task to periodically update port variation detection
-async fn port_variation_update_task(
-    client: Arc<SwarmClient>,
-    config: SwarmConfig,
-    mut shutdown_rx: broadcast::Receiver<()>,
-) {
-    // Only run this task if port variation detection is enabled
-    if !config.port_variation.enabled {
-        debug!("Port variation detection disabled, task not starting");
-        return;
-    }
-
-    debug!("Starting periodic port variation detection updates");
-    let mut interval = tokio::time::interval(Duration::from_secs(300)); // Check every 5 minutes
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                debug!("Running periodic port variation detection update");
-                match probe_port_variation(&config.port_variation, config.coordinator_node_id).await {
-                    Ok(result) => {
-                        client.update_port_variation(Some(result)).await;
-                        debug!("Updated port variation detection results");
-                    }
-                    Err(e) => {
-                        debug!("Periodic port variation detection failed: {}", e);
-                    }
-                }
-            }
-            _ = shutdown_rx.recv() => {
-                info!("Port variation update task received shutdown signal");
-                break;
-            }
-        }
-    }
-}
 
 async fn incoming_connection_handler_task(
     endpoint: Arc<Endpoint>,
@@ -388,13 +350,6 @@ async fn run_swarm_client_inner(
 
     // Create shutdown broadcast channel
     let (shutdown_tx, _) = broadcast::channel(1);
-
-    // Spawn background task to periodically update port variation detection
-    let _port_variation_handle = tokio::spawn(port_variation_update_task(
-        client.clone(),
-        config.clone(),
-        shutdown_tx.subscribe(),
-    ));
 
     // Wait for DNS discovery to be ready
     info!("Waiting 10 seconds for DNS discovery to be ready...");

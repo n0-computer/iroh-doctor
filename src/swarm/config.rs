@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use iroh::{defaults::DEFAULT_RELAY_QUIC_PORT, NodeId, RelayMap, SecretKey};
+use iroh::{NodeId, RelayMap, SecretKey};
 
 /// Configuration for swarm client
 #[derive(Debug, Clone)]
@@ -19,8 +19,6 @@ pub struct SwarmConfig {
     pub name: Option<String>,
     /// Transport configuration for throughput optimization
     pub transport: Option<TransportConfig>,
-    /// Port variation detection configuration
-    pub port_variation: PortVariationConfig,
 }
 
 /// Transport configuration for QUIC connection tuning
@@ -38,31 +36,4 @@ pub struct TransportConfig {
     pub idle_timeout_secs: Option<u32>,
     /// Whether to enable keep-alive
     pub keep_alive: Option<bool>,
-}
-
-/// Configuration for port variation detection
-///
-/// The probe service runs on the coordinator node and listens on multiple ports.
-/// We connect via n0 discovery and default relays, only needing the coordinator's node ID.
-#[derive(Debug, Clone)]
-pub struct PortVariationConfig {
-    /// Whether port variation detection is enabled
-    pub enabled: bool,
-    /// Primary port to probe
-    pub primary_port: u16,
-    /// Alternate ports to probe
-    pub alternate_ports: Vec<u16>,
-    /// Timeout for probe connections
-    pub probe_timeout: Duration,
-}
-
-impl Default for PortVariationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            primary_port: DEFAULT_RELAY_QUIC_PORT,
-            alternate_ports: vec![DEFAULT_RELAY_QUIC_PORT + 1],
-            probe_timeout: Duration::from_secs(3),
-        }
-    }
 }

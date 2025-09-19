@@ -14,7 +14,6 @@ pub async fn run_swarm_client(
     coordinator: NodeId,
     assignment_interval: u64,
     name: Option<String>,
-    port_variation: bool,
     secret_key: SecretKey,
     metrics: IrohMetricsRegistry,
 ) -> Result<()> {
@@ -28,13 +27,6 @@ pub async fn run_swarm_client(
         secret_key.public()
     );
 
-    // Configure port variation detection
-    let mut port_variation_config = crate::swarm::PortVariationConfig::default();
-
-    if !port_variation {
-        port_variation_config.enabled = false;
-    }
-
     let swarm_config = SwarmConfig {
         coordinator_node_id: coordinator,
         secret_key,
@@ -42,7 +34,6 @@ pub async fn run_swarm_client(
         relay_map: None,
         name,
         transport: None,
-        port_variation: port_variation_config,
     };
 
     crate::swarm::run_swarm_client(swarm_config, &ssh_key, metrics).await
