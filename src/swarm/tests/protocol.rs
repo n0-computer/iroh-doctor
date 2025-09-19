@@ -16,35 +16,17 @@ pub enum TestProtocolType {
     Latency,
 }
 
-impl TestProtocolType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Throughput => "THROUGHPUT",
-            Self::Latency => "LATENCY",
-        }
-    }
-}
-
-impl std::str::FromStr for TestProtocolType {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "THROUGHPUT" => Ok(Self::Throughput),
-            "LATENCY" => Ok(Self::Latency),
-            _ => Err(()),
-        }
-    }
-}
-
 impl fmt::Display for TestProtocolType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+        match self {
+            Self::Throughput => write!(f, "THROUGHPUT"),
+            Self::Latency => write!(f, "LATENCY"),
+        }
     }
 }
 
 /// Protocol messages for latency testing
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LatencyMessage {
     Ping(u32),
     Pong(u32),
@@ -60,25 +42,11 @@ impl LatencyMessage {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        match self {
-            LatencyMessage::Ping(n) => format!("PING {n}").into_bytes(),
-            LatencyMessage::Pong(n) => format!("PONG {n}").into_bytes(),
-        }
+        postcard::to_allocvec(self).expect("failed to serialize latency message")
     }
 
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
-        let s = String::from_utf8_lossy(data);
-        let parts: Vec<&str> = s.split_whitespace().collect();
-        if parts.len() != 2 {
-            return None;
-        }
-
-        let number = parts[1].parse::<u32>().ok()?;
-        match parts[0].to_uppercase().as_str() {
-            "PING" => Some(LatencyMessage::Ping(number)),
-            "PONG" => Some(LatencyMessage::Pong(number)),
-            _ => None,
-        }
+        postcard::from_bytes(data).ok()
     }
 }
 
@@ -120,7 +88,7 @@ impl TestProtocolHeader {
             postcard::to_allocvec(self).expect("failed to serialize protocol header");
         let header_len = header_bytes.len() as u16;
 
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(2 + header_bytes.len());
         result.extend_from_slice(&header_len.to_le_bytes());
         result.extend_from_slice(&header_bytes);
         result

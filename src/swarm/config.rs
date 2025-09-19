@@ -19,6 +19,8 @@ pub struct SwarmConfig {
     pub name: Option<String>,
     /// Transport configuration for throughput optimization
     pub transport: Option<TransportConfig>,
+    /// Timeout for data transfer operations (default: 30 seconds)
+    pub data_transfer_timeout: Option<Duration>,
 }
 
 /// Transport configuration for QUIC connection tuning

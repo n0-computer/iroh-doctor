@@ -23,9 +23,6 @@ use crate::swarm::{
     },
 };
 
-// Data transfer timeout constant
-const DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30); // 30 seconds should be enough for most transfers
-
 /// Helper function to get the real connection type from the endpoint
 fn get_connection_type(endpoint: &Endpoint, node_id: NodeId) -> Option<ConnectionType> {
     endpoint.conn_type(node_id).map(|mut watcher| {
@@ -102,13 +99,18 @@ pub async fn perform_test_assignment(
     assignment: TestAssignment,
     endpoint: Arc<Endpoint>,
     _node_id: NodeId,
-) -> Result<(bool, TestAssignmentResult)> {
+    data_transfer_timeout: Duration,
+) -> Result<TestAssignmentResult> {
     let start = Instant::now();
 
     match assignment.test_type {
-        TestType::Throughput => execute_throughput_test(assignment, endpoint, start).await,
+        TestType::Throughput => {
+            execute_throughput_test(assignment, endpoint, start, data_transfer_timeout).await
+        }
         TestType::Latency => execute_latency_test(assignment, endpoint, start).await,
-        TestType::Fingerprint => execute_fingerprint_test(assignment, endpoint, start).await,
+        TestType::Fingerprint => {
+            execute_fingerprint_test(assignment, endpoint, start, data_transfer_timeout).await
+        }
     }
 }
 
@@ -116,7 +118,8 @@ async fn execute_throughput_test(
     assignment: TestAssignment,
     endpoint: Arc<Endpoint>,
     start: Instant,
-) -> Result<(bool, TestAssignmentResult)> {
+    data_transfer_timeout: Duration,
+) -> Result<TestAssignmentResult> {
     info!("Starting throughput test with node {}", assignment.node_id);
 
     // Try multiple times to resolve and connect
@@ -160,7 +163,7 @@ async fn execute_throughput_test(
 
                 // Run the bidirectional throughput test with timeout using the connection
                 let transfer_result = tokio::time::timeout(
-                    DATA_TRANSFER_TIMEOUT,
+                    data_transfer_timeout,
                     run_bidirectional_throughput_test_with_config(
                         &conn,
                         data_size,
@@ -198,31 +201,25 @@ async fn execute_throughput_test(
                             ..Default::default()
                         };
 
-                        return Ok((true, TestAssignmentResult::Throughput(throughput_result)));
+                        return Ok(TestAssignmentResult::Throughput(throughput_result));
                     }
                     Ok(Err(e)) => {
                         warn!("Throughput test error: {}", e);
-                        return Ok((
-                            false,
-                            TestAssignmentResult::Error(ErrorResult {
-                                error: e.to_string(),
-                                duration: start.elapsed(),
-                                test_type: Some(assignment.test_type),
-                                node_id: Some(assignment.node_id),
-                            }),
-                        ));
+                        return Ok(TestAssignmentResult::Error(ErrorResult {
+                            error: e.to_string(),
+                            duration: start.elapsed(),
+                            test_type: Some(assignment.test_type),
+                            node_id: Some(assignment.node_id),
+                        }));
                     }
                     Err(_) => {
                         warn!("Throughput test timed out");
-                        return Ok((
-                            false,
-                            TestAssignmentResult::Error(ErrorResult {
-                                error: "Test timed out after 30 seconds".to_string(),
-                                duration: start.elapsed(),
-                                test_type: Some(assignment.test_type),
-                                node_id: Some(assignment.node_id),
-                            }),
-                        ));
+                        return Ok(TestAssignmentResult::Error(ErrorResult {
+                            error: "Test timed out after 30 seconds".to_string(),
+                            duration: start.elapsed(),
+                            test_type: Some(assignment.test_type),
+                            node_id: Some(assignment.node_id),
+                        }));
                     }
                 }
             }
@@ -241,22 +238,19 @@ async fn execute_throughput_test(
 
     // All attempts failed
     warn!("All throughput test connection attempts failed");
-    Ok((
-        false,
-        TestAssignmentResult::Error(ErrorResult {
-            error: last_error,
-            duration: start.elapsed(),
-            test_type: Some(assignment.test_type),
-            node_id: Some(assignment.node_id),
-        }),
-    ))
+    Ok(TestAssignmentResult::Error(ErrorResult {
+        error: last_error,
+        duration: start.elapsed(),
+        test_type: Some(assignment.test_type),
+        node_id: Some(assignment.node_id),
+    }))
 }
 
 async fn execute_latency_test(
     assignment: TestAssignment,
     endpoint: Arc<Endpoint>,
     start: Instant,
-) -> Result<(bool, TestAssignmentResult)> {
+) -> Result<TestAssignmentResult> {
     // Add retry logic for latency tests
     let iterations = assignment.test_config.iterations.unwrap_or(10);
 
@@ -287,7 +281,7 @@ async fn execute_latency_test(
         .await
         {
             Ok(result) => {
-                return Ok((true, TestAssignmentResult::Latency(result)));
+                return Ok(TestAssignmentResult::Latency(result));
             }
             Err(e) => {
                 last_error = Some(TestAssignmentResult::Error(ErrorResult {
@@ -305,24 +299,22 @@ async fn execute_latency_test(
 
     // All attempts failed
     warn!("All latency test attempts failed");
-    Ok((
-        false,
-        last_error.unwrap_or_else(|| {
-            TestAssignmentResult::Error(ErrorResult {
-                error: "All latency test attempts failed".to_string(),
-                duration: start.elapsed(),
-                test_type: Some(assignment.test_type),
-                node_id: Some(assignment.node_id),
-            })
-        }),
-    ))
+    Ok(last_error.unwrap_or_else(|| {
+        TestAssignmentResult::Error(ErrorResult {
+            error: "All latency test attempts failed".to_string(),
+            duration: start.elapsed(),
+            test_type: Some(assignment.test_type),
+            node_id: Some(assignment.node_id),
+        })
+    }))
 }
 
 async fn execute_fingerprint_test(
     assignment: TestAssignment,
     endpoint: Arc<Endpoint>,
     start: Instant,
-) -> Result<(bool, TestAssignmentResult)> {
+    data_transfer_timeout: Duration,
+) -> Result<TestAssignmentResult> {
     // Combined test: latency + throughput
     info!("Starting fingerprint test with node {}", assignment.node_id);
 
@@ -349,33 +341,33 @@ async fn execute_fingerprint_test(
         Err(e) => {
             // If latency test fails, we can't establish connectivity, so skip throughput
             warn!("Latency test failed: {}", e);
-            return Ok((
-                false,
-                TestAssignmentResult::Fingerprint(FingerprintResult {
-                    test_type: assignment.test_type,
-                    node_id: assignment.node_id,
+            return Ok(TestAssignmentResult::Fingerprint(FingerprintResult {
+                test_type: assignment.test_type,
+                node_id: assignment.node_id,
+                duration: start.elapsed(),
+                latency: Some(LatencyResult {
+                    avg_latency_ms: None,
+                    min_latency_ms: None,
+                    max_latency_ms: None,
+                    std_dev_ms: None,
+                    successful_pings: 0,
+                    total_iterations: iterations,
                     duration: start.elapsed(),
-                    latency: Some(LatencyResult {
-                        avg_latency_ms: None,
-                        min_latency_ms: None,
-                        max_latency_ms: None,
-                        std_dev_ms: None,
-                        successful_pings: 0,
-                        total_iterations: iterations,
-                        duration: start.elapsed(),
-                        error: Some(format!("Latency test failed: {e}")),
-                        connection_type: None,
-                    }),
-                    throughput: None,
-                    error: Some(format!("Test failed during latency phase: {e}")),
+                    error: Some(format!("Latency test failed: {e}")),
+                    connection_type: None,
                 }),
-            ));
+                throughput: None,
+                error: Some(format!("Test failed during latency phase: {e}")),
+            }));
         }
     };
 
     // 2. Throughput test - Need to establish a connection for this
     info!("Phase 2/2: Testing throughput...");
 
+    // TODO: The latency test establishes its own connection internally but doesn't return it.
+    // This means we create a second connection here, which is inefficient.
+    // Future improvement: refactor latency test to optionally return its connection.
     // Connect for throughput test
     let connection = match endpoint
         .connect(assignment.node_id, DOCTOR_SWARM_ALPN)
@@ -385,17 +377,14 @@ async fn execute_fingerprint_test(
         Err(e) => {
             warn!("Failed to connect for throughput test: {}", e);
             // Return with just latency results
-            return Ok((
-                true, // Partial success since latency worked
-                TestAssignmentResult::Fingerprint(FingerprintResult {
-                    test_type: assignment.test_type,
-                    node_id: assignment.node_id,
-                    duration: start.elapsed(),
-                    latency: latency_result,
-                    throughput: None,
-                    error: Some(format!("Throughput test skipped: connection failed: {e}")),
-                }),
-            ));
+            return Ok(TestAssignmentResult::Fingerprint(FingerprintResult {
+                test_type: assignment.test_type,
+                node_id: assignment.node_id,
+                duration: start.elapsed(),
+                latency: latency_result,
+                throughput: None,
+                error: Some(format!("Throughput test skipped: connection failed: {e}")),
+            }));
         }
     };
 
@@ -427,7 +416,7 @@ async fn execute_fingerprint_test(
 
     // Run test and update result based on outcome
     match tokio::time::timeout(
-        DATA_TRANSFER_TIMEOUT,
+        data_transfer_timeout,
         run_bidirectional_throughput_test_with_config(
             &connection,
             data_size,
@@ -478,8 +467,5 @@ async fn execute_fingerprint_test(
     };
 
     info!("Fingerprint test completed. Success: {}", overall_success);
-    Ok((
-        overall_success,
-        TestAssignmentResult::Fingerprint(fingerprint_result),
-    ))
+    Ok(TestAssignmentResult::Fingerprint(fingerprint_result))
 }

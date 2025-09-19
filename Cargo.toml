@@ -21,11 +21,11 @@ futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
-iroh = { git = "https://github.com/n0-computer/iroh", branch = "main", features = ["metrics"] }
-iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "main" }
+iroh = { version = "0.92.0", features = ["metrics"] }
+iroh-base = { version = "0.92.0" }
 iroh-metrics = { version = "0.35", features = ["service", "static_core"] }
-iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "main" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "main" }
+iroh-n0des = { version = "0.3.0" }
+iroh-relay = { version = "0.92.0" }
 netwatch = { version = "0.7" }
 n0-watcher = "0.3"
 pkarr = { version = "2.2.0", default-features = false }
@@ -52,20 +52,12 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "0.26"
 ed25519-dalek = "2.1"
-irpc = { git = "https://github.com/n0-computer/irpc", branch = "main", features = ["derive", "default"] }
-irpc-iroh = { git = "https://github.com/n0-computer/irpc", branch = "main" }
+irpc = { version = "0.8.0", features = ["derive", "default"] }
+irpc-iroh = { version = "0.8.0" }
 rcan = "0.1.0"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 url = "2.5.2"
 
 [dev-dependencies]
-iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "main" }
+iroh-base = { version = "0.92.0" }
 url = "2.5.2"
-
-[patch.crates-io]
-iroh = { git = "https://github.com/n0-computer/iroh", branch = "main" }
-iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "main" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "main" }
-iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "main" }
-irpc = { git = "https://github.com/n0-computer/irpc", branch = "main" }
-irpc-iroh = { git = "https://github.com/n0-computer/irpc", branch = "main" }

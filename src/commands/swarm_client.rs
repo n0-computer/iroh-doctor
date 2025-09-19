@@ -34,6 +34,7 @@ pub async fn run_swarm_client(
         relay_map: None,
         name,
         transport: None,
+        data_transfer_timeout: None, // Use default 30 seconds
     };
 
     crate::swarm::run_swarm_client(swarm_config, &ssh_key, metrics).await

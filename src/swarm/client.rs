@@ -5,7 +5,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::swarm::{
@@ -22,8 +22,7 @@ pub const DOCTOR_ALPN: &[u8] = b"n0/n0des-doctor/1";
 /// Swarm client for network testing
 #[derive(Debug)]
 pub struct SwarmClient {
-    endpoint: Arc<Endpoint>,
-    node_id: NodeId,
+    endpoint: Endpoint,
     /// ID of the project in the coordinator
     project_id: Uuid,
     /// IRPC client for coordinator communication
@@ -91,7 +90,7 @@ impl SwarmClient {
 
         let endpoint = Endpoint::builder()
             .secret_key(config.secret_key.clone())
-            .alpns(vec![DOCTOR_SWARM_ALPN.to_vec(), DOCTOR_ALPN.to_vec()])
+            .alpns(vec![DOCTOR_SWARM_ALPN.to_vec()])
             .relay_mode(relay_mode)
             .transport_config(transport_config)
             .discovery_n0()
@@ -106,14 +105,6 @@ impl SwarmClient {
 
         let actual_node_id = endpoint.node_id();
         info!("Swarm client listening with node ID: {}", actual_node_id);
-
-        // Verify the endpoint is using our secret key
-        if actual_node_id != node_id {
-            error!(
-                "MISMATCH: Expected node ID {} but endpoint has {}",
-                node_id, actual_node_id
-            );
-        }
 
         // Connect to coordinator
         info!(
@@ -180,8 +171,7 @@ impl SwarmClient {
         info!("Registered with coordinator, project_id: {}", project_id);
 
         Ok(Self {
-            endpoint: Arc::new(endpoint),
-            node_id,
+            endpoint,
             project_id,
             doctor_client: Arc::new(Mutex::new(doctor_client)),
         })
@@ -193,7 +183,7 @@ impl SwarmClient {
         ExtendedNetworkReport::from_base_report(base_report)
     }
 
-/// Get assignments from coordinator with retry logic
+    /// Get assignments from coordinator with retry logic
     /// Always includes network report in the request (acts as heartbeat)
     pub async fn get_assignments(&self) -> Result<Vec<TestAssignment>> {
         let mut retries = 3;
@@ -205,26 +195,11 @@ impl SwarmClient {
         while retries > 0 {
             let mut client = self.doctor_client.lock().await;
 
-            // Try to ensure connection is alive
-            match client.ensure_connected().await {
-                Ok(()) => {
-                    // Connection is good, try to get assignments with network report
-                    match client.get_assignments(network_report.clone()).await {
-                        Ok(response) => return Ok(response.assignments),
-                        Err(e) => {
-                            warn!("Failed to get assignments: {}", e);
-                            last_error = Some(e);
-                            retries -= 1;
-                            if retries > 0 {
-                                // Wait before retry
-                                drop(client); // Release lock before sleeping
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            }
-                        }
-                    }
-                }
+            // Try to get assignments with network report
+            match client.get_assignments(network_report.clone()).await {
+                Ok(response) => return Ok(response.assignments),
                 Err(e) => {
-                    warn!("Failed to ensure connection: {}", e);
+                    warn!("Failed to get assignments: {}", e);
                     last_error = Some(e);
                     retries -= 1;
                     if retries > 0 {
@@ -246,13 +221,15 @@ impl SwarmClient {
         test_run_id: Uuid,
         node_a_id: NodeId,
         node_b_id: NodeId,
-        success: bool,
         result_data: TestAssignmentResult,
     ) -> Result<()> {
         let mut client = self.doctor_client.lock().await;
 
-        // Ensure connection is alive
-        client.ensure_connected().await?;
+        // Determine success based on result type
+        let (success, error) = match &result_data {
+            TestAssignmentResult::Error(e) => (false, Some(e.error.clone())),
+            _ => (true, None),
+        };
 
         // Convert to TestResultReport format expected by backend
         let report = TestResultReport {
@@ -260,13 +237,9 @@ impl SwarmClient {
             node_a_id,
             node_b_id,
             success,
-            error: if success {
-                None
-            } else {
-                Some("Test failed".to_string())
-            },
+            error,
             request_id: Some(Uuid::new_v4()), // For idempotency
-            result_data: result_data.clone(),
+            result_data,
         };
 
         client.report_result(report).await?;
@@ -282,9 +255,6 @@ impl SwarmClient {
     ) -> Result<bool> {
         let mut client = self.doctor_client.lock().await;
 
-        // Ensure connection is alive
-        client.ensure_connected().await?;
-
         let response = client
             .mark_test_started(test_run_id, node_a_id, node_b_id)
             .await?;
@@ -292,12 +262,12 @@ impl SwarmClient {
     }
 
     /// Get the endpoint
-    pub fn endpoint(&self) -> Arc<Endpoint> {
+    pub fn endpoint(&self) -> Endpoint {
         self.endpoint.clone()
     }
 
     /// Get the node ID
     pub fn node_id(&self) -> NodeId {
-        self.node_id
+        self.endpoint.node_id()
     }
 }

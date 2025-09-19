@@ -30,6 +30,7 @@ async fn assignment_processing_task(
     endpoint: Arc<Endpoint>,
     stats: Arc<SwarmStats>,
     mut shutdown_rx: broadcast::Receiver<()>,
+    data_transfer_timeout: Duration,
 ) {
     // Get new assignments
     tokio::select! {
@@ -71,34 +72,33 @@ async fn assignment_processing_task(
                                 tokio::spawn(async move {
                                     info!("Executing test assignment: {} -> {}", node_id, target_node_id);
 
-                                    let (success, result_data) = match perform_test_assignment(
+                                    let result_data = match perform_test_assignment(
                                         assignment,
                                         endpoint.clone(),
                                         node_id,
+                                        data_transfer_timeout,
                                     )
                                     .await
                                     {
                                         Ok(result) => result,
                                         Err(e) => {
                                             error!("Failed to perform test: {}", e);
-                                            (
-                                                false,
-                                                TestAssignmentResult::Error(ErrorResult {
-                                                    error: e.to_string(),
-                                                    duration: Duration::from_secs(0),
-                                                    test_type: None,
-                                                    node_id: None,
-                                                }),
-                                            )
+                                            TestAssignmentResult::Error(ErrorResult {
+                                                error: e.to_string(),
+                                                duration: Duration::from_secs(0),
+                                                test_type: None,
+                                                node_id: None,
+                                            })
                                         }
                                     };
+
+                                    let result_success = !matches!(&result_data, TestAssignmentResult::Error(_));
 
                                     if let Err(e) = client
                                             .submit_result(
                                                 test_run_id,
                                                 node_id,
                                                 target_node_id,
-                                                success,
                                                 result_data,
                                             )
                                             .await
@@ -111,7 +111,7 @@ async fn assignment_processing_task(
                                                 retry_count,
                                             ));
 
-                                            if success {
+                                            if result_success {
                                                 stats.increment_completed();
                                             } else {
                                                 stats.increment_failed();
@@ -137,7 +137,6 @@ async fn assignment_processing_task(
         }
     }
 }
-
 
 async fn incoming_connection_handler_task(
     endpoint: Arc<Endpoint>,
@@ -304,10 +303,10 @@ pub async fn run_swarm_client(
         Arc::new(SwarmClient::connect(config.clone(), ssh_key_path, metrics_registry).await?);
     let endpoint = client.endpoint();
 
-    let endpoint_for_shutdown = (*endpoint).clone();
+    let endpoint_for_shutdown = endpoint.clone();
     race(
         close_endpoint_on_ctrl_c(endpoint_for_shutdown),
-        run_swarm_client_inner(client, config, endpoint, ssh_key_path),
+        run_swarm_client_inner(client, config, Arc::new(endpoint), ssh_key_path),
     )
     .await;
 
@@ -329,7 +328,7 @@ async fn run_swarm_client_inner(
         config.coordinator_node_id
     );
 
-    let _rpc_client = match iroh_n0des::Client::builder(&endpoint)
+    let _rpc_client = match iroh_n0des::Client::builder(endpoint.as_ref())
         .ssh_key_from_file(ssh_key_path)
         .await
     {
@@ -371,6 +370,11 @@ async fn run_swarm_client_inner(
     let mut assignment_interval = tokio::time::interval(config.assignment_interval);
     assignment_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Get data transfer timeout from config or use default
+    let data_transfer_timeout = config
+        .data_transfer_timeout
+        .unwrap_or(Duration::from_secs(30));
+
     loop {
         tokio::select! {
             _ = assignment_interval.tick() => {
@@ -390,6 +394,7 @@ async fn run_swarm_client_inner(
                             endpoint,
                             stats,
                             shutdown_rx,
+                            data_transfer_timeout,
                         )
                     ).await {
                         Ok(()) => {
