@@ -21,8 +21,7 @@ pub struct BidirectionalThroughputResult {
     pub download_duration: Duration,
     pub bytes_sent: u64,
     pub bytes_received: u64,
-    pub duration: Duration, // Total test duration
-    /// Detailed statistics
+    pub duration: Duration,
     pub statistics: Option<TestStats>,
 }
 
@@ -30,7 +29,6 @@ pub struct BidirectionalThroughputResult {
 pub async fn run_bidirectional_throughput_test_with_config(
     conn: &iroh::endpoint::Connection,
     data_size: u64,
-    _is_initiator: bool,
     parallel_streams: usize,
     chunk_size: usize,
 ) -> Result<BidirectionalThroughputResult> {
@@ -41,11 +39,9 @@ pub async fn run_bidirectional_throughput_test_with_config(
         data_size, parallel_streams, chunk_size
     );
 
-    // Calculate data size per stream
     let data_per_stream = data_size / parallel_streams as u64;
     let last_stream_extra = data_size % parallel_streams as u64;
 
-    // Create tasks for parallel streams
     let mut stream_tasks = Vec::new();
 
     for stream_idx in 0..parallel_streams {
@@ -63,7 +59,6 @@ pub async fn run_bidirectional_throughput_test_with_config(
         stream_tasks.push(task);
     }
 
-    // Wait for all streams to complete
     let mut total_bytes_sent = 0u64;
     let mut total_bytes_received = 0u64;
     let mut max_upload_duration = Duration::ZERO;
@@ -108,7 +103,6 @@ pub async fn run_bidirectional_throughput_test_with_config(
         }
     }
 
-    // Calculate speeds based on the longest stream duration (since they run in parallel)
     let upload_mbps = if max_upload_duration.as_secs_f64() > 0.0 {
         (total_bytes_sent as f64 * 8.0) / max_upload_duration.as_secs_f64() / 1_000_000.0
     } else {
@@ -123,9 +117,7 @@ pub async fn run_bidirectional_throughput_test_with_config(
 
     let total_duration = test_start.elapsed();
 
-    // Calculate test statistics if we have stream data
     let statistics = if !stream_stats.is_empty() {
-        // Get the actual connection stats from the connection
         let connection_stats = conn.stats().into();
         let stats = TestStats::from_streams(stream_stats, connection_stats);
         Some(stats)

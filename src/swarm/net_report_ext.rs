@@ -9,7 +9,6 @@ pub struct ExtendedNetworkReport {
     /// Base network report from iroh
     pub base_report: Option<iroh::net_report::Report>,
 
-    // Port variation fields kept for backward compatibility but always None
     /// Whether the NAT mapping varies by destination PORT for IPv4 (not implemented)
     pub mapping_varies_by_dest_port_ipv4: Option<bool>,
 
@@ -22,7 +21,6 @@ impl ExtendedNetworkReport {
     pub fn from_base_report(base: Option<iroh::net_report::Report>) -> Self {
         Self {
             base_report: base,
-            // Port variation fields default to None
             mapping_varies_by_dest_port_ipv4: None,
             mapping_varies_by_dest_port_ipv6: None,
         }

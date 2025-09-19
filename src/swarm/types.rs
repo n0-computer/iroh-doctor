@@ -6,6 +6,15 @@ use iroh::{endpoint::ConnectionType, NodeId};
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
+// Common default configuration values used across the swarm module
+pub const DEFAULT_DATA_TRANSFER_TIMEOUT_SECS: u64 = 5 * 60; // 5 minutes
+pub const DEFAULT_DATA_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024; // 1MB
+pub const DEFAULT_PARALLEL_STREAMS: u32 = 4;
+pub const DEFAULT_CONNECTION_TIMEOUT_SECS: u32 = 20;
+pub const DEFAULT_PING_INTERVAL_MS: u32 = 10;
+pub const DEFAULT_PING_TIMEOUT_MS: u32 = 3000;
+
 /// Test types supported by doctor nodes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TestType {
@@ -33,7 +42,6 @@ pub struct TestConfig {
     pub duration_secs: Option<u64>,
     pub size_bytes: Option<u64>,
     pub iterations: Option<u32>,
-    /// Advanced configuration options
     pub advanced: Option<AdvancedTestConfig>,
 }
 
@@ -77,7 +85,7 @@ pub struct NetworkAdvancedConfig {
 }
 
 /// Doctor-specific capabilities
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoctorCaps {
     /// Can register as doctor node
     pub can_register: bool,
@@ -85,9 +93,8 @@ pub struct DoctorCaps {
     pub can_report_results: bool,
 }
 
-impl DoctorCaps {
-    /// Create capabilities for a test node
-    pub fn test_node() -> Self {
+impl Default for DoctorCaps {
+    fn default() -> Self {
         Self {
             can_register: true,
             can_report_results: true,
@@ -147,9 +154,9 @@ impl From<quinn::ConnectionStats> for ConnectionStats {
     fn from(stats: quinn::ConnectionStats) -> Self {
         Self {
             rtt_ms: stats.path.rtt.as_millis() as u32,
-            smoothed_rtt_ms: 0, // Not available in iroh-quinn
-            latest_rtt_ms: 0,   // Not available in iroh-quinn
-            rtt_variance_ms: 0, // Not available in iroh-quinn
+            smoothed_rtt_ms: stats.path.rtt.as_millis() as u32, // PathStats.rtt is the smoothed RTT estimate
+            latest_rtt_ms: 0,   // Not separately tracked in iroh-quinn
+            rtt_variance_ms: 0, // Not separately tracked in iroh-quinn
             cwnd: stats.path.cwnd,
             sent_packets: stats.path.sent_packets,
             lost_packets: stats.path.lost_packets,
@@ -348,6 +355,57 @@ impl Default for ThroughputResult {
     }
 }
 
+impl ThroughputResult {
+    /// Create a new ThroughputResult with basic parameters
+    pub fn new(
+        test_type: TestType,
+        node_id: NodeId,
+        duration: Duration,
+        data_size: u64,
+        parallel_streams: usize,
+        chunk_size_bytes: usize,
+    ) -> Self {
+        Self {
+            test_type,
+            node_id,
+            duration,
+            data_size_mb: data_size / (1024 * 1024),
+            parallel_streams,
+            chunk_size_kb: chunk_size_bytes / 1024,
+            ..Default::default()
+        }
+    }
+
+    /// Set the connection type
+    pub fn with_connection_type(mut self, conn_type: Option<ConnectionType>) -> Self {
+        self.connection_type = conn_type;
+        self
+    }
+
+    /// Set the transfer results
+    pub fn with_transfer_results(
+        mut self,
+        bytes_sent: u64,
+        bytes_received: u64,
+        transfer_duration: Duration,
+        upload_mbps: f64,
+        download_mbps: f64,
+    ) -> Self {
+        self.bytes_sent = bytes_sent;
+        self.bytes_received = bytes_received;
+        self.transfer_duration = Some(transfer_duration);
+        self.upload_mbps = upload_mbps;
+        self.download_mbps = download_mbps;
+        self
+    }
+
+    /// Set statistics
+    pub fn with_statistics(mut self, statistics: Option<TestStats>) -> Self {
+        self.statistics = statistics;
+        self
+    }
+}
+
 /// Result for fingerprint tests (combined)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintResult {
@@ -357,6 +415,7 @@ pub struct FingerprintResult {
     pub latency: Option<LatencyResult>,
     pub throughput: Option<ThroughputResult>,
     pub error: Option<String>,
+    pub connection_type: Option<ConnectionType>,
 }
 
 impl Default for FingerprintResult {
@@ -368,6 +427,7 @@ impl Default for FingerprintResult {
             latency: None,
             throughput: None,
             error: None,
+            connection_type: None,
         }
     }
 }
@@ -379,6 +439,7 @@ pub struct ErrorResult {
     pub duration: Duration,
     pub test_type: Option<TestType>,
     pub node_id: Option<NodeId>,
+    pub connection_type: Option<ConnectionType>,
 }
 
 /// Unified result type for all test assignments using tagged enum

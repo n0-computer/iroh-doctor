@@ -4,8 +4,13 @@ use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
 use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
+
+// Client timeout constants
+const DIRECT_ADDR_INIT_TIMEOUT_SECS: u64 = 10;
+const NET_REPORT_INIT_TIMEOUT_SECS: u64 = 3;
+const COORDINATOR_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 use crate::{
     metrics::IrohMetricsRegistry,
@@ -40,7 +45,6 @@ impl SwarmClient {
         ssh_key_path: &Path,
         metrics_registry: IrohMetricsRegistry,
     ) -> Result<Self> {
-
         let relay_mode = if let Some(relay_map) = &config.relay_map {
             RelayMode::Custom(relay_map.clone())
         } else {
@@ -93,32 +97,29 @@ impl SwarmClient {
             registry.register_all(endpoint.metrics());
         }
 
-
         let mut direct_addrs = endpoint.direct_addresses();
-        tokio::time::timeout(Duration::from_secs(10), direct_addrs.initialized())
-            .await
-            .ok();
+        tokio::time::timeout(
+            Duration::from_secs(DIRECT_ADDR_INIT_TIMEOUT_SECS),
+            direct_addrs.initialized(),
+        )
+        .await
+        .ok();
 
         let mut net_report_watcher = endpoint.net_report();
         let initialized_watcher = net_report_watcher.initialized();
         let base_network_report = match tokio::time::timeout(
-            Duration::from_secs(3),
+            Duration::from_secs(NET_REPORT_INIT_TIMEOUT_SECS),
             initialized_watcher,
         )
         .await
         {
-            Ok(_) => {
-                let report = net_report_watcher.get();
-                report
-            }
-            Err(_) => {
-                None
-            }
+            Ok(_) => net_report_watcher.get(),
+            Err(_) => None,
         };
 
         let extended_network_report = ExtendedNetworkReport::from_base_report(base_network_report);
         let doctor_client = match tokio::time::timeout(
-            Duration::from_secs(30),
+            Duration::from_secs(COORDINATOR_CONNECT_TIMEOUT_SECS),
             DoctorClient::with_ssh_key(&endpoint, config.coordinator_node_id, ssh_key_path),
         )
         .await
@@ -151,35 +152,19 @@ impl SwarmClient {
     }
 
     pub async fn get_assignments(&self) -> Result<Vec<TestAssignment>> {
-        let mut retries = 3;
-        let mut last_error = None;
-
         let network_report = self.get_extended_network_report().await;
 
-        while retries > 0 {
-            match self.doctor_client.get_assignments(network_report.clone()).await {
-                Ok(response) => return Ok(response.assignments),
-                Err(e) => {
-                    warn!("Failed to get assignments: {}", e);
-                    last_error = Some(e);
-                    retries -= 1;
-                    if retries > 0 {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    }
-                }
-            }
-        }
+        let response = self.doctor_client.get_assignments(network_report).await?;
 
-        Err(last_error
-            .unwrap_or_else(|| anyhow::anyhow!("Failed to get assignments after retries")))
+        Ok(response.assignments)
     }
 
     /// Submit test result to coordinator
     pub async fn submit_result(
         &self,
         test_run_id: Uuid,
-        node_a_id: NodeId,
-        node_b_id: NodeId,
+        node_a: NodeId,
+        node_b: NodeId,
         result_data: TestAssignmentResult,
     ) -> Result<()> {
         let (success, error) = match &result_data {
@@ -189,8 +174,8 @@ impl SwarmClient {
 
         let report = TestResultReport {
             test_run_id,
-            node_a_id,
-            node_b_id,
+            node_a,
+            node_b,
             success,
             error,
             request_id: Some(Uuid::new_v4()),
@@ -205,11 +190,12 @@ impl SwarmClient {
     pub async fn mark_test_started(
         &self,
         test_run_id: Uuid,
-        node_a_id: NodeId,
-        node_b_id: NodeId,
+        node_a: NodeId,
+        node_b: NodeId,
     ) -> Result<bool> {
-        let response = self.doctor_client
-            .mark_test_started(test_run_id, node_a_id, node_b_id)
+        let response = self
+            .doctor_client
+            .mark_test_started(test_run_id, node_a, node_b)
             .await?;
         Ok(response.success)
     }

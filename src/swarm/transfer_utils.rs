@@ -35,7 +35,6 @@ pub async fn drain_stream(
             num_chunks += 1;
         }
     } else {
-        // 32 buffers for reading approximately 32kB at once
         #[rustfmt::skip]
         let mut bufs = [
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -75,7 +74,6 @@ pub async fn send_data_on_stream(
 ) -> Result<()> {
     let chunk_size = chunk_size.clamp(1024, 16 * 1024 * 1024); // 1KB-16MB range
 
-    // Create data chunk of the specified size
     let data_chunk = vec![0xAB; chunk_size];
     let bytes_data = Bytes::from(data_chunk);
 
@@ -114,13 +112,11 @@ pub async fn handle_bidirectional_transfer(
 ) -> Result<(u64, u64, Duration)> {
     let start = Instant::now();
 
-    // Start both operations concurrently
     let recv_task = tokio::spawn(async move { drain_stream(&mut recv, false).await });
 
     let send_task =
         tokio::spawn(async move { send_data_on_stream(&mut send, data_size, chunk_size).await });
 
-    // Wait for both to complete
     let (recv_result, send_result) =
         tokio::try_join!(recv_task, send_task).context("Transfer tasks failed")?;
 

@@ -39,11 +39,9 @@ impl DoctorClient {
         node_addr: N,
         ssh_key_path: P,
     ) -> Result<Self> {
-        // Load SSH key from file
         let key_content = tokio::fs::read_to_string(ssh_key_path).await?;
         let private_key = PrivateKey::from_openssh(&key_content)?;
 
-        // Create RCAN token with the client's own node ID as audience
         let issuer = private_key
             .key_data()
             .ed25519()
@@ -51,8 +49,7 @@ impl DoctorClient {
 
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&issuer.private.to_bytes());
 
-        // Always create as test node (worker)
-        let capability = DoctorCaps::test_node();
+        let capability = DoctorCaps::default();
 
         let our_node_id = endpoint.node_id();
         let cap_expiry = Duration::from_secs(60 * 60 * 24 * 30); // 30 days
@@ -70,7 +67,6 @@ impl DoctorClient {
         coordinator_addr: NodeAddr,
         auth: Auth,
     ) -> Result<Self> {
-        // Create IRPC connection
         let conn = IrohRemoteConnection::new(
             endpoint.clone(),
             coordinator_addr.clone(),
@@ -78,13 +74,11 @@ impl DoctorClient {
         );
         let client = DoctorServiceClient::boxed(conn);
 
-
         client
             .rpc(auth.clone())
             .await
             .context("Failed to send auth request")?
             .map_err(|e| anyhow::anyhow!("Authentication failed: {:?}", e))?;
-
 
         Ok(Self {
             client,
@@ -175,15 +169,15 @@ impl DoctorClient {
     pub async fn mark_test_started(
         &self,
         test_run_id: Uuid,
-        node_a_id: NodeId,
-        node_b_id: NodeId,
+        node_a: NodeId,
+        node_b: NodeId,
     ) -> Result<MarkTestStartedResponse> {
         let response = self
             .client
             .rpc(MarkTestStarted {
                 test_run_id,
-                node_a_id,
-                node_b_id,
+                node_a,
+                node_b,
             })
             .await
             .context("Failed to send mark test started request")?
@@ -257,15 +251,12 @@ pub struct GetTestAssignments {
 pub struct TestAssignment {
     /// Test run ID
     pub test_run_id: Uuid,
-    /// Target node to test with
+    /// Target node to test against
     pub node_id: NodeId,
     /// Type of test to run
     pub test_type: TestType,
     /// Test configuration
     pub test_config: TestConfig,
-    /// Retry count for this assignment (0 for original, 1+ for retries)
-    #[serde(default)]
-    pub retry_count: i32,
 }
 
 /// Response with test assignments
@@ -310,9 +301,9 @@ pub struct MarkTestStarted {
     /// Test run ID
     pub test_run_id: Uuid,
     /// First node in the test
-    pub node_a_id: NodeId,
+    pub node_a: NodeId,
     /// Second node in the test
-    pub node_b_id: NodeId,
+    pub node_b: NodeId,
 }
 
 /// Response to marking test as started
@@ -328,9 +319,9 @@ pub struct TestResultReport {
     /// Test run ID
     pub test_run_id: Uuid,
     /// First node in the test
-    pub node_a_id: NodeId,
+    pub node_a: NodeId,
     /// Second node in the test
-    pub node_b_id: NodeId,
+    pub node_b: NodeId,
     /// Whether the test succeeded
     pub success: bool,
     /// Error message if test failed
@@ -350,8 +341,8 @@ pub struct GetTestRunStatus {
 /// Test pair result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestPairResult {
-    pub node_a_id: NodeId,
-    pub node_b_id: NodeId,
+    pub node_a: NodeId,
+    pub node_b: NodeId,
     pub status: String,
     pub success: bool,
     pub error: Option<String>,
@@ -371,9 +362,7 @@ pub struct GetTestRunStatusResponse {
 
 /// Get node info
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetNodeInfo {
-    // Empty - node ID comes from connection
-}
+pub struct GetNodeInfo {}
 
 /// Node info response
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,14 +1,13 @@
 //! Swarm runner implementation
 
-use std::{collections::HashSet, path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use futures_lite::future::race;
 use iroh::{endpoint::StreamId, Endpoint, NodeId};
 use iroh_n0des;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, trace, warn};
-use uuid::Uuid;
 
 use crate::{
     doctor::close_endpoint_on_ctrl_c,
@@ -21,12 +20,14 @@ use crate::{
             LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN,
         },
         transfer_utils::handle_bidirectional_transfer,
-        types::{ErrorResult, SwarmStats, TestAssignmentResult},
+        types::{
+            ErrorResult, SwarmStats, TestAssignmentResult, DEFAULT_CHUNK_SIZE,
+            DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_DATA_TRANSFER_TIMEOUT_SECS,
+        },
     },
 };
 async fn assignment_processing_task(
     client: Arc<SwarmClient>,
-    completed_assignments: Arc<RwLock<HashSet<(Uuid, NodeId, i32)>>>,
     node_id: NodeId,
     endpoint: Endpoint,
     stats: Arc<SwarmStats>,
@@ -37,23 +38,8 @@ async fn assignment_processing_task(
         result = client.get_assignments() => {
             match result {
                 Ok(assignments) => {
-                    if !assignments.is_empty() {
-                        let completed = completed_assignments.read().await;
-
-                        let new_assignments: Vec<_> = assignments
-                            .into_iter()
-                            .filter(|a| {
-                                let key = (a.test_run_id, a.node_id, a.retry_count);
-                                !completed.contains(&key)
-                            })
-                            .collect();
-
-                        if !new_assignments.is_empty() {
-                            debug!("Received {} new test assignments", new_assignments.len());
-
-                            if let Some(assignment) = new_assignments.into_iter().next() {
+                    if let Some(assignment) = assignments.into_iter().next() {
                                 let test_run_id = assignment.test_run_id;
-                                let retry_count = assignment.retry_count;
                                 let target_node_id = assignment.node_id;
 
                                 if let Err(e) = client
@@ -66,7 +52,6 @@ async fn assignment_processing_task(
                                 let client = client.clone();
                                 let endpoint = endpoint.clone();
                                 let stats = stats.clone();
-                                let completed = completed_assignments.clone();
 
                                 tokio::spawn(async move {
                                     debug!("Executing test assignment: {} -> {}", node_id, target_node_id);
@@ -87,6 +72,7 @@ async fn assignment_processing_task(
                                                 duration: Duration::from_secs(0),
                                                 test_type: None,
                                                 node_id: None,
+                                                connection_type: None,
                                             })
                                         }
                                     };
@@ -104,12 +90,6 @@ async fn assignment_processing_task(
                                         {
                                             error!("Failed to submit result: {}", e);
                                         } else {
-                                            completed.write().await.insert((
-                                                test_run_id,
-                                                target_node_id,
-                                                retry_count,
-                                            ));
-
                                             if result_success {
                                                 stats.increment_completed();
                                             } else {
@@ -119,8 +99,6 @@ async fn assignment_processing_task(
                                             tokio::time::sleep(Duration::from_millis(500)).await;
                                         }
                                 });
-                            }
-                        }
                     }
                 }
                 Err(e) => {
@@ -265,14 +243,12 @@ async fn handle_throughput_stream(
     stream_id: StreamId,
 ) -> Result<()> {
     let data_size = header.data_size;
-    let chunk_size = header.chunk_size.unwrap_or(1024 * 1024); // Default to 1MB
-
+    let chunk_size = header.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
 
     let (_bytes_received, _bytes_sent, _duration) =
         handle_bidirectional_transfer(send, recv, data_size, chunk_size)
             .await
             .map_err(|e| anyhow::anyhow!("Stream {} transfer failed: {}", stream_id, e))?;
-
     Ok(())
 }
 
@@ -305,7 +281,6 @@ async fn run_swarm_client_inner(
 ) {
     let node_id = client.node_id();
 
-
     // Keep the n0des client alive for metrics collection
     let _rpc_client = match iroh_n0des::Client::builder(&endpoint)
         .ssh_key_from_file(ssh_key_path)
@@ -330,11 +305,6 @@ async fn run_swarm_client_inner(
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let completed_assignments = Arc::new(RwLock::new(
-        HashSet::<(uuid::Uuid, iroh::NodeId, i32)>::new(),
-    ));
-
-    // Keep the connection handler task running in the background
     let _connection_handler_handle = tokio::spawn(incoming_connection_handler_task(
         endpoint.clone(),
         shutdown_tx.subscribe(),
@@ -346,24 +316,22 @@ async fn run_swarm_client_inner(
 
     let data_transfer_timeout = config
         .data_transfer_timeout
-        .unwrap_or(Duration::from_secs(30));
+        .unwrap_or(Duration::from_secs(DEFAULT_DATA_TRANSFER_TIMEOUT_SECS));
 
     loop {
         tokio::select! {
             _ = assignment_interval.tick() => {
                 debug!("Checking for new assignments");
                 let client = client.clone();
-                let completed_assignments = completed_assignments.clone();
                 let endpoint = endpoint.clone();
                 let stats = stats.clone();
                 let shutdown_rx = shutdown_tx.subscribe();
 
                 tokio::spawn(async move {
                     match tokio::time::timeout(
-                        Duration::from_secs(15),
+                        Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT_SECS as u64),
                         assignment_processing_task(
                             client,
-                            completed_assignments,
                             node_id,
                             endpoint,
                             stats,
@@ -373,7 +341,7 @@ async fn run_swarm_client_inner(
                     ).await {
                         Ok(()) => {}
                         Err(_) => {
-                            warn!("Assignment processing timed out after 15 seconds");
+                            warn!("Assignment processing timed out");
                         }
                     }
                 });

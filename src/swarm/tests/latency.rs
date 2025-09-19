@@ -3,19 +3,11 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use iroh::{
-    endpoint::{Connection, ConnectionType},
-    Endpoint, NodeId, Watcher,
-};
+use iroh::{endpoint::Connection, Endpoint, NodeId};
 use tracing::{info, trace};
 
 use super::protocol::{LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN};
-use crate::swarm::types::LatencyResult;
-
-/// Helper function to get the real connection type from the endpoint
-fn get_connection_type(endpoint: &Endpoint, node_id: NodeId) -> Option<ConnectionType> {
-    endpoint.conn_type(node_id).map(|mut watcher| watcher.get())
-}
+use crate::swarm::{execution::get_connection_type, types::LatencyResult};
 
 /// Run a latency test between two nodes with configurable timing
 pub async fn run_latency_test_with_config(
@@ -30,7 +22,6 @@ pub async fn run_latency_test_with_config(
         node_id, iterations
     );
 
-    // The endpoint handles discovery internally
     let conn = endpoint.connect(node_id, DOCTOR_SWARM_ALPN).await?;
 
     run_latency_test_on_connection(
@@ -106,7 +97,6 @@ pub async fn run_latency_test_on_connection(
         latencies.push(latency);
         trace!("Ping {} completed in {:?}", i, latency);
 
-        // Configurable delay between pings
         if i < iterations - 1 {
             tokio::time::sleep(ping_interval).await;
         }
@@ -119,7 +109,8 @@ pub async fn run_latency_test_on_connection(
     let min_latency = latencies.iter().min().cloned().unwrap_or_default();
     let max_latency = latencies.iter().max().cloned().unwrap_or_default();
 
-    // Calculate variance and std dev
+    // Use as_secs_f64() * 1000.0 instead of as_millis() to preserve sub-millisecond precision.
+    // Network latencies can often be less than 1ms, and as_millis() would round them to 0 or 1.
     let avg_ms = avg_latency.as_secs_f64() * 1000.0;
     let variance = latencies
         .iter()
