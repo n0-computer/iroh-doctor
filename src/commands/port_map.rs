@@ -2,7 +2,6 @@
 
 use std::{num::NonZeroU16, time::Duration};
 
-
 /// Checks if there's a port mapping in the local port, and if it's ready.
 pub async fn port_map(
     protocol: &str,
