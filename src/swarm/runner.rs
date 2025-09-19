@@ -1,0 +1,383 @@
+//! Swarm runner implementation
+
+use std::{collections::HashSet, path::Path, sync::Arc, time::Duration};
+
+use anyhow::Result;
+use futures_lite::future::race;
+use iroh::{endpoint::StreamId, Endpoint, NodeId};
+use iroh_n0des;
+use tokio::sync::{broadcast, RwLock};
+use tracing::{debug, error, info, trace, warn};
+use uuid::Uuid;
+
+use crate::{
+    doctor::close_endpoint_on_ctrl_c,
+    metrics::IrohMetricsRegistry,
+    swarm::{
+        client::SwarmClient,
+        config::SwarmConfig,
+        execution::perform_test_assignment,
+        tests::protocol::{
+            LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN,
+        },
+        transfer_utils::handle_bidirectional_transfer,
+        types::{ErrorResult, SwarmStats, TestAssignmentResult},
+    },
+};
+async fn assignment_processing_task(
+    client: Arc<SwarmClient>,
+    completed_assignments: Arc<RwLock<HashSet<(Uuid, NodeId, i32)>>>,
+    node_id: NodeId,
+    endpoint: Endpoint,
+    stats: Arc<SwarmStats>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+    data_transfer_timeout: Duration,
+) {
+    tokio::select! {
+        result = client.get_assignments() => {
+            match result {
+                Ok(assignments) => {
+                    if !assignments.is_empty() {
+                        let completed = completed_assignments.read().await;
+
+                        let new_assignments: Vec<_> = assignments
+                            .into_iter()
+                            .filter(|a| {
+                                let key = (a.test_run_id, a.node_id, a.retry_count);
+                                !completed.contains(&key)
+                            })
+                            .collect();
+
+                        if !new_assignments.is_empty() {
+                            debug!("Received {} new test assignments", new_assignments.len());
+
+                            if let Some(assignment) = new_assignments.into_iter().next() {
+                                let test_run_id = assignment.test_run_id;
+                                let retry_count = assignment.retry_count;
+                                let target_node_id = assignment.node_id;
+
+                                if let Err(e) = client
+                                    .mark_test_started(test_run_id, node_id, target_node_id)
+                                    .await
+                                {
+                                    warn!("Failed to mark test as started: {}", e);
+                                }
+
+                                let client = client.clone();
+                                let endpoint = endpoint.clone();
+                                let stats = stats.clone();
+                                let completed = completed_assignments.clone();
+
+                                tokio::spawn(async move {
+                                    debug!("Executing test assignment: {} -> {}", node_id, target_node_id);
+
+                                    let result_data = match perform_test_assignment(
+                                        assignment,
+                                        endpoint.clone(),
+                                        node_id,
+                                        data_transfer_timeout,
+                                    )
+                                    .await
+                                    {
+                                        Ok(result) => result,
+                                        Err(e) => {
+                                            error!("Failed to perform test: {}", e);
+                                            TestAssignmentResult::Error(ErrorResult {
+                                                error: e.to_string(),
+                                                duration: Duration::from_secs(0),
+                                                test_type: None,
+                                                node_id: None,
+                                            })
+                                        }
+                                    };
+
+                                    let result_success = !matches!(&result_data, TestAssignmentResult::Error(_));
+
+                                    if let Err(e) = client
+                                            .submit_result(
+                                                test_run_id,
+                                                node_id,
+                                                target_node_id,
+                                                result_data,
+                                            )
+                                            .await
+                                        {
+                                            error!("Failed to submit result: {}", e);
+                                        } else {
+                                            completed.write().await.insert((
+                                                test_run_id,
+                                                target_node_id,
+                                                retry_count,
+                                            ));
+
+                                            if result_success {
+                                                stats.increment_completed();
+                                            } else {
+                                                stats.increment_failed();
+                                            }
+
+                                            tokio::time::sleep(Duration::from_millis(500)).await;
+                                        }
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to get assignments: {}", e);
+                }
+            }
+        }
+        _ = shutdown_rx.recv() => {
+            debug!("Assignment processing task received shutdown signal");
+            #[allow(clippy::needless_return)]
+            return;
+        }
+    }
+}
+
+async fn incoming_connection_handler_task(
+    endpoint: Endpoint,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            incoming = endpoint.accept() => {
+                match incoming {
+                    Some(incoming) => {
+                let connecting = match incoming.accept() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!("Failed to accept incoming connection: {}", e);
+                        continue;
+                    }
+                };
+
+                match connecting.await {
+                    Ok(conn) => {
+                        let alpn = conn.alpn();
+
+                        if alpn.as_deref() == Some(DOCTOR_SWARM_ALPN) {
+                            let remote = conn.remote_node_id().ok();
+                            debug!("Accepted test connection from {:?}", remote);
+
+                            tokio::spawn(async move {
+                                handle_incoming_test_connection(conn).await;
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to establish connection: {}", e);
+                    }
+                }
+                    }
+                    None => {
+                        debug!("Endpoint closed, stopping accept loop");
+                        break;
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                info!("Connection handler task received shutdown signal");
+                break;
+            }
+        }
+    }
+}
+
+async fn handle_incoming_test_connection(conn: iroh::endpoint::Connection) {
+    loop {
+        match conn.accept_bi().await {
+            Ok((send, recv)) => {
+                tokio::spawn(async move {
+                    handle_incoming_test_stream(send, recv).await;
+                });
+            }
+            Err(e) => {
+                debug!("No more streams: {}", e);
+                break;
+            }
+        }
+    }
+}
+
+/// Handle an individual test stream
+async fn handle_incoming_test_stream(
+    send: iroh::endpoint::SendStream,
+    mut recv: iroh::endpoint::RecvStream,
+) {
+    match TestProtocolHeader::read_from(&mut recv).await {
+        Ok(header) => {
+            debug!(
+                "Received test header: type={}, size={}, chunk_size={:?}",
+                header.test_type, header.data_size, header.chunk_size
+            );
+
+            match header.test_type {
+                TestProtocolType::Latency => {
+                    handle_latency_test(send, recv, header).await;
+                }
+                TestProtocolType::Throughput => {
+                    let stream_id = recv.id();
+                    handle_throughput_stream(send, recv, header, stream_id)
+                        .await
+                        .ok();
+                }
+            }
+        }
+        Err(e) => {
+            debug!("Failed to read protocol header: {}", e);
+        }
+    }
+}
+
+/// Handle a latency test stream
+async fn handle_latency_test(
+    mut send: iroh::endpoint::SendStream,
+    mut recv: iroh::endpoint::RecvStream,
+    header: TestProtocolHeader,
+) {
+    let mut ping_buf = vec![0u8; header.data_size as usize];
+    match recv.read_exact(&mut ping_buf).await {
+        Ok(()) => {
+            if let Some(ping_msg) = LatencyMessage::from_bytes(&ping_buf) {
+                if let LatencyMessage::Ping(n) = ping_msg {
+                    let pong_msg = LatencyMessage::pong(n);
+                    let pong_data = pong_msg.to_bytes();
+                    send.write_all(&pong_data).await.ok();
+                    trace!("Sent PONG response for ping {}", n);
+                }
+            } else {
+                warn!("Failed to parse ping message");
+            }
+        }
+        Err(e) => {
+            warn!("Failed to read ping data: {}", e);
+        }
+    }
+    send.finish().ok();
+}
+
+async fn handle_throughput_stream(
+    send: iroh::endpoint::SendStream,
+    recv: iroh::endpoint::RecvStream,
+    header: TestProtocolHeader,
+    stream_id: StreamId,
+) -> Result<()> {
+    let data_size = header.data_size;
+    let chunk_size = header.chunk_size.unwrap_or(1024 * 1024); // Default to 1MB
+
+
+    let (_bytes_received, _bytes_sent, _duration) =
+        handle_bidirectional_transfer(send, recv, data_size, chunk_size)
+            .await
+            .map_err(|e| anyhow::anyhow!("Stream {} transfer failed: {}", stream_id, e))?;
+
+    Ok(())
+}
+
+/// Run the swarm client
+pub async fn run_swarm_client(
+    config: SwarmConfig,
+    ssh_key_path: &Path,
+    metrics_registry: IrohMetricsRegistry,
+) -> Result<()> {
+    let client =
+        Arc::new(SwarmClient::connect(config.clone(), ssh_key_path, metrics_registry).await?);
+    let endpoint = client.endpoint();
+
+    let endpoint_for_shutdown = endpoint.clone();
+    race(
+        close_endpoint_on_ctrl_c(endpoint_for_shutdown),
+        run_swarm_client_inner(client, config, endpoint, ssh_key_path),
+    )
+    .await;
+
+    Ok(())
+}
+
+/// Inner function that runs the actual swarm client logic
+async fn run_swarm_client_inner(
+    client: Arc<SwarmClient>,
+    config: SwarmConfig,
+    endpoint: Endpoint,
+    ssh_key_path: &Path,
+) {
+    let node_id = client.node_id();
+
+
+    // Keep the n0des client alive for metrics collection
+    let _rpc_client = match iroh_n0des::Client::builder(&endpoint)
+        .ssh_key_from_file(ssh_key_path)
+        .await
+    {
+        Ok(builder) => match builder.build(config.coordinator_node_id).await {
+            Ok(client) => client,
+            Err(e) => {
+                error!("Failed to build n0des client: {}", e);
+                return;
+            }
+        },
+        Err(e) => {
+            error!("Failed to create n0des client builder: {}", e);
+            return;
+        }
+    };
+
+    info!("Starting swarm operations");
+
+    let (shutdown_tx, _) = broadcast::channel(1);
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let completed_assignments = Arc::new(RwLock::new(
+        HashSet::<(uuid::Uuid, iroh::NodeId, i32)>::new(),
+    ));
+
+    // Keep the connection handler task running in the background
+    let _connection_handler_handle = tokio::spawn(incoming_connection_handler_task(
+        endpoint.clone(),
+        shutdown_tx.subscribe(),
+    ));
+
+    let stats = Arc::new(SwarmStats::default());
+    let mut assignment_interval = tokio::time::interval(config.assignment_interval);
+    assignment_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let data_transfer_timeout = config
+        .data_transfer_timeout
+        .unwrap_or(Duration::from_secs(30));
+
+    loop {
+        tokio::select! {
+            _ = assignment_interval.tick() => {
+                debug!("Checking for new assignments");
+                let client = client.clone();
+                let completed_assignments = completed_assignments.clone();
+                let endpoint = endpoint.clone();
+                let stats = stats.clone();
+                let shutdown_rx = shutdown_tx.subscribe();
+
+                tokio::spawn(async move {
+                    match tokio::time::timeout(
+                        Duration::from_secs(15),
+                        assignment_processing_task(
+                            client,
+                            completed_assignments,
+                            node_id,
+                            endpoint,
+                            stats,
+                            shutdown_rx,
+                            data_transfer_timeout,
+                        )
+                    ).await {
+                        Ok(()) => {}
+                        Err(_) => {
+                            warn!("Assignment processing timed out after 15 seconds");
+                        }
+                    }
+                });
+            }
+        }
+    }
+}

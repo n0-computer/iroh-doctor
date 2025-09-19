@@ -211,6 +211,25 @@ pub enum Commands {
         #[clap(long)]
         file: Option<PathBuf>,
     },
+    /// Join a doctor swarm as a test node
+    SwarmClient {
+        /// SSH private key path for authentication
+        #[clap(long, required = true)]
+        ssh_key: PathBuf,
+        /// Backend coordinator node ID
+        #[clap(long, required = true)]
+        coordinator: NodeId,
+        /// Assignment polling interval in seconds
+        #[clap(long, default_value_t = 2)]
+        assignment_interval: u64,
+        /// Optional human-readable name for this node
+        #[clap(long)]
+        named: Option<String>,
+        /// The secret key to use for the node.
+        /// Can be "random", "local" (loads from ~/.config/iroh/keypair), or a hex-encoded secret key.
+        #[clap(long, default_value = "random")]
+        secret_key: SecretKeyOption,
+    },
 }
 
 /// Possible streams that can be requested.
@@ -916,6 +935,24 @@ pub async fn run(
             scrape_url,
             file,
         } => commands::plot::plot(interval, metrics, timeframe, scrape_url, file).await,
+        Commands::SwarmClient {
+            ssh_key,
+            coordinator,
+            assignment_interval,
+            named,
+            secret_key,
+        } => {
+            let secret_key = create_secret_key(secret_key)?;
+            commands::swarm_client::run_swarm_client(
+                ssh_key,
+                coordinator,
+                assignment_interval,
+                named,
+                secret_key,
+                metrics.iroh.clone(),
+            )
+            .await
+        }
     };
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
