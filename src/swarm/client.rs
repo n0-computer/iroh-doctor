@@ -8,8 +8,6 @@ use tracing::info;
 use uuid::Uuid;
 
 // Client timeout constants
-const DIRECT_ADDR_INIT_TIMEOUT_SECS: u64 = 10;
-const NET_REPORT_INIT_TIMEOUT_SECS: u64 = 3;
 const COORDINATOR_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 use crate::{
@@ -52,6 +50,8 @@ impl SwarmClient {
         };
 
         let mut transport_config = endpoint::TransportConfig::default();
+        // Always enable keep-alive for swarm connections
+        transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
 
         if let Some(ref transport) = config.transport {
             if let Some(max_streams) = transport.max_concurrent_bidi_streams {
@@ -64,22 +64,6 @@ impl SwarmClient {
 
             if let Some(receive_window_kb) = transport.receive_window_kb {
                 transport_config.receive_window((receive_window_kb * 1024).into());
-            }
-
-            if let Some(keep_alive) = transport.keep_alive {
-                if keep_alive {
-                    transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
-                } else {
-                    transport_config.keep_alive_interval(None);
-                }
-            }
-
-            if let Some(idle_timeout_secs) = transport.idle_timeout_secs {
-                transport_config.max_idle_timeout(Some(
-                    Duration::from_secs(idle_timeout_secs as u64)
-                        .try_into()
-                        .unwrap(),
-                ));
             }
         }
 
@@ -98,24 +82,11 @@ impl SwarmClient {
         }
 
         let mut direct_addrs = endpoint.direct_addresses();
-        tokio::time::timeout(
-            Duration::from_secs(DIRECT_ADDR_INIT_TIMEOUT_SECS),
-            direct_addrs.initialized(),
-        )
-        .await
-        .ok();
+        direct_addrs.initialized().await;
 
         let mut net_report_watcher = endpoint.net_report();
-        let initialized_watcher = net_report_watcher.initialized();
-        let base_network_report = match tokio::time::timeout(
-            Duration::from_secs(NET_REPORT_INIT_TIMEOUT_SECS),
-            initialized_watcher,
-        )
-        .await
-        {
-            Ok(_) => net_report_watcher.get(),
-            Err(_) => None,
-        };
+        net_report_watcher.initialized().await;
+        let base_network_report = net_report_watcher.get();
 
         let extended_network_report = ExtendedNetworkReport::from_base_report(base_network_report);
         let doctor_client = match tokio::time::timeout(
@@ -159,7 +130,7 @@ impl SwarmClient {
         Ok(response.assignments)
     }
 
-    /// Submit test result to coordinator
+    /// Submit test result to coordinator (node and b are self and peer)
     pub async fn submit_result(
         &self,
         test_run_id: Uuid,

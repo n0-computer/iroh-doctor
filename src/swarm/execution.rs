@@ -15,8 +15,8 @@ use crate::swarm::{
     },
     types::{
         ErrorResult, FingerprintResult, LatencyResult, TestAssignmentResult, TestType,
-        ThroughputResult, DEFAULT_CHUNK_SIZE, DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_DATA_SIZE,
-        DEFAULT_PARALLEL_STREAMS, DEFAULT_PING_INTERVAL_MS, DEFAULT_PING_TIMEOUT_MS,
+        ThroughputResult, DEFAULT_CHUNK_SIZE, DEFAULT_DATA_SIZE, DEFAULT_PARALLEL_STREAMS,
+        DEFAULT_PING_INTERVAL_MS, DEFAULT_PING_TIMEOUT_MS,
     },
 };
 
@@ -46,18 +46,6 @@ fn extract_throughput_config(assignment: &TestAssignment) -> (usize, usize) {
         .clamp(1024, 16 * 1024 * 1024); // enforce range: 1KB-16MB
 
     (parallel_streams, chunk_size_bytes)
-}
-
-/// Extract connection timeout from network config
-fn extract_connection_timeout(assignment: &TestAssignment) -> Duration {
-    assignment
-        .test_config
-        .advanced
-        .as_ref()
-        .and_then(|a| a.network.as_ref())
-        .and_then(|n| n.connection_timeout_secs.as_ref())
-        .map(|secs| Duration::from_secs(*secs as u64))
-        .unwrap_or_else(|| Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT_SECS as u64))
 }
 
 /// Extract latency test configuration with defaults
@@ -113,16 +101,12 @@ async fn execute_throughput_test(
 ) -> Result<TestAssignmentResult> {
     info!("Starting throughput test with node {}", assignment.node_id);
 
-    let connection_timeout = extract_connection_timeout(&assignment);
-
     info!("Attempting to connect to node {}", assignment.node_id);
-    match tokio::time::timeout(
-        connection_timeout,
-        endpoint.connect(assignment.node_id, DOCTOR_SWARM_ALPN),
-    )
-    .await
+    match endpoint
+        .connect(assignment.node_id, DOCTOR_SWARM_ALPN)
+        .await
     {
-        Ok(Ok(conn)) => {
+        Ok(conn) => {
             let data_size = assignment
                 .test_config
                 .size_bytes
@@ -199,23 +183,10 @@ async fn execute_throughput_test(
                 }
             }
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             warn!("Failed to connect: {}", e);
             Ok(TestAssignmentResult::Error(ErrorResult {
                 error: format!("Failed to connect: {}", e),
-                duration: start.elapsed(),
-                test_type: Some(assignment.test_type),
-                node_id: Some(assignment.node_id),
-                connection_type: None, // No connection established
-            }))
-        }
-        Err(_) => {
-            warn!("Connection timed out");
-            Ok(TestAssignmentResult::Error(ErrorResult {
-                error: format!(
-                    "Connection timed out after {} seconds",
-                    connection_timeout.as_secs()
-                ),
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
                 node_id: Some(assignment.node_id),

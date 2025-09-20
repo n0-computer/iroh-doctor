@@ -34,8 +34,4 @@ pub struct TransportConfig {
     pub send_window_kb: Option<u32>,
     /// Receive window size in KB
     pub receive_window_kb: Option<u32>,
-    /// Idle timeout in seconds
-    pub idle_timeout_secs: Option<u32>,
-    /// Whether to enable keep-alive
-    pub keep_alive: Option<bool>,
 }
