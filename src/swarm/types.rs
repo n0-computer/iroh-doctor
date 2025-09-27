@@ -111,8 +111,10 @@ pub struct StreamStats {
     pub bytes_sent: u64,
     /// Total bytes received on this stream
     pub bytes_received: u64,
-    /// Duration of the stream test
-    pub duration: Duration,
+    /// Upload duration
+    pub upload_duration: Duration,
+    /// Download duration
+    pub download_duration: Duration,
     /// Calculated throughput in Mbps
     pub throughput_mbps: f64,
 }

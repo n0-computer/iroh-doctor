@@ -86,7 +86,8 @@ pub async fn run_bidirectional_throughput_test_with_config(
                     stream_id: idx,
                     bytes_sent,
                     bytes_received,
-                    duration: stream_duration,
+                    upload_duration,
+                    download_duration,
                     throughput_mbps: stream_throughput_mbps,
                 });
 
