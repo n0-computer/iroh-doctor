@@ -73,7 +73,8 @@ pub async fn run_bidirectional_throughput_test_with_config(
                 max_upload_duration = max_upload_duration.max(upload_duration);
                 max_download_duration = max_download_duration.max(download_duration);
 
-                let stream_duration = upload_duration.max(download_duration);
+                // Since upload and download are sequential, sum the durations
+                let stream_duration = upload_duration + download_duration;
                 let stream_throughput_mbps = if !stream_duration.is_zero() {
                     let total_bytes = bytes_sent + bytes_received;
                     (total_bytes as f64 * 8.0) / stream_duration.as_secs_f64() / 1_000_000.0
