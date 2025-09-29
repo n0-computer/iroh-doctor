@@ -923,6 +923,7 @@ pub async fn run(
                 enable_upnp,
                 enable_pcp,
                 enable_nat_pmp,
+                protocol: portmapper::Protocol::Udp,
             };
 
             commands::port_map::port_map_probe(config).await

@@ -22,6 +22,7 @@ pub async fn port_map(
         enable_upnp,
         enable_pcp,
         enable_nat_pmp,
+        protocol: portmapper::Protocol::Udp,
     };
     let port_mapper = portmapper::Client::new(config);
     let mut watcher = port_mapper.watch_external_address();
