@@ -32,7 +32,7 @@ n0-watcher = "0.3"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
-portmapper = { version = "0.6" }
+portmapper = { version = "0.9" }
 prometheus-client = "0.22"
 quinn = { package = "iroh-quinn", version = "0.14" }
 rand = "0.8.5"
