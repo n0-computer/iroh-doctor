@@ -256,6 +256,65 @@ pub struct TestAssignment {
     pub test_config: TestConfig,
 }
 
+impl TestAssignment {
+    /// Extract throughput configuration with defaults
+    ///
+    /// Returns (parallel_streams, chunk_size_bytes)
+    pub fn throughput_config(&self) -> (usize, usize) {
+        use crate::swarm::types::{DEFAULT_CHUNK_SIZE, DEFAULT_PARALLEL_STREAMS};
+
+        let throughput_config = self
+            .test_config
+            .advanced
+            .as_ref()
+            .and_then(|c| c.throughput.as_ref());
+
+        let parallel_streams = throughput_config
+            .as_ref()
+            .and_then(|c| c.parallel_streams)
+            .unwrap_or(DEFAULT_PARALLEL_STREAMS)
+            .clamp(1, 16) as usize; // enforce range: 1-16
+
+        let chunk_size_bytes = throughput_config
+            .as_ref()
+            .and_then(|c| c.chunk_size_kb.map(|kb| (kb as usize) * 1024))
+            .unwrap_or(DEFAULT_CHUNK_SIZE)
+            .clamp(1024, 16 * 1024 * 1024); // enforce range: 1KB-16MB
+
+        (parallel_streams, chunk_size_bytes)
+    }
+
+    /// Extract latency test configuration with defaults
+    ///
+    /// Returns (ping_interval, ping_timeout)
+    pub fn latency_config(&self) -> (std::time::Duration, std::time::Duration) {
+        use crate::swarm::types::{DEFAULT_PING_INTERVAL_MS, DEFAULT_PING_TIMEOUT_MS};
+
+        let advanced_config = self
+            .test_config
+            .advanced
+            .as_ref()
+            .and_then(|a| a.latency.as_ref());
+
+        let ping_interval_ms = advanced_config
+            .as_ref()
+            .and_then(|c| c.ping_interval_ms)
+            .unwrap_or(DEFAULT_PING_INTERVAL_MS)
+            .clamp(1, 1000); // enforce range: 1-1000ms
+
+        let ping_timeout_ms = advanced_config
+            .as_ref()
+            .and_then(|c| c.ping_timeout_ms)
+            .unwrap_or(DEFAULT_PING_TIMEOUT_MS)
+            .clamp(100, 10000); // enforce range: 100ms-10s
+
+        (
+            std::time::Duration::from_millis(ping_interval_ms as u64),
+            std::time::Duration::from_millis(ping_timeout_ms as u64),
+        )
+    }
+}
+
 /// Response with test assignments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetTestAssignmentsResponse {

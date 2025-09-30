@@ -10,7 +10,7 @@ use iroh::{
     Endpoint, NodeId,
 };
 use iroh_n0des;
-use tokio::sync::broadcast;
+use tokio::{sync::broadcast, task::JoinSet};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
@@ -40,20 +40,32 @@ impl ProtocolHandler for SwarmProtocolHandler {
         let remote = connection.remote_node_id()?;
         debug!("Accepted test connection from {:?}", remote);
 
+        // Track stream handling tasks
+        let mut stream_tasks = JoinSet::new();
+
         // Handle all streams on this connection
         loop {
-            match connection.accept_bi().await {
-                Ok((send, recv)) => {
-                    tokio::spawn(async move {
-                        handle_incoming_test_stream(send, recv).await;
-                    });
+            tokio::select! {
+                result = connection.accept_bi() => {
+                    match result {
+                        Ok((send, recv)) => {
+                            stream_tasks.spawn(async move {
+                                handle_incoming_test_stream(send, recv).await;
+                            });
+                        }
+                        Err(e) => {
+                            debug!("No more streams on connection from {}: {}", remote, e);
+                            break;
+                        }
+                    }
                 }
-                Err(e) => {
-                    debug!("No more streams on connection from {}: {}", remote, e);
-                    break;
+                _ = stream_tasks.join_next(), if !stream_tasks.is_empty() => {
                 }
             }
         }
+
+        // Wait for all remaining stream tasks to complete
+        while stream_tasks.join_next().await.is_some() {}
 
         Ok(())
     }
@@ -66,7 +78,7 @@ async fn assignment_processing_task(
     stats: Arc<SwarmStats>,
     mut shutdown_rx: broadcast::Receiver<()>,
     data_transfer_timeout: Duration,
-) {
+) -> Option<tokio::task::JoinHandle<()>> {
     tokio::select! {
         result = client.get_assignments() => {
             match result {
@@ -86,7 +98,7 @@ async fn assignment_processing_task(
                         let endpoint = endpoint.clone();
                         let stats = stats.clone();
 
-                        tokio::spawn(async move {
+                        return Some(tokio::spawn(async move {
                             debug!("Executing test assignment: {} -> {}", node_id, target_node_id);
 
                             let result_data = match perform_test_assignment(
@@ -130,18 +142,18 @@ async fn assignment_processing_task(
 
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                             }
-                        });
+                        }));
                     }
                 }
                 Err(e) => {
                     error!("Failed to get assignments: {}", e);
                 }
             }
+            None
         }
         _ = shutdown_rx.recv() => {
             debug!("Assignment processing task received shutdown signal");
-            #[allow(clippy::needless_return)]
-            return;
+            None
         }
     }
 }
@@ -287,6 +299,8 @@ async fn run_swarm_client_inner(
         .data_transfer_timeout
         .unwrap_or(Duration::from_secs(DEFAULT_DATA_TRANSFER_TIMEOUT_SECS));
 
+    let mut test_execution_tasks = JoinSet::new();
+
     loop {
         tokio::select! {
             _ = assignment_interval.tick() => {
@@ -296,7 +310,7 @@ async fn run_swarm_client_inner(
                 let stats = stats.clone();
                 let shutdown_rx = shutdown_tx.subscribe();
 
-                tokio::spawn(async move {
+                test_execution_tasks.spawn(async move {
                     match tokio::time::timeout(
                         Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT_SECS as u64),
                         assignment_processing_task(
@@ -308,12 +322,18 @@ async fn run_swarm_client_inner(
                             data_transfer_timeout,
                         )
                     ).await {
-                        Ok(()) => {}
+                        Ok(Some(handle)) => {
+                            handle.await.ok();
+                        }
+                        Ok(None) => {
+                        }
                         Err(_) => {
                             warn!("Assignment processing timed out");
                         }
                     }
                 });
+            }
+            Some(_) = test_execution_tasks.join_next() => {
             }
         }
     }

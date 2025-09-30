@@ -15,63 +15,13 @@ use crate::swarm::{
     },
     types::{
         ErrorResult, FingerprintResult, LatencyResult, TestAssignmentResult, TestType,
-        ThroughputResult, DEFAULT_CHUNK_SIZE, DEFAULT_DATA_SIZE, DEFAULT_PARALLEL_STREAMS,
-        DEFAULT_PING_INTERVAL_MS, DEFAULT_PING_TIMEOUT_MS,
+        ThroughputResult, DEFAULT_DATA_SIZE,
     },
 };
 
 /// Helper function to get the real connection type from the endpoint
 pub(crate) fn get_connection_type(endpoint: &Endpoint, node_id: NodeId) -> Option<ConnectionType> {
     endpoint.conn_type(node_id).map(|mut watcher| watcher.get())
-}
-
-/// Extract throughput configuration with defaults
-fn extract_throughput_config(assignment: &TestAssignment) -> (usize, usize) {
-    let throughput_config = &assignment
-        .test_config
-        .advanced
-        .as_ref()
-        .and_then(|c| c.throughput.as_ref());
-
-    let parallel_streams = throughput_config
-        .as_ref()
-        .and_then(|c| c.parallel_streams)
-        .unwrap_or(DEFAULT_PARALLEL_STREAMS)
-        .clamp(1, 16) as usize; // enforce range: 1-16
-
-    let chunk_size_bytes = throughput_config
-        .as_ref()
-        .and_then(|c| c.chunk_size_kb.map(|kb| (kb as usize) * 1024))
-        .unwrap_or(DEFAULT_CHUNK_SIZE)
-        .clamp(1024, 16 * 1024 * 1024); // enforce range: 1KB-16MB
-
-    (parallel_streams, chunk_size_bytes)
-}
-
-/// Extract latency test configuration with defaults
-fn extract_latency_config(assignment: &TestAssignment) -> (Duration, Duration) {
-    let advanced_config = assignment
-        .test_config
-        .advanced
-        .as_ref()
-        .and_then(|a| a.latency.as_ref());
-
-    let ping_interval_ms = advanced_config
-        .as_ref()
-        .and_then(|c| c.ping_interval_ms)
-        .unwrap_or(DEFAULT_PING_INTERVAL_MS)
-        .clamp(1, 1000); // enforce range: 1-1000ms
-
-    let ping_timeout_ms = advanced_config
-        .as_ref()
-        .and_then(|c| c.ping_timeout_ms)
-        .unwrap_or(DEFAULT_PING_TIMEOUT_MS)
-        .clamp(100, 10000); // enforce range: 100ms-10s
-
-    (
-        Duration::from_millis(ping_interval_ms as u64),
-        Duration::from_millis(ping_timeout_ms as u64),
-    )
 }
 
 pub async fn perform_test_assignment(
@@ -112,7 +62,7 @@ async fn execute_throughput_test(
                 .size_bytes
                 .unwrap_or(DEFAULT_DATA_SIZE);
 
-            let (parallel_streams, chunk_size_bytes) = extract_throughput_config(&assignment);
+            let (parallel_streams, chunk_size_bytes) = assignment.throughput_config();
 
             info!(
                 "Running throughput test with {} parallel streams and {} KB chunks",
@@ -203,7 +153,7 @@ async fn execute_latency_test(
 ) -> Result<TestAssignmentResult> {
     let iterations = assignment.test_config.iterations.unwrap_or(10);
 
-    let (ping_interval, ping_timeout) = extract_latency_config(&assignment);
+    let (ping_interval, ping_timeout) = assignment.latency_config();
     info!(
         "Running latency test with {}ms interval and {}ms timeout",
         ping_interval.as_millis(),
@@ -243,7 +193,7 @@ async fn execute_fingerprint_test(
 
     info!("Phase 1/2: Testing latency...");
     let iterations = 10;
-    let (ping_interval, ping_timeout) = extract_latency_config(&assignment);
+    let (ping_interval, ping_timeout) = assignment.latency_config();
     info!(
         "Running fingerprint latency test with {}ms interval and {}ms timeout",
         ping_interval.as_millis(),
@@ -310,7 +260,7 @@ async fn execute_fingerprint_test(
         .size_bytes
         .unwrap_or(DEFAULT_DATA_SIZE);
 
-    let (parallel_streams, chunk_size_bytes) = extract_throughput_config(&assignment);
+    let (parallel_streams, chunk_size_bytes) = assignment.throughput_config();
 
     info!(
         "Running fingerprint throughput test with {} parallel streams and {} KB chunks",
