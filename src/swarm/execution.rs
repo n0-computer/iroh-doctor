@@ -167,7 +167,7 @@ async fn execute_throughput_test(
                         error: e.to_string(),
                         duration: start.elapsed(),
                         test_type: Some(assignment.test_type),
-                        node_id: Some(assignment.node_id),
+                        remote_id: Some(assignment.node_id),
                         connection_type: get_connection_type(&endpoint, assignment.node_id),
                     }))
                 }
@@ -177,7 +177,7 @@ async fn execute_throughput_test(
                         error: "Test timed out after 30 seconds".to_string(),
                         duration: start.elapsed(),
                         test_type: Some(assignment.test_type),
-                        node_id: Some(assignment.node_id),
+                        remote_id: Some(assignment.node_id),
                         connection_type: get_connection_type(&endpoint, assignment.node_id),
                     }))
                 }
@@ -189,7 +189,7 @@ async fn execute_throughput_test(
                 error: format!("Failed to connect: {}", e),
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
-                node_id: Some(assignment.node_id),
+                remote_id: Some(assignment.node_id),
                 connection_type: None, // No connection established
             }))
         }
@@ -226,7 +226,7 @@ async fn execute_latency_test(
                 error: e.to_string(),
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
-                node_id: Some(assignment.node_id),
+                remote_id: Some(assignment.node_id),
                 connection_type: None, // Test failed before connection info available
             }))
         }
@@ -264,7 +264,7 @@ async fn execute_fingerprint_test(
             warn!("Latency test failed: {}", e);
             return Ok(TestAssignmentResult::Fingerprint(FingerprintResult {
                 test_type: assignment.test_type,
-                node_id: assignment.node_id,
+                remote_id: assignment.node_id,
                 duration: start.elapsed(),
                 latency: Some(LatencyResult {
                     avg_latency_ms: None,
@@ -295,7 +295,7 @@ async fn execute_fingerprint_test(
             warn!("Failed to connect for throughput test: {}", e);
             return Ok(TestAssignmentResult::Fingerprint(FingerprintResult {
                 test_type: assignment.test_type,
-                node_id: assignment.node_id,
+                remote_id: assignment.node_id,
                 duration: start.elapsed(),
                 latency: latency_result,
                 throughput: None,
@@ -372,7 +372,7 @@ async fn execute_fingerprint_test(
 
     let fingerprint_result = FingerprintResult {
         test_type: assignment.test_type,
-        node_id: assignment.node_id,
+        remote_id: assignment.node_id,
         duration: start.elapsed(),
         latency: latency_result,
         throughput: throughput_result,

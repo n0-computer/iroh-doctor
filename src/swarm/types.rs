@@ -49,37 +49,37 @@ pub struct TestConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AdvancedTestConfig {
     /// Throughput-specific settings
-    pub throughput: Option<ThroughputAdvancedConfig>,
+    pub throughput: Option<ThroughputConfig>,
     /// Latency-specific settings
-    pub latency: Option<LatencyAdvancedConfig>,
+    pub latency: Option<LatencyConfig>,
     /// Network-level settings
-    pub network: Option<NetworkAdvancedConfig>,
+    pub network: Option<NetworkConfig>,
 }
 
-/// Advanced configuration for throughput tests
+/// Configuration for throughput tests
 ///
 /// Note: Transport-level buffer settings (send/receive windows) are configured
 /// globally via SwarmConfig.transport, not per-test
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ThroughputAdvancedConfig {
+pub struct ThroughputConfig {
     /// Number of parallel streams (default: 4, range: 1-16)
     pub parallel_streams: Option<u32>,
     /// Chunk size in KB (default: 64, range: 16-512)
     pub chunk_size_kb: Option<u32>,
 }
 
-/// Advanced configuration for latency tests
+/// Configuration for latency tests
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LatencyAdvancedConfig {
+pub struct LatencyConfig {
     /// Interval between pings in milliseconds (default: 10)
     pub ping_interval_ms: Option<u32>,
     /// Timeout for individual pings in milliseconds (default: 1000)
     pub ping_timeout_ms: Option<u32>,
 }
 
-/// Advanced network configuration
+/// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NetworkAdvancedConfig {
+pub struct NetworkConfig {
     /// Connection establishment timeout in seconds (default: 20)
     pub connection_timeout_secs: Option<u32>,
 }
@@ -321,7 +321,7 @@ pub struct LatencyResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThroughputResult {
     pub test_type: TestType,
-    pub node_id: NodeId,
+    pub remote_id: NodeId,
     pub duration: Duration,
     pub data_size_mb: u64,
     pub bytes_sent: u64,
@@ -340,7 +340,7 @@ impl Default for ThroughputResult {
     fn default() -> Self {
         Self {
             test_type: TestType::default(),
-            node_id: NodeId::from_bytes(&[0; 32]).unwrap(),
+            remote_id: NodeId::from_bytes(&[0; 32]).unwrap(),
             duration: Duration::ZERO,
             data_size_mb: 0,
             bytes_sent: 0,
@@ -361,7 +361,7 @@ impl ThroughputResult {
     /// Create a new ThroughputResult with basic parameters
     pub fn new(
         test_type: TestType,
-        node_id: NodeId,
+        remote_id: NodeId,
         duration: Duration,
         data_size: u64,
         parallel_streams: usize,
@@ -369,7 +369,7 @@ impl ThroughputResult {
     ) -> Self {
         Self {
             test_type,
-            node_id,
+            remote_id,
             duration,
             data_size_mb: data_size / (1024 * 1024),
             parallel_streams,
@@ -412,7 +412,7 @@ impl ThroughputResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintResult {
     pub test_type: TestType,
-    pub node_id: NodeId,
+    pub remote_id: NodeId,
     pub duration: Duration,
     pub latency: Option<LatencyResult>,
     pub throughput: Option<ThroughputResult>,
@@ -424,7 +424,7 @@ impl Default for FingerprintResult {
     fn default() -> Self {
         Self {
             test_type: TestType::default(),
-            node_id: NodeId::from_bytes(&[0; 32]).unwrap(),
+            remote_id: NodeId::from_bytes(&[0; 32]).unwrap(),
             duration: Duration::ZERO,
             latency: None,
             throughput: None,
@@ -440,7 +440,7 @@ pub struct ErrorResult {
     pub error: String,
     pub duration: Duration,
     pub test_type: Option<TestType>,
-    pub node_id: Option<NodeId>,
+    pub remote_id: Option<NodeId>,
     pub connection_type: Option<ConnectionType>,
 }
 

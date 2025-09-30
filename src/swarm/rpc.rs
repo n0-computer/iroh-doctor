@@ -18,7 +18,6 @@ use crate::swarm::{
 /// RPC client for communicating with the doctor coordinator
 pub struct DoctorClient {
     client: DoctorServiceClient,
-    endpoint: iroh::Endpoint,
     coordinator_addr: NodeAddr,
     auth: Auth,
 }
@@ -26,7 +25,6 @@ pub struct DoctorClient {
 impl std::fmt::Debug for DoctorClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DoctorClient")
-            .field("endpoint", &self.endpoint)
             .field("coordinator_addr", &self.coordinator_addr)
             .finish()
     }
@@ -82,7 +80,6 @@ impl DoctorClient {
 
         Ok(Self {
             client,
-            endpoint,
             coordinator_addr,
             auth,
         })
@@ -322,14 +319,25 @@ pub struct TestResultReport {
     pub node_a: NodeId,
     /// Second node in the test
     pub node_b: NodeId,
-    /// Whether the test succeeded
-    pub success: bool,
-    /// Error message if test failed
-    pub error: Option<String>,
     /// Request ID for idempotency (optional for backward compatibility)
     pub request_id: Option<Uuid>,
     /// Full test result data
     pub result_data: TestAssignmentResult,
+}
+
+impl TestResultReport {
+    /// Check if the test was successful
+    pub fn success(&self) -> bool {
+        !matches!(&self.result_data, TestAssignmentResult::Error(_))
+    }
+
+    /// Get the error message if test failed
+    pub fn error(&self) -> Option<&str> {
+        match &self.result_data {
+            TestAssignmentResult::Error(e) => Some(&e.error),
+            _ => None,
+        }
+    }
 }
 
 /// Get test run status

@@ -22,7 +22,7 @@ pub use rpc::{
 };
 pub use runner::run_swarm_client;
 pub use types::{
-    AdvancedTestConfig, DoctorCaps, ErrorResult, FingerprintResult, LatencyAdvancedConfig,
-    LatencyResult, NetworkAdvancedConfig, StreamStats, SwarmStats, TestAssignmentResult,
-    TestConfig, TestStats, TestType, ThroughputAdvancedConfig, ThroughputResult,
+    AdvancedTestConfig, DoctorCaps, ErrorResult, FingerprintResult, LatencyConfig, LatencyResult,
+    NetworkConfig, StreamStats, SwarmStats, TestAssignmentResult, TestConfig, TestStats, TestType,
+    ThroughputConfig, ThroughputResult,
 };

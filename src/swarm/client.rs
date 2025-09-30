@@ -51,7 +51,7 @@ impl SwarmClient {
 
         let mut transport_config = endpoint::TransportConfig::default();
         // Always enable keep-alive for swarm connections
-        transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
+        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         if let Some(ref transport) = config.transport {
             if let Some(max_streams) = transport.max_concurrent_bidi_streams {
@@ -69,7 +69,7 @@ impl SwarmClient {
 
         let endpoint = Endpoint::builder()
             .secret_key(config.secret_key.clone())
-            .alpns(vec![DOCTOR_SWARM_ALPN.to_vec()])
+            .alpns(vec![DOCTOR_SWARM_ALPN.to_vec(), N0DES_DOCTOR_ALPN.to_vec()])
             .relay_mode(relay_mode)
             .transport_config(transport_config)
             .discovery_n0()
@@ -117,38 +117,30 @@ impl SwarmClient {
     }
 
     /// Get the current network report as an ExtendedNetworkReport
-    pub async fn get_extended_network_report(&self) -> ExtendedNetworkReport {
+    pub fn get_extended_network_report(&self) -> ExtendedNetworkReport {
         let base_report = self.endpoint.net_report().get();
         ExtendedNetworkReport::from_base_report(base_report)
     }
 
     pub async fn get_assignments(&self) -> Result<Vec<TestAssignment>> {
-        let network_report = self.get_extended_network_report().await;
+        let network_report = self.get_extended_network_report();
 
         let response = self.doctor_client.get_assignments(network_report).await?;
 
         Ok(response.assignments)
     }
 
-    /// Submit test result to coordinator (node and b are self and peer)
+    /// Submit test result to coordinator (node_b is the peer)
     pub async fn submit_result(
         &self,
         test_run_id: Uuid,
-        node_a: NodeId,
         node_b: NodeId,
         result_data: TestAssignmentResult,
     ) -> Result<()> {
-        let (success, error) = match &result_data {
-            TestAssignmentResult::Error(e) => (false, Some(e.error.clone())),
-            _ => (true, None),
-        };
-
         let report = TestResultReport {
             test_run_id,
-            node_a,
+            node_a: self.endpoint.node_id(),
             node_b,
-            success,
-            error,
             request_id: Some(Uuid::new_v4()),
             result_data,
         };
@@ -158,15 +150,10 @@ impl SwarmClient {
     }
 
     /// Mark a test as started to prevent duplicate assignments
-    pub async fn mark_test_started(
-        &self,
-        test_run_id: Uuid,
-        node_a: NodeId,
-        node_b: NodeId,
-    ) -> Result<bool> {
+    pub async fn mark_test_started(&self, test_run_id: Uuid, node_b: NodeId) -> Result<bool> {
         let response = self
             .doctor_client
-            .mark_test_started(test_run_id, node_a, node_b)
+            .mark_test_started(test_run_id, self.endpoint.node_id(), node_b)
             .await?;
         Ok(response.success)
     }
