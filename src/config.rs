@@ -89,7 +89,7 @@ impl NodeConfig {
     }
 
     /// Constructs a `RelayMap` based on the current configuration.
-    pub(crate) fn relay_map(&self) -> Result<Option<RelayMap>> {
+    pub fn relay_map(&self) -> Result<Option<RelayMap>> {
         if self.relay_nodes.is_empty() {
             return Ok(None);
         }

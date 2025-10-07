@@ -2,7 +2,6 @@
 
 use std::{num::NonZeroU16, time::Duration};
 
-
 /// Checks if there's a port mapping in the local port, and if it's ready.
 pub async fn port_map(
     protocol: &str,
@@ -23,6 +22,7 @@ pub async fn port_map(
         enable_upnp,
         enable_pcp,
         enable_nat_pmp,
+        protocol: portmapper::Protocol::Udp,
     };
     let port_mapper = portmapper::Client::new(config);
     let mut watcher = port_mapper.watch_external_address();

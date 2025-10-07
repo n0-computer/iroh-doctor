@@ -6,3 +6,4 @@ pub mod plot;
 pub mod port_map;
 pub mod relay_urls;
 pub mod report;
+pub mod swarm_client;
