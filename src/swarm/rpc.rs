@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use iroh::{Endpoint, NodeAddr, NodeId};
 use irpc::{channel::oneshot, rpc_requests};
 use irpc_iroh::IrohRemoteConnection;
@@ -26,7 +26,7 @@ impl std::fmt::Debug for DoctorClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DoctorClient")
             .field("coordinator_addr", &self.coordinator_addr)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -76,7 +76,7 @@ impl DoctorClient {
             .rpc(auth.clone())
             .await
             .context("Failed to send auth request")?
-            .map_err(|e| anyhow::anyhow!("Authentication failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Authentication failed: {:?}", e))?;
 
         Ok(Self {
             client,
@@ -99,7 +99,7 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send register request")?
-            .map_err(|e| anyhow::anyhow!("Register failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Register failed: {:?}", e))?;
 
         Ok(response)
     }
@@ -115,7 +115,7 @@ impl DoctorClient {
             .rpc(test_msg)
             .await
             .context("Failed to send get assignments request")?
-            .map_err(|e| anyhow::anyhow!("GetAssignments failed: {:?}", e))
+            .map_err(|e| anyhow!("GetAssignments failed: {:?}", e))
     }
 
     /// Create a test run
@@ -134,7 +134,7 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send create test run request")?
-            .map_err(|e| anyhow::anyhow!("CreateTestRun failed: {:?}", e))?;
+            .map_err(|e| anyhow!("CreateTestRun failed: {:?}", e))?;
 
         Ok(response)
     }
@@ -145,7 +145,7 @@ impl DoctorClient {
             .rpc(report)
             .await
             .context("Failed to send report result request")?
-            .map_err(|e| anyhow::anyhow!("ReportResult failed: {:?}", e))?;
+            .map_err(|e| anyhow!("ReportResult failed: {:?}", e))?;
 
         Ok(())
     }
@@ -157,7 +157,7 @@ impl DoctorClient {
             .rpc(GetNodeInfo {})
             .await
             .context("Failed to send get node info request")?
-            .map_err(|e| anyhow::anyhow!("GetNodeInfo failed: {:?}", e))?;
+            .map_err(|e| anyhow!("GetNodeInfo failed: {:?}", e))?;
 
         Ok(response)
     }
@@ -178,7 +178,7 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send mark test started request")?
-            .map_err(|e| anyhow::anyhow!("MarkTestStarted failed: {:?}", e))?;
+            .map_err(|e| anyhow!("MarkTestStarted failed: {:?}", e))?;
 
         Ok(response)
     }
@@ -190,7 +190,7 @@ impl DoctorClient {
             .rpc(GetTestRunStatus { test_run_id })
             .await
             .context("Failed to send get test run status request")?
-            .map_err(|e| anyhow::anyhow!("GetTestRunStatus failed: {:?}", e))?;
+            .map_err(|e| anyhow!("GetTestRunStatus failed: {:?}", e))?;
 
         Ok(response)
     }
@@ -287,8 +287,8 @@ impl TestAssignment {
     /// Extract latency test configuration with defaults
     ///
     /// Returns (ping_interval, ping_timeout)
-    pub fn latency_config(&self) -> (std::time::Duration, std::time::Duration) {
-        use crate::swarm::types::{DEFAULT_PING_INTERVAL_MS, DEFAULT_PING_TIMEOUT_MS};
+    pub fn latency_config(&self) -> (Duration, Duration) {
+        use crate::swarm::types::{DEFAULT_PING_INTERVAL, DEFAULT_PING_TIMEOUT};
 
         let advanced_config = self
             .test_config
@@ -299,18 +299,18 @@ impl TestAssignment {
         let ping_interval_ms = advanced_config
             .as_ref()
             .and_then(|c| c.ping_interval_ms)
-            .unwrap_or(DEFAULT_PING_INTERVAL_MS)
+            .unwrap_or(DEFAULT_PING_INTERVAL.as_millis() as u32)
             .clamp(1, 1000); // enforce range: 1-1000ms
 
         let ping_timeout_ms = advanced_config
             .as_ref()
             .and_then(|c| c.ping_timeout_ms)
-            .unwrap_or(DEFAULT_PING_TIMEOUT_MS)
+            .unwrap_or(DEFAULT_PING_TIMEOUT.as_millis() as u32)
             .clamp(100, 10000); // enforce range: 100ms-10s
 
         (
-            std::time::Duration::from_millis(ping_interval_ms as u64),
-            std::time::Duration::from_millis(ping_timeout_ms as u64),
+            Duration::from_millis(ping_interval_ms as u64),
+            Duration::from_millis(ping_timeout_ms as u64),
         )
     }
 }

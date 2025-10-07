@@ -65,7 +65,7 @@ async fn execute_throughput_test(
             let (parallel_streams, chunk_size_bytes) = assignment.throughput_config();
 
             info!(
-                "Running throughput test with {} parallel streams and {} KB chunks",
+                "Running throughput test with {} parallel streams and {} KiB chunks",
                 parallel_streams,
                 chunk_size_bytes / 1024
             );
@@ -86,10 +86,10 @@ async fn execute_throughput_test(
                     conn.close(0u32.into(), b"test complete");
 
                     info!(
-                                    "Bidirectional throughput test completed: Upload: {:.2} Mbps, Download: {:.2} Mbps",
-                                    result.upload_mbps,
-                                    result.download_mbps
-                                );
+                        "Bidirectional throughput test completed: Upload: {:.2} Mbps, Download: {:.2} Mbps",
+                        result.upload_mbps,
+                        result.download_mbps
+                    );
 
                     let throughput_result = ThroughputResult::new(
                         assignment.test_type,
@@ -263,7 +263,7 @@ async fn execute_fingerprint_test(
     let (parallel_streams, chunk_size_bytes) = assignment.throughput_config();
 
     info!(
-        "Running fingerprint throughput test with {} parallel streams and {} KB chunks",
+        "Running fingerprint throughput test with {} parallel streams and {} KiB chunks",
         parallel_streams,
         chunk_size_bytes / 1024
     );

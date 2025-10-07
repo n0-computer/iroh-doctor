@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::swarm::net_report_ext::ExtendedNetworkReport;
+use crate::swarm::ExtendedNetworkReport;
 
 /// NAT type classification based on expected holepunching difficulty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

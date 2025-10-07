@@ -1,7 +1,5 @@
 //! Protocol definitions for test communication
 
-use std::fmt;
-
 use anyhow::Result;
 use postcard;
 use serde::{Deserialize, Serialize};
@@ -10,19 +8,12 @@ use serde::{Deserialize, Serialize};
 pub const DOCTOR_SWARM_ALPN: &[u8] = b"n0/doctor-swarm/1";
 
 /// Test protocol types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum TestProtocolType {
+    #[display("THROUGHPUT")]
     Throughput,
+    #[display("LATENCY")]
     Latency,
-}
-
-impl fmt::Display for TestProtocolType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Throughput => write!(f, "THROUGHPUT"),
-            Self::Latency => write!(f, "LATENCY"),
-        }
-    }
 }
 
 /// Protocol messages for latency testing

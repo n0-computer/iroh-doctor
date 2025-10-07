@@ -26,7 +26,7 @@ use crate::{
         transfer_utils::handle_bidirectional_transfer,
         types::{
             ErrorResult, SwarmStats, TestAssignmentResult, DEFAULT_CHUNK_SIZE,
-            DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_DATA_TRANSFER_TIMEOUT_SECS,
+            DEFAULT_CONNECTION_TIMEOUT, DEFAULT_DATA_TRANSFER_TIMEOUT,
         },
     },
 };
@@ -97,50 +97,52 @@ async fn assignment_processing_task(
                         let client = client.clone();
                         let endpoint = endpoint.clone();
                         let stats = stats.clone();
+                        let mut shutdown_rx = shutdown_rx;
 
                         return Some(tokio::spawn(async move {
                             debug!("Executing test assignment: {} -> {}", node_id, target_node_id);
 
-                            let result_data = match perform_test_assignment(
-                                assignment,
-                                endpoint.clone(),
-                                node_id,
-                                data_transfer_timeout,
-                            )
-                            .await
-                            {
-                                Ok(result) => result,
-                                Err(e) => {
-                                    error!("Failed to perform test: {}", e);
-                                    TestAssignmentResult::Error(ErrorResult {
-                                        error: e.to_string(),
-                                        duration: Duration::from_secs(0),
-                                        test_type: None,
-                                        remote_id: None,
-                                        connection_type: None,
-                                    })
+                            tokio::select! {
+                                result = perform_test_assignment(
+                                    assignment,
+                                    endpoint.clone(),
+                                    node_id,
+                                    data_transfer_timeout,
+                                ) => {
+                                    let result_data = match result {
+                                        Ok(result) => result,
+                                        Err(e) => {
+                                            error!("Failed to perform test: {}", e);
+                                            TestAssignmentResult::Error(ErrorResult {
+                                                error: e.to_string(),
+                                                duration: Duration::from_secs(0),
+                                                test_type: None,
+                                                remote_id: None,
+                                                connection_type: None,
+                                            })
+                                        }
+                                    };
+
+                                    let result_success = !matches!(&result_data, TestAssignmentResult::Error(_));
+
+                                    if let Err(e) = client
+                                        .submit_result(
+                                            test_run_id,
+                                            target_node_id,
+                                            result_data,
+                                        )
+                                        .await
+                                    {
+                                        error!("Failed to submit result: {}", e);
+                                    } else if result_success {
+                                        stats.increment_completed();
+                                    } else {
+                                        stats.increment_failed();
+                                    }
                                 }
-                            };
-
-                            let result_success = !matches!(&result_data, TestAssignmentResult::Error(_));
-
-                            if let Err(e) = client
-                                .submit_result(
-                                    test_run_id,
-                                    target_node_id,
-                                    result_data,
-                                )
-                                .await
-                            {
-                                error!("Failed to submit result: {}", e);
-                            } else {
-                                if result_success {
-                                    stats.increment_completed();
-                                } else {
-                                    stats.increment_failed();
+                                _ = shutdown_rx.recv() => {
+                                    debug!("Test execution task received shutdown signal");
                                 }
-
-                                tokio::time::sleep(Duration::from_millis(500)).await;
                             }
                         }));
                     }
@@ -297,7 +299,7 @@ async fn run_swarm_client_inner(
 
     let data_transfer_timeout = config
         .data_transfer_timeout
-        .unwrap_or(Duration::from_secs(DEFAULT_DATA_TRANSFER_TIMEOUT_SECS));
+        .unwrap_or(DEFAULT_DATA_TRANSFER_TIMEOUT);
 
     let mut test_execution_tasks = JoinSet::new();
 
@@ -312,7 +314,7 @@ async fn run_swarm_client_inner(
 
                 test_execution_tasks.spawn(async move {
                     match tokio::time::timeout(
-                        Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT_SECS as u64),
+                        DEFAULT_CONNECTION_TIMEOUT,
                         assignment_processing_task(
                             client,
                             node_id,

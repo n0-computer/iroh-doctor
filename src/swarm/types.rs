@@ -1,38 +1,33 @@
 //! Types for swarm test statistics and results
 
-use std::{fmt, time::Duration};
+use std::time::Duration;
 
 use iroh::{endpoint::ConnectionType, NodeId};
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
 // Common default configuration values used across the swarm module
-pub const DEFAULT_DATA_TRANSFER_TIMEOUT_SECS: u64 = 5 * 60; // 5 minutes
-pub const DEFAULT_DATA_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024; // 1MB
+pub const DEFAULT_DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
+pub const DEFAULT_DATA_SIZE: u64 = 10 * 1024 * 1024; // 10MiB
+pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024; // 1MiB
 pub const DEFAULT_PARALLEL_STREAMS: u32 = 4;
-pub const DEFAULT_CONNECTION_TIMEOUT_SECS: u32 = 20;
-pub const DEFAULT_PING_INTERVAL_MS: u32 = 10;
-pub const DEFAULT_PING_TIMEOUT_MS: u32 = 3000;
+pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DEFAULT_PING_INTERVAL: Duration = Duration::from_millis(10);
+pub const DEFAULT_PING_TIMEOUT: Duration = Duration::from_millis(3000);
 
 /// Test types supported by doctor nodes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, derive_more::Display,
+)]
 pub enum TestType {
     #[default]
+    #[display("latency")]
     Latency,
+    #[display("throughput")]
     Throughput,
     /// Combined test: connectivity + throughput + latency
+    #[display("fingerprint")]
     Fingerprint,
-}
-
-impl fmt::Display for TestType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TestType::Throughput => write!(f, "throughput"),
-            TestType::Latency => write!(f, "latency"),
-            TestType::Fingerprint => write!(f, "fingerprint"),
-        }
-    }
 }
 
 /// Configuration for a test run

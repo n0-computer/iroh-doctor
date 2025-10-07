@@ -3,7 +3,7 @@
 mod client;
 mod config;
 mod execution;
-pub mod net_report_ext;
+mod net_report_ext;
 mod rpc;
 mod runner;
 mod tests;
