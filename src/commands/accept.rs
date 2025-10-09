@@ -3,11 +3,10 @@
 use std::{sync::Arc, time::Instant};
 
 use iroh::{Endpoint, SecretKey};
-use n0_watcher::Watcher;
 use portable_atomic::AtomicU64;
 use tracing::warn;
 
-use crate::doctor::{active_side, format_addr, log_connection_changes, Gui, TestConfig};
+use crate::doctor::{Gui, TestConfig, active_side, format_addr, log_connection_changes};
 
 /// Accepts the connections.
 pub async fn accept(
@@ -15,11 +14,11 @@ pub async fn accept(
     config: TestConfig,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoints = endpoint.direct_addresses().initialized().await;
+    let endpoints = endpoint.node_addr().direct_addresses;
 
     let remote_addrs = endpoints
         .iter()
-        .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
+        .map(|addr| format!("--remote-endpoint {}", format_addr(*addr)))
         .collect::<Vec<_>>()
         .join(" ");
     println!("Connect to this node using one of the following commands:\n");
@@ -28,14 +27,14 @@ pub async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.home_relay().get().pop() {
+    if let Some(relay_url) = endpoint.node_addr().relay_url {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
             relay_url,
         );
     }
-    if endpoint.discovery().is_some() {
+    if !endpoint.discovery().is_empty() {
         println!(
             "\tUsing just the node id:\niroh-doctor connect {}\n",
             secret_key.public(),

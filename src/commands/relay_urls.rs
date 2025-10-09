@@ -7,14 +7,14 @@ use std::{
 
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
-use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
+use iroh::{RelayUrl, SecretKey, dns::DnsResolver};
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
 
 use crate::config::NodeConfig;
 
 /// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
 pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()> {
-    let key = SecretKey::generate(rand::rngs::OsRng);
+    let key = SecretKey::generate(&mut rand::rng());
     if config.relay_nodes.is_empty() {
         println!("No relay nodes specified in the config file.");
     }

@@ -10,7 +10,7 @@ use std::{
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
@@ -141,12 +141,14 @@ fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
         }
         None => metric.to_string(),
     };
-    let datasets = vec![Dataset::default()
-        .name(name)
-        .marker(symbols::Marker::Dot)
-        .graph_type(GraphType::Line)
-        .style(Style::default().fg(Color::Cyan))
-        .data(&data)];
+    let datasets = vec![
+        Dataset::default()
+            .name(name)
+            .marker(symbols::Marker::Dot)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Cyan))
+            .data(&data),
+    ];
 
     // TODO(arqu): labels are incorrectly spaced for > 3 labels https://github.com/ratatui-org/ratatui/issues/334
     let x_labels = vec![
@@ -267,7 +269,7 @@ impl PlotterApp {
             data,
             data_y_range,
             timeframe,
-            rng: rand::thread_rng(),
+            rng: rand::rng(),
             freeze: false,
             internal_ts: Duration::default(),
             scrape_url,
@@ -322,7 +324,7 @@ impl PlotterApp {
         self.internal_ts = self.start_ts.elapsed();
         for metric in &self.metrics {
             let val = if metric.eq("random") {
-                self.rng.gen_range(0..101) as f64
+                self.rng.random_range(0..101) as f64
             } else if let Some(v) = metrics_response.get(metric) {
                 *v
             } else {

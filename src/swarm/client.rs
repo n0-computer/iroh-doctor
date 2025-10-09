@@ -3,7 +3,7 @@
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
-use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
+use iroh::{Endpoint, NodeId, RelayMode, Watcher, endpoint};
 use tracing::info;
 use uuid::Uuid;
 
@@ -80,9 +80,6 @@ impl SwarmClient {
             let mut registry = metrics_registry.write().expect("poisoned");
             registry.register_all(endpoint.metrics());
         }
-
-        let mut direct_addrs = endpoint.direct_addresses();
-        direct_addrs.initialized().await;
 
         let mut net_report_watcher = endpoint.net_report();
         net_report_watcher.initialized().await;

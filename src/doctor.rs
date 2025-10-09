@@ -12,10 +12,10 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-    endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
-    metrics::MagicsockMetrics,
     Endpoint, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
+    discovery::{ConcurrentDiscovery, dns::DnsDiscovery, pkarr::PkarrPublisher},
+    endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
+    metrics::MagicsockMetrics,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -27,7 +27,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     commands,
-    config::{iroh_data_root, NodeConfig},
+    config::{NodeConfig, iroh_data_root},
     metrics::{IrohMetricsRegistry, MetricsRegistry},
     progress::ProgressWriter,
 };
@@ -395,30 +395,27 @@ impl Gui {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.remote_info(*node_id) {
-            Some(RemoteInfo {
-                relay_url,
-                conn_type,
-                latency,
-                addrs,
-                ..
-            }) => {
-                let relay_url = relay_url
-                    .map(|x| x.relay_url.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let latency = format_latency(latency);
-                let addrs = addrs
-                    .into_iter()
-                    .map(|addr_info| {
-                        format!("{} ({})", addr_info.addr, format_latency(addr_info.latency))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                format!(
-                    "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
-                )
-            }
-            None => "connection info unavailable".to_string(),
+        let conn_type = endpoint.conn_type(*node_id).map(|mut c| c.get());
+
+        let msg = if let Some(conn_type) = conn_type {
+            let latency = format_latency(endpoint.latency(*node_id));
+            let node_addr = endpoint.node_addr();
+            let relay_url = node_addr.relay_url.as_ref();
+            let relay_url = relay_url
+                .map(|relay_url| relay_url.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let addrs = node_addr
+                .direct_addresses
+                .into_iter()
+                .map(|addr| addr.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+
+            format!(
+                "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
+            )
+        } else {
+            "connection info unavailable".to_string()
         };
         target.set_message(msg);
     }
@@ -711,12 +708,9 @@ async fn make_endpoint(
         None
     };
 
-    tokio::time::timeout(
-        Duration::from_secs(10),
-        endpoint.direct_addresses().initialized(),
-    )
-    .await
-    .context("wait for relay connection")?;
+    tokio::time::timeout(Duration::from_secs(10), endpoint.online())
+        .await
+        .context("wait for relay connection")?;
 
     Ok((endpoint, rpc_client))
 }
@@ -758,7 +752,7 @@ pub fn log_connection_changes(
 /// Creates a [`SecretKey`] from a [`SecretKeyOption`].
 fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     Ok(match secret_key {
-        SecretKeyOption::Random => SecretKey::generate(rand::rngs::OsRng),
+        SecretKeyOption::Random => SecretKey::generate(&mut rand::rng()),
         SecretKeyOption::Hex(hex) => {
             let bytes = hex::decode(hex)?;
             SecretKey::try_from(&bytes[..])?
@@ -773,7 +767,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
                     "Local key not found in {}. Using random key.",
                     path.display()
                 );
-                SecretKey::generate(rand::rngs::OsRng)
+                SecretKey::generate(&mut rand::rng())
             }
         }
     })

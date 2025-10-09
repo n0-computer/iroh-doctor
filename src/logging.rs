@@ -1,10 +1,10 @@
 use std::path::Path;
+use std::str::FromStr;
 
-use derive_more::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing_appender::{non_blocking, rolling};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing_subscriber::{Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// `RUST_LOG` statement used by default in file logging.
 // rustyline is annoying
