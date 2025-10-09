@@ -7,7 +7,7 @@ use std::{
 
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
-use iroh::{RelayUrl, SecretKey, dns::DnsResolver};
+use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
 
 use crate::config::NodeConfig;

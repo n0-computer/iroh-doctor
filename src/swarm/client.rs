@@ -3,7 +3,7 @@
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, NodeId, RelayMode, Watcher, endpoint};
+use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
 use tracing::info;
 use uuid::Uuid;
 
