@@ -76,7 +76,7 @@ impl DoctorClient {
             .rpc(auth.clone())
             .await
             .context("Failed to send auth request")?
-            .map_err(|e| anyhow!("Authentication failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Authentication failed: {e:?}"))?;
 
         Ok(Self {
             client,
@@ -99,7 +99,7 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send register request")?
-            .map_err(|e| anyhow!("Register failed: {:?}", e))?;
+            .map_err(|e| anyhow!("Register failed: {e:?}"))?;
 
         Ok(response)
     }
@@ -115,7 +115,7 @@ impl DoctorClient {
             .rpc(test_msg)
             .await
             .context("Failed to send get assignments request")?
-            .map_err(|e| anyhow!("GetAssignments failed: {:?}", e))
+            .map_err(|e| anyhow!("GetAssignments failed: {e:?}"))
     }
 
     /// Create a test run
@@ -134,7 +134,7 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send create test run request")?
-            .map_err(|e| anyhow!("CreateTestRun failed: {:?}", e))?;
+            .map_err(|e| anyhow!("CreateTestRun failed: {e:?}"))?;
 
         Ok(response)
     }
@@ -145,7 +145,7 @@ impl DoctorClient {
             .rpc(report)
             .await
             .context("Failed to send report result request")?
-            .map_err(|e| anyhow!("ReportResult failed: {:?}", e))?;
+            .map_err(|e| anyhow!("ReportResult failed: {e:?}"))?;
 
         Ok(())
     }
@@ -157,7 +157,7 @@ impl DoctorClient {
             .rpc(GetNodeInfo {})
             .await
             .context("Failed to send get node info request")?
-            .map_err(|e| anyhow!("GetNodeInfo failed: {:?}", e))?;
+            .map_err(|e| anyhow!("GetNodeInfo failed: {e:?}"))?;
 
         Ok(response)
     }
@@ -178,7 +178,7 @@ impl DoctorClient {
             })
             .await
             .context("Failed to send mark test started request")?
-            .map_err(|e| anyhow!("MarkTestStarted failed: {:?}", e))?;
+            .map_err(|e| anyhow!("MarkTestStarted failed: {e:?}"))?;
 
         Ok(response)
     }
@@ -190,7 +190,7 @@ impl DoctorClient {
             .rpc(GetTestRunStatus { test_run_id })
             .await
             .context("Failed to send get test run status request")?
-            .map_err(|e| anyhow!("GetTestRunStatus failed: {:?}", e))?;
+            .map_err(|e| anyhow!("GetTestRunStatus failed: {e:?}"))?;
 
         Ok(response)
     }

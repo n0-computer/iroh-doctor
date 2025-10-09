@@ -81,9 +81,6 @@ impl SwarmClient {
             registry.register_all(endpoint.metrics());
         }
 
-        let mut direct_addrs = endpoint.direct_addresses();
-        direct_addrs.initialized().await;
-
         let mut net_report_watcher = endpoint.net_report();
         net_report_watcher.initialized().await;
         let base_network_report = net_report_watcher.get();

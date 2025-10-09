@@ -1,6 +1,6 @@
 use std::path::Path;
+use std::str::FromStr;
 
-use derive_more::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing_appender::{non_blocking, rolling};

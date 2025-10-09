@@ -229,7 +229,7 @@ async fn handle_throughput_stream(
     let (_bytes_received, _bytes_sent, _duration) =
         handle_bidirectional_transfer(send, recv, data_size, chunk_size)
             .await
-            .map_err(|e| anyhow::anyhow!("Stream {} transfer failed: {}", stream_id, e))?;
+            .map_err(|e| anyhow::anyhow!("Stream {stream_id} transfer failed: {e}"))?;
     Ok(())
 }
 

@@ -3,7 +3,6 @@
 use std::{sync::Arc, time::Instant};
 
 use iroh::{Endpoint, SecretKey};
-use n0_watcher::Watcher;
 use portable_atomic::AtomicU64;
 use tracing::warn;
 
@@ -15,11 +14,11 @@ pub async fn accept(
     config: TestConfig,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoints = endpoint.direct_addresses().initialized().await;
+    let node_addr = endpoint.node_addr();
 
-    let remote_addrs = endpoints
-        .iter()
-        .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
+    let remote_addrs = node_addr
+        .direct_addresses()
+        .map(|addr| format!("--remote-endpoint {}", format_addr(*addr)))
         .collect::<Vec<_>>()
         .join(" ");
     println!("Connect to this node using one of the following commands:\n");
@@ -28,14 +27,14 @@ pub async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.home_relay().get().pop() {
+    if let Some(relay_url) = node_addr.relay_url() {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
             relay_url,
         );
     }
-    if endpoint.discovery().is_some() {
+    if !endpoint.discovery().is_empty() {
         println!(
             "\tUsing just the node id:\niroh-doctor connect {}\n",
             secret_key.public(),

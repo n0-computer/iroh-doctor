@@ -97,10 +97,10 @@ pub async fn run_bidirectional_throughput_test_with_config(
                 );
             }
             Ok(Err(e)) => {
-                return Err(anyhow::anyhow!("Stream {} failed: {}", idx, e));
+                return Err(anyhow::anyhow!("Stream {idx} failed: {e}"));
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Stream {} task panicked: {}", idx, e));
+                return Err(anyhow::anyhow!("Stream {idx} task panicked: {e}"));
             }
         }
     }
@@ -187,38 +187,35 @@ async fn run_single_stream_test_with_config(
     let (mut send, mut recv) = conn
         .open_bi()
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to open stream {}: {}", stream_idx, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to open stream {stream_idx}: {e}"))?;
 
     let header =
         TestProtocolHeader::with_config(TestProtocolType::Throughput, data_size, 1, chunk_size);
     let header_bytes = header.to_bytes();
     send.write_all(&header_bytes)
         .await
-        .map_err(|e| anyhow::anyhow!("Stream {} failed to send header: {}", stream_idx, e))?;
+        .map_err(|e| anyhow::anyhow!("Stream {stream_idx} failed to send header: {e}"))?;
 
     let upload_start = Instant::now();
     send_data_on_stream(&mut send, data_size, chunk_size)
         .await
-        .map_err(|e| anyhow::anyhow!("Stream {} upload failed: {}", stream_idx, e))?;
+        .map_err(|e| anyhow::anyhow!("Stream {stream_idx} upload failed: {e}"))?;
     let upload_duration = upload_start.elapsed();
 
     let download_start = Instant::now();
     let (bytes_received, _time_to_first_byte, _num_chunks) =
         drain_stream(&mut recv, false)
             .await
-            .map_err(|e| anyhow::anyhow!("Stream {} download failed: {}", stream_idx, e))?;
+            .map_err(|e| anyhow::anyhow!("Stream {stream_idx} download failed: {e}"))?;
     let download_duration = download_start.elapsed();
 
     let bytes_sent = data_size;
     debug!(
-        "Stream {} download complete: {} bytes in {:?}",
-        stream_idx, bytes_received, download_duration
+        "Stream {stream_idx} download complete: {bytes_received} bytes in {download_duration:?}"
     );
 
     debug!(
-        "Stream {} completed: sent={} bytes in {:?}, received={} bytes in {:?}",
-        stream_idx, bytes_sent, upload_duration, bytes_received, download_duration
-    );
+        "Stream {stream_idx} completed: sent={bytes_sent} bytes in {upload_duration:?}, received={bytes_received} bytes in {download_duration:?}");
 
     Ok((
         bytes_sent,

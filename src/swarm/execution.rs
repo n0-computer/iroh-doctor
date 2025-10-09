@@ -136,7 +136,7 @@ async fn execute_throughput_test(
         Err(e) => {
             warn!("Failed to connect: {}", e);
             Ok(TestAssignmentResult::Error(ErrorResult {
-                error: format!("Failed to connect: {}", e),
+                error: format!("Failed to connect: {e}"),
                 duration: start.elapsed(),
                 test_type: Some(assignment.test_type),
                 remote_id: Some(assignment.node_id),

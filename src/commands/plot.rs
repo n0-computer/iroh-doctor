@@ -267,7 +267,7 @@ impl PlotterApp {
             data,
             data_y_range,
             timeframe,
-            rng: rand::thread_rng(),
+            rng: rand::rng(),
             freeze: false,
             internal_ts: Duration::default(),
             scrape_url,
@@ -322,7 +322,7 @@ impl PlotterApp {
         self.internal_ts = self.start_ts.elapsed();
         for metric in &self.metrics {
             let val = if metric.eq("random") {
-                self.rng.gen_range(0..101) as f64
+                self.rng.random_range(0..101) as f64
             } else if let Some(v) = metrics_response.get(metric) {
                 *v
             } else {

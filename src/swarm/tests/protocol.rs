@@ -89,16 +89,16 @@ impl TestProtocolHeader {
         let mut len_buf = [0u8; 2];
         recv.read_exact(&mut len_buf)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to read header length: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read header length: {e}"))?;
         let header_len = u16::from_le_bytes(len_buf) as usize;
 
         let mut header_buf = vec![0u8; header_len];
         recv.read_exact(&mut header_buf)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to read header: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read header: {e}"))?;
 
         let header: Self = postcard::from_bytes(&header_buf)
-            .map_err(|e| anyhow::anyhow!("Failed to parse header with postcard: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse header with postcard: {e}"))?;
 
         Ok(header)
     }
