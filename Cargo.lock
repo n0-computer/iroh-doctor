@@ -2138,8 +2138,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-n0des"
-version = "0.3.0"
-source = "git+https://github.com/n0-computer/iroh-n0des.git?branch=Frando%2Firoh-0-93-only#a4092727dd1ce8187eafafde5e6c74e72291acc7"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a969734a06c3700b953ee69cfe644c14ad94bdb4a5261c3d485832143f0e88"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2172,7 +2173,8 @@ dependencies = [
 [[package]]
 name = "iroh-n0des-macro"
 version = "0.2.0"
-source = "git+https://github.com/n0-computer/iroh-n0des.git?branch=Frando%2Firoh-0-93-only#a4092727dd1ce8187eafafde5e6c74e72291acc7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e15d38b6ae3d9480e49883bea72880f80d595276e34090f5096d844e6f7f5e40"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2397,9 +2399,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.176"
+version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
 
 [[package]]
 name = "libredox"

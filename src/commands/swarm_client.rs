@@ -21,7 +21,7 @@ pub async fn run_swarm_client(
     metrics: IrohMetricsRegistry,
 ) -> Result<()> {
     if !ssh_key.exists() {
-        bail!("SSH key file does not exist: {:?}", ssh_key);
+        bail!("SSH key file does not exist: {ssh_key:?}");
     }
 
     info!(

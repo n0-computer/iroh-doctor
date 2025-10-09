@@ -51,7 +51,7 @@ pub async fn run_latency_test_on_connection(
         let (mut send, mut recv) = conn
             .open_bi()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to open stream for ping {}: {}", i, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to open stream for ping {i}: {e}"))?;
 
         let ping_start = Instant::now();
 
@@ -62,40 +62,33 @@ pub async fn run_latency_test_on_connection(
 
         send.write_all(&header_bytes)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to send protocol header for ping {}: {}", i, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send protocol header for ping {i}: {e}"))?;
 
         send.write_all(&ping_data)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to send ping {}: {}", i, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send ping {i}: {e}"))?;
 
         send.finish()
-            .map_err(|e| anyhow::anyhow!("Failed to finish send stream for ping {}: {}", i, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to finish send stream for ping {i}: {e}"))?;
 
         let mut buf = vec![0u8; 1024];
         let n = match tokio::time::timeout(ping_timeout, recv.read(&mut buf)).await {
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "Ping {} timed out after {:?}",
-                    i,
-                    ping_timeout
-                ))
-            }
-            Ok(Err(e)) => return Err(anyhow::anyhow!("Connection closed, cannot continue: {}", e)),
+            Err(_) => return Err(anyhow::anyhow!("Ping {i} timed out after {ping_timeout:?}")),
+            Ok(Err(e)) => return Err(anyhow::anyhow!("Connection closed, cannot continue: {e}")),
             Ok(Ok(Some(n))) => n,
             Ok(Ok(None)) => {
                 return Err(anyhow::anyhow!(
-                    "Connection closed without response for ping {}",
-                    i
+                    "Connection closed without response for ping {i}",
                 ))
             }
         };
 
         LatencyMessage::from_bytes(&buf[..n])
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse response for ping {}", i))?;
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse response for ping {i}"))?;
 
         let latency = ping_start.elapsed();
         latencies.push(latency);
-        trace!("Ping {} completed in {:?}", i, latency);
+        trace!("Ping {i} completed in {latency:?}");
 
         if i < iterations - 1 {
             tokio::time::sleep(ping_interval).await;

@@ -25,7 +25,7 @@ indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.93", features = ["metrics"] }
 iroh-base = { version = "0.93" }
 iroh-metrics = { version = "0.36", features = ["service", "static_core"] }
-iroh-n0des = { version = "0.3.0" }
+iroh-n0des = { version = "0.4.0" }
 iroh-relay = { version = "0.93" }
 netwatch = { version = "0.9" }
 n0-watcher = "0.3"
@@ -60,8 +60,5 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 url = "2.5.2"
 
 [dev-dependencies]
-iroh-base = { version = "0.93" }
+iroh-base = { version = "0.93.0" }
 url = "2.5.2"
-
-[patch.crates-io]
-iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des.git", branch = "Frando/iroh-0-93-only" }

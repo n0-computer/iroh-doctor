@@ -6,7 +6,7 @@ use iroh::{Endpoint, SecretKey};
 use portable_atomic::AtomicU64;
 use tracing::warn;
 
-use crate::doctor::{Gui, TestConfig, active_side, format_addr, log_connection_changes};
+use crate::doctor::{active_side, format_addr, log_connection_changes, Gui, TestConfig};
 
 /// Accepts the connections.
 pub async fn accept(
@@ -14,10 +14,10 @@ pub async fn accept(
     config: TestConfig,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let endpoints = endpoint.node_addr().direct_addresses;
+    let node_addr = endpoint.node_addr();
 
-    let remote_addrs = endpoints
-        .iter()
+    let remote_addrs = node_addr
+        .direct_addresses()
         .map(|addr| format!("--remote-endpoint {}", format_addr(*addr)))
         .collect::<Vec<_>>()
         .join(" ");
@@ -27,7 +27,7 @@ pub async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = endpoint.node_addr().relay_url {
+    if let Some(relay_url) = node_addr.relay_url() {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),

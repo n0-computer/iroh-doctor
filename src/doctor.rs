@@ -12,10 +12,10 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    Endpoint, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
-    discovery::{ConcurrentDiscovery, dns::DnsDiscovery, pkarr::PkarrPublisher},
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
     endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
     metrics::MagicsockMetrics,
+    Endpoint, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -27,7 +27,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     commands,
-    config::{NodeConfig, iroh_data_root},
+    config::{iroh_data_root, NodeConfig},
     metrics::{IrohMetricsRegistry, MetricsRegistry},
     progress::ProgressWriter,
 };
