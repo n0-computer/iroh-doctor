@@ -1,8 +1,7 @@
 //! Report command implementation
 
 use futures_lite::StreamExt;
-use iroh::{Endpoint, RelayMap, RelayMode};
-use n0_watcher::Watcher;
+use iroh::{Endpoint, RelayMap, RelayMode, Watcher};
 
 use crate::config::NodeConfig;
 
@@ -37,11 +36,12 @@ pub async fn report(
         .await?;
 
     println!("\nRelay Map:");
-    for (url, node) in relay_map.urls().zip(relay_map.nodes()) {
+    for config in relay_map.relays::<Vec<_>>() {
         println!(
-            r#"- {url}
+            r#"- {}
   QUIC port: {:?}"#,
-            node.quic.as_ref().map(|c| c.port),
+            config.url,
+            config.quic.as_ref().map(|c| c.port),
         );
     }
 

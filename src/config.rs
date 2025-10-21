@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use iroh::{RelayMap, RelayNode};
+use iroh::{RelayConfig, RelayMap};
 use serde::Deserialize;
 
 const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
@@ -24,7 +24,7 @@ pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 #[serde(default, deny_unknown_fields)]
 pub struct NodeConfig {
     /// The nodes for relay to use.
-    pub(crate) relay_nodes: Vec<RelayNode>,
+    pub(crate) relay_nodes: Vec<RelayConfig>,
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
     /// Configuration for the logfile.
@@ -36,7 +36,11 @@ pub struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         let relay_map = iroh::endpoint::default_relay_mode().relay_map();
-        let relay_nodes = relay_map.nodes().map(|v| (**v).clone()).collect();
+        let relay_nodes = relay_map
+            .relays::<Vec<_>>()
+            .iter()
+            .map(|relay| (**relay).clone())
+            .collect();
         Self {
             relay_nodes,
             metrics_addr: None,
@@ -224,7 +228,7 @@ mod tests {
         "#;
         let config = NodeConfig::load_toml(source).unwrap();
 
-        let expected = RelayNode {
+        let expected = RelayConfig {
             url: Url::parse("https://example.org./").unwrap().into(),
             quic: Some(RelayQuicConfig { port: 7842 }),
         };

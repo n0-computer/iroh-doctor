@@ -1,7 +1,7 @@
 use std::{path::Path, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
-use iroh::{Endpoint, NodeAddr, NodeId};
+use iroh::{Endpoint, EndpointAddr, EndpointId};
 use irpc::{channel::oneshot, rpc_requests};
 use irpc_iroh::IrohRemoteConnection;
 use rcan::Rcan;
@@ -18,7 +18,7 @@ use crate::swarm::{
 /// RPC client for communicating with the doctor coordinator
 pub struct DoctorClient {
     client: DoctorServiceClient,
-    coordinator_addr: NodeAddr,
+    coordinator_addr: EndpointAddr,
     auth: Auth,
 }
 
@@ -32,7 +32,7 @@ impl std::fmt::Debug for DoctorClient {
 
 impl DoctorClient {
     /// Create a new client with SSH key authentication
-    pub async fn with_ssh_key<P: AsRef<Path>, N: Into<NodeAddr>>(
+    pub async fn with_ssh_key<P: AsRef<Path>, N: Into<EndpointAddr>>(
         endpoint: &Endpoint,
         node_addr: N,
         ssh_key_path: P,
@@ -49,10 +49,11 @@ impl DoctorClient {
 
         let capability = DoctorCaps::default();
 
-        let our_node_id = endpoint.node_id();
+        let our_node_id = endpoint.id();
         let cap_expiry = Duration::from_secs(60 * 60 * 24 * 30); // 30 days
-        let rcan = rcan::Rcan::issuing_builder(&signing_key, our_node_id.public(), capability)
-            .sign(rcan::Expires::valid_for(cap_expiry));
+        let rcan =
+            rcan::Rcan::issuing_builder(&signing_key, our_node_id.as_verifying_key(), capability)
+                .sign(rcan::Expires::valid_for(cap_expiry));
 
         let auth = Auth { caps: rcan };
 
@@ -62,7 +63,7 @@ impl DoctorClient {
     /// Create a new client and authenticate
     pub async fn new(
         endpoint: iroh::Endpoint,
-        coordinator_addr: NodeAddr,
+        coordinator_addr: EndpointAddr,
         auth: Auth,
     ) -> Result<Self> {
         let conn = IrohRemoteConnection::new(
@@ -166,8 +167,8 @@ impl DoctorClient {
     pub async fn mark_test_started(
         &self,
         test_run_id: Uuid,
-        node_a: NodeId,
-        node_b: NodeId,
+        node_a: EndpointId,
+        node_b: EndpointId,
     ) -> Result<MarkTestStartedResponse> {
         let response = self
             .client
@@ -215,7 +216,7 @@ pub struct Auth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthResponse {
     pub project_id: Uuid,
-    pub node_id: NodeId,
+    pub node_id: EndpointId,
 }
 
 /// Register a doctor node
@@ -249,7 +250,7 @@ pub struct TestAssignment {
     /// Test run ID
     pub test_run_id: Uuid,
     /// Target node to test against
-    pub node_id: NodeId,
+    pub node_id: EndpointId,
     /// Type of test to run
     pub test_type: TestType,
     /// Test configuration
@@ -337,9 +338,9 @@ pub struct CreateTestRun {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestPair {
     /// First node in pair
-    pub node_a: NodeId,
+    pub node_a: EndpointId,
     /// Second node in pair
-    pub node_b: NodeId,
+    pub node_b: EndpointId,
 }
 
 /// Response to test run creation
@@ -357,9 +358,9 @@ pub struct MarkTestStarted {
     /// Test run ID
     pub test_run_id: Uuid,
     /// First node in the test
-    pub node_a: NodeId,
+    pub node_a: EndpointId,
     /// Second node in the test
-    pub node_b: NodeId,
+    pub node_b: EndpointId,
 }
 
 /// Response to marking test as started
@@ -375,9 +376,9 @@ pub struct TestResultReport {
     /// Test run ID
     pub test_run_id: Uuid,
     /// First node in the test
-    pub node_a: NodeId,
+    pub node_a: EndpointId,
     /// Second node in the test
-    pub node_b: NodeId,
+    pub node_b: EndpointId,
     /// Request ID for idempotency (optional for backward compatibility)
     pub request_id: Option<Uuid>,
     /// Full test result data
@@ -408,8 +409,8 @@ pub struct GetTestRunStatus {
 /// Test pair result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestPairResult {
-    pub node_a: NodeId,
-    pub node_b: NodeId,
+    pub node_a: EndpointId,
+    pub node_b: EndpointId,
     pub status: String,
     pub success: bool,
     pub error: Option<String>,
@@ -435,7 +436,7 @@ pub struct GetNodeInfo {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetNodeInfoResponse {
     /// Node ID for which info is requested
-    pub node_id: NodeId,
+    pub node_id: EndpointId,
     /// Project ID the node belongs to
     pub project_id: Uuid,
 }

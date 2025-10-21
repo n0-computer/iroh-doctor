@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use iroh::{NodeId, RelayMap, SecretKey};
+use iroh::{EndpointId, RelayMap, SecretKey};
 
 /// Configuration for swarm client
 #[derive(Debug, Clone)]
 pub struct SwarmConfig {
     /// The node ID of the coordinator that this swarm client will connect to
-    pub coordinator_node_id: NodeId,
+    pub coordinator_node_id: EndpointId,
     /// The secret key used for cryptographic operations and node identity
     pub secret_key: SecretKey,
     /// How often to poll for new assignments from the coordinator

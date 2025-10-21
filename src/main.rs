@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
-use iroh::NodeId;
+use iroh::EndpointId;
 use iroh_doctor::{config::NodeConfig, doctor::Commands};
 
 /// iroh-doctor is a tool for diagnosing network issues with iroh-net.
@@ -28,7 +28,7 @@ pub(crate) struct Cli {
 
     /// Connect to this iroh service node and report metrics if set.
     #[clap(long, requires("ssh_key"))]
-    pub(crate) service_node: Option<NodeId>,
+    pub(crate) service_node: Option<EndpointId>,
     /// Path to an ssh key to authenticate with.
     #[clap(long, requires("service_node"))]
     pub(crate) ssh_key: Option<PathBuf>,

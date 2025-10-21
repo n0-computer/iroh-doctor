@@ -14,10 +14,10 @@ pub async fn accept(
     config: TestConfig,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
-    let node_addr = endpoint.node_addr();
+    let endpoint_addr = endpoint.addr();
 
-    let remote_addrs = node_addr
-        .direct_addresses()
+    let remote_addrs = endpoint_addr
+        .ip_addrs()
         .map(|addr| format!("--remote-endpoint {}", format_addr(*addr)))
         .collect::<Vec<_>>()
         .join(" ");
@@ -27,7 +27,7 @@ pub async fn accept(
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(relay_url) = node_addr.relay_url() {
+    if let Some(relay_url) = endpoint_addr.relay_urls().next() {
         println!(
             "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
             secret_key.public(),
@@ -58,7 +58,7 @@ pub async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = connection.remote_node_id() else {
+                        let Ok(remote_peer_id) = connection.remote_id() else {
                             return;
                         };
                         println!("Accepted connection from {remote_peer_id}");

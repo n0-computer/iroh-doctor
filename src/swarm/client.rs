@@ -3,7 +3,7 @@
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
-use iroh::{endpoint, Endpoint, NodeId, RelayMode, Watcher};
+use iroh::{endpoint, Endpoint, EndpointId, RelayMode, Watcher};
 use tracing::info;
 use uuid::Uuid;
 
@@ -72,7 +72,6 @@ impl SwarmClient {
             .alpns(vec![DOCTOR_SWARM_ALPN.to_vec(), N0DES_DOCTOR_ALPN.to_vec()])
             .relay_mode(relay_mode)
             .transport_config(transport_config)
-            .discovery_n0()
             .bind()
             .await?;
 
@@ -131,12 +130,12 @@ impl SwarmClient {
     pub async fn submit_result(
         &self,
         test_run_id: Uuid,
-        node_b: NodeId,
+        node_b: EndpointId,
         result_data: TestAssignmentResult,
     ) -> Result<()> {
         let report = TestResultReport {
             test_run_id,
-            node_a: self.endpoint.node_id(),
+            node_a: self.endpoint.id(),
             node_b,
             request_id: Some(Uuid::new_v4()),
             result_data,
@@ -147,10 +146,10 @@ impl SwarmClient {
     }
 
     /// Mark a test as started to prevent duplicate assignments
-    pub async fn mark_test_started(&self, test_run_id: Uuid, node_b: NodeId) -> Result<bool> {
+    pub async fn mark_test_started(&self, test_run_id: Uuid, node_b: EndpointId) -> Result<bool> {
         let response = self
             .doctor_client
-            .mark_test_started(test_run_id, self.endpoint.node_id(), node_b)
+            .mark_test_started(test_run_id, self.endpoint.id(), node_b)
             .await?;
         Ok(response.success)
     }
@@ -161,7 +160,7 @@ impl SwarmClient {
     }
 
     /// Get the node ID
-    pub fn node_id(&self) -> NodeId {
-        self.endpoint.node_id()
+    pub fn id(&self) -> EndpointId {
+        self.endpoint.id()
     }
 }

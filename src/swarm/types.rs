@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionType, NodeId};
+use iroh::{endpoint::ConnectionType, EndpointId};
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
@@ -316,7 +316,7 @@ pub struct LatencyResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThroughputResult {
     pub test_type: TestType,
-    pub remote_id: NodeId,
+    pub remote_id: EndpointId,
     pub duration: Duration,
     pub data_size_mb: u64,
     pub bytes_sent: u64,
@@ -335,7 +335,7 @@ impl Default for ThroughputResult {
     fn default() -> Self {
         Self {
             test_type: TestType::default(),
-            remote_id: NodeId::from_bytes(&[0; 32]).unwrap(),
+            remote_id: EndpointId::from_bytes(&[0; 32]).unwrap(),
             duration: Duration::ZERO,
             data_size_mb: 0,
             bytes_sent: 0,
@@ -356,7 +356,7 @@ impl ThroughputResult {
     /// Create a new ThroughputResult with basic parameters
     pub fn new(
         test_type: TestType,
-        remote_id: NodeId,
+        remote_id: EndpointId,
         duration: Duration,
         data_size: u64,
         parallel_streams: usize,
@@ -407,7 +407,7 @@ impl ThroughputResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintResult {
     pub test_type: TestType,
-    pub remote_id: NodeId,
+    pub remote_id: EndpointId,
     pub duration: Duration,
     pub latency: Option<LatencyResult>,
     pub throughput: Option<ThroughputResult>,
@@ -419,7 +419,7 @@ impl Default for FingerprintResult {
     fn default() -> Self {
         Self {
             test_type: TestType::default(),
-            remote_id: NodeId::from_bytes(&[0; 32]).unwrap(),
+            remote_id: EndpointId::from_bytes(&[0; 32]).unwrap(),
             duration: Duration::ZERO,
             latency: None,
             throughput: None,
@@ -435,7 +435,7 @@ pub struct ErrorResult {
     pub error: String,
     pub duration: Duration,
     pub test_type: Option<TestType>,
-    pub remote_id: Option<NodeId>,
+    pub remote_id: Option<EndpointId>,
     pub connection_type: Option<ConnectionType>,
 }
 
