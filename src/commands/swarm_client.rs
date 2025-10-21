@@ -3,7 +3,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::{bail, Result};
-use iroh::{NodeId, SecretKey};
+use iroh::{EndpointId, SecretKey};
 use tracing::info;
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 /// Run the swarm client command
 pub async fn run_swarm_client(
     ssh_key: PathBuf,
-    coordinator: NodeId,
+    coordinator: EndpointId,
     assignment_interval: u64,
     name: Option<String>,
     secret_key: SecretKey,

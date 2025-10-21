@@ -15,11 +15,10 @@ use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
     endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
     metrics::MagicsockMetrics,
-    Endpoint, NodeId, RelayMap, RelayMode, RelayNode, RelayUrl, SecretKey,
+    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
-use n0_watcher::Watcher;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -122,7 +121,7 @@ pub enum Commands {
     /// Connect to an iroh doctor accept node.
     Connect {
         /// Hexadecimal node id of the node to connect to.
-        dial: NodeId,
+        dial: EndpointId,
 
         /// One or more remote endpoints to use when dialing.
         #[clap(long)]
@@ -218,7 +217,7 @@ pub enum Commands {
         ssh_key: PathBuf,
         /// Backend coordinator node ID
         #[clap(long, required = true)]
-        coordinator: NodeId,
+        coordinator: EndpointId,
         /// Assignment polling interval in seconds
         #[clap(long, default_value_t = 2)]
         assignment_interval: u64,
@@ -349,7 +348,7 @@ pub struct Gui {
 
 impl Gui {
     /// Create a new GUI struct.
-    pub fn new(endpoint: Endpoint, node_id: NodeId) -> Self {
+    pub fn new(endpoint: Endpoint, node_id: EndpointId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
@@ -390,7 +389,7 @@ impl Gui {
     }
 
     /// Updates the information of the target progress bar.
-    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
+    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
@@ -399,13 +398,13 @@ impl Gui {
 
         let msg = if let Some(conn_type) = conn_type {
             let latency = format_latency(endpoint.latency(*node_id));
-            let node_addr = endpoint.node_addr();
-            let relay_url = node_addr.relay_url.as_ref();
+            let node_addr = endpoint.addr();
+            let relay_url = node_addr.relay_urls().next().clone();
             let relay_url = relay_url
                 .map(|relay_url| relay_url.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             let addrs = node_addr
-                .direct_addresses
+                .ip_addrs()
                 .into_iter()
                 .map(|addr| addr.to_string())
                 .collect::<Vec<_>>()
@@ -634,7 +633,7 @@ pub async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<(
 /// Configures a relay map with some default values.
 fn configure_local_relay_map() -> RelayMap {
     let url = "http://localhost:3340".parse().unwrap();
-    RelayMap::from(RelayNode {
+    RelayMap::from(RelayConfig {
         url,
         quic: Some(RelayQuicConfig::default()),
     })
@@ -648,7 +647,7 @@ async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     discovery: Option<ConcurrentDiscovery>,
-    service_node: Option<NodeId>,
+    service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
     socket_addr: Option<SocketAddr>,
@@ -734,7 +733,7 @@ pub fn format_addr(addr: SocketAddr) -> String {
 /// Logs the connection changes to the multiprogress.
 pub fn log_connection_changes(
     pb: MultiProgress,
-    node_id: NodeId,
+    node_id: EndpointId,
     mut conn_type: n0_watcher::Direct<ConnectionType>,
 ) {
     tokio::spawn(async move {
@@ -794,7 +793,7 @@ fn create_discovery(
 pub async fn run(
     command: Commands,
     config: &NodeConfig,
-    service_node: Option<NodeId>,
+    service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
@@ -833,7 +832,7 @@ pub async fn run(
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
-                let url = dm.urls().next().unwrap().clone();
+                let url = dm.urls::<Vec<_>>().pop().unwrap().clone();
                 (Some(dm), Some(url))
             } else {
                 (config.relay_map()?, relay_url)

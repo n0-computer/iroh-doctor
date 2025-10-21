@@ -7,7 +7,7 @@ use futures_lite::future::race;
 use iroh::{
     endpoint::{Connection, StreamId},
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, NodeId,
+    Endpoint, EndpointId,
 };
 use iroh_n0des;
 use tokio::{sync::broadcast, task::JoinSet};
@@ -37,7 +37,7 @@ struct SwarmProtocolHandler;
 
 impl ProtocolHandler for SwarmProtocolHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let remote = connection.remote_node_id()?;
+        let remote = connection.remote_id()?;
         debug!("Accepted test connection from {:?}", remote);
 
         // Track stream handling tasks
@@ -73,7 +73,7 @@ impl ProtocolHandler for SwarmProtocolHandler {
 
 async fn assignment_processing_task(
     client: Arc<SwarmClient>,
-    node_id: NodeId,
+    node_id: EndpointId,
     endpoint: Endpoint,
     stats: Arc<SwarmStats>,
     mut shutdown_rx: broadcast::Receiver<()>,
@@ -267,7 +267,7 @@ async fn run_swarm_client_inner(
     endpoint: Endpoint,
     ssh_key_path: &Path,
 ) {
-    let node_id = client.node_id();
+    let node_id = client.id();
 
     // Keep the n0des client alive for metrics collection
     let _rpc_client = match iroh_n0des::Client::builder(&endpoint)

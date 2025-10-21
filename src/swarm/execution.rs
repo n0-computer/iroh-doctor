@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use iroh::{endpoint::ConnectionType, Endpoint, NodeId, Watcher};
+use iroh::{endpoint::ConnectionType, Endpoint, EndpointId, Watcher};
 use tracing::{info, warn};
 
 use crate::swarm::{
@@ -20,14 +20,17 @@ use crate::swarm::{
 };
 
 /// Helper function to get the real connection type from the endpoint
-pub(crate) fn get_connection_type(endpoint: &Endpoint, node_id: NodeId) -> Option<ConnectionType> {
+pub(crate) fn get_connection_type(
+    endpoint: &Endpoint,
+    node_id: EndpointId,
+) -> Option<ConnectionType> {
     endpoint.conn_type(node_id).map(|mut watcher| watcher.get())
 }
 
 pub async fn perform_test_assignment(
     assignment: TestAssignment,
     endpoint: Endpoint,
-    _node_id: NodeId,
+    _node_id: EndpointId,
     data_transfer_timeout: Duration,
 ) -> Result<TestAssignmentResult> {
     let start = Instant::now();
