@@ -399,13 +399,12 @@ impl Gui {
         let msg = if let Some(conn_type) = conn_type {
             let latency = format_latency(endpoint.latency(*node_id));
             let node_addr = endpoint.addr();
-            let relay_url = node_addr.relay_urls().next().clone();
+            let relay_url = node_addr.relay_urls().next();
             let relay_url = relay_url
                 .map(|relay_url| relay_url.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             let addrs = node_addr
                 .ip_addrs()
-                .into_iter()
                 .map(|addr| addr.to_string())
                 .collect::<Vec<_>>()
                 .join("; ");
