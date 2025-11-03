@@ -14,7 +14,7 @@ pub(crate) struct Cli {
     #[clap(subcommand)]
     pub(crate) command: Commands,
 
-    /// Path to the configuration file, see https://iroh.computer/docs/reference/config.
+    /// Path to the configuration file
     #[clap(long)]
     pub(crate) config: Option<PathBuf>,
 
