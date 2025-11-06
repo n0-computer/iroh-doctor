@@ -66,11 +66,10 @@ impl DoctorClient {
         coordinator_addr: EndpointAddr,
         auth: Auth,
     ) -> Result<Self> {
-        let conn = IrohRemoteConnection::new(
-            endpoint.clone(),
-            coordinator_addr.clone(),
-            N0DES_DOCTOR_ALPN.to_vec(),
-        );
+        let conn = endpoint
+            .connect(coordinator_addr.clone(), N0DES_DOCTOR_ALPN)
+            .await?;
+        let conn = IrohRemoteConnection::new(conn);
         let client = DoctorServiceClient::boxed(conn);
 
         client
