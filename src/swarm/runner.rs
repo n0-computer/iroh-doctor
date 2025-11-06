@@ -37,7 +37,7 @@ struct SwarmProtocolHandler;
 
 impl ProtocolHandler for SwarmProtocolHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let remote = connection.remote_id()?;
+        let remote = connection.remote_id();
         debug!("Accepted test connection from {:?}", remote);
 
         // Track stream handling tasks
