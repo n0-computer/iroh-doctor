@@ -1,5 +1,4 @@
-use std::path::Path;
-use std::str::FromStr;
+use std::{path::Path, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};

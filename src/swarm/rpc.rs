@@ -230,8 +230,6 @@ pub struct DoctorRegister {
 /// Response to doctor registration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoctorRegisterResponse {
-    /// Confirmation status
-    pub status: String,
     /// Assigned project ID
     pub project_id: Uuid,
 }
