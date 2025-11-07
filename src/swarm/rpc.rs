@@ -438,18 +438,6 @@ pub struct GetNodeInfoResponse {
     pub project_id: Uuid,
 }
 
-/// Submit metrics update
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PutMetrics {
-    pub update: iroh_metrics::encoding::Update,
-}
-
-/// Metrics submission response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PutMetricsResponse {
-    pub stored_count: u64,
-}
-
 /// Doctor protocol errors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DoctorError {
@@ -484,6 +472,4 @@ pub enum DoctorProtocol {
     MarkTestStarted(MarkTestStarted),
     #[rpc(tx = oneshot::Sender<Result<GetTestRunStatusResponse, DoctorError>>)]
     GetTestRunStatus(GetTestRunStatus),
-    #[rpc(tx = oneshot::Sender<Result<PutMetricsResponse, DoctorError>>)]
-    PutMetrics(PutMetrics),
 }
