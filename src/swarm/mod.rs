@@ -18,7 +18,7 @@ pub use rpc::{
     DoctorMessage, DoctorProtocol, DoctorRegister, DoctorRegisterResponse, DoctorService,
     GetNodeInfo, GetNodeInfoResponse, GetTestAssignments, GetTestAssignmentsResponse,
     GetTestRunStatus, GetTestRunStatusResponse, MarkTestStarted, MarkTestStartedResponse,
-    PutMetrics, PutMetricsResponse, TestAssignment, TestPair, TestPairResult, TestResultReport,
+    TestAssignment, TestPair, TestPairResult, TestResultReport,
 };
 pub use runner::run_swarm_client;
 pub use types::{
