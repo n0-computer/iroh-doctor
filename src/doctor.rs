@@ -428,6 +428,9 @@ impl Gui {
             let recv_data_relay = HumanBytes(metrics.recv_data_relay.get());
             let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
             let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
+
+            let latency_histogram = Self::format_histogram(&metrics.connection_latency_ms);
+
             let text = format!(
                 r#"Counters
 
@@ -440,10 +443,53 @@ Ipv4:
 Ipv6:
   send: {send_ipv6}
   recv: {recv_data_ipv6}
+
+Connection Latency Distribution (ms):
+{latency_histogram}
 "#,
             );
             target.set_message(text);
         }
+    }
+
+    /// Formats histogram bucket distribution for display.
+    fn format_histogram(histogram: &iroh_metrics::Histogram) -> String {
+        let count = histogram.count();
+        if count == 0 {
+            return "  No data collected yet".to_string();
+        }
+
+        let buckets = histogram.buckets();
+        let mut result = String::new();
+
+        let mut prev_bound = 0.0;
+        for (upper_bound, cumulative_count) in buckets {
+            if upper_bound.is_infinite() {
+                result.push_str(&format!(
+                    "  {:.1}+ ms: {} samples\n",
+                    prev_bound, cumulative_count
+                ));
+            } else {
+                result.push_str(&format!(
+                    "  {:.1}-{:.1} ms: {} samples\n",
+                    prev_bound, upper_bound, cumulative_count
+                ));
+                prev_bound = upper_bound;
+            }
+        }
+
+        let sum = histogram.sum();
+        let avg = sum / count as f64;
+        let p50 = histogram.percentile(0.5);
+        let p95 = histogram.percentile(0.95);
+        let p99 = histogram.percentile(0.99);
+
+        result.push_str(&format!(
+            "  Total: {} samples, Avg: {:.2}ms, p50: {:.2}ms, p95: {:.2}ms, p99: {:.2}ms",
+            count, avg, p50, p95, p99
+        ));
+
+        result
     }
 
     /// Sets the "send" text and the speed for the progress bar.
