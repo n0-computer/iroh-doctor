@@ -27,7 +27,7 @@ iroh-base = { version = "0.95" }
 iroh-metrics = { version = "0.37", features = ["service", "static_core"] }
 iroh-n0des = { version = "0.6.0" }
 iroh-relay = { version = "0.95" }
-netwatch = { version = "0.9" }
+netwatch = { version = "0.12" }
 n0-watcher = "0.5"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
@@ -62,3 +62,13 @@ url = "2.5.2"
 [dev-dependencies]
 iroh-base = { version = "0.95.0" }
 url = "2.5.2"
+
+[patch.crates-io]
+iroh = { git = "https://github.com/n0-computer/iroh", branch = "feat-multipath" }
+iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "feat-multipath" }
+iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "feat-multipath" }
+irpc = { git = "https://github.com/n0-computer/irpc", branch = "feat-multipath" }
+irpc-iroh = { git = "https://github.com/n0-computer/irpc", branch = "feat-multipath" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }

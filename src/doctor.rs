@@ -373,7 +373,7 @@ impl Gui {
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_remote_info(&remote_info, &endpoint, &node_id);
+                Self::update_remote_info(&remote_info, &endpoint, &node_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -389,7 +389,7 @@ impl Gui {
     }
 
     /// Updates the information of the target progress bar.
-    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
+    async fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
@@ -397,7 +397,7 @@ impl Gui {
         let conn_type = endpoint.conn_type(*node_id).map(|mut c| c.get());
 
         let msg = if let Some(conn_type) = conn_type {
-            let latency = format_latency(endpoint.latency(*node_id));
+            let latency = format_latency(endpoint.latency(*node_id).await);
             let node_addr = endpoint.addr();
             let relay_url = node_addr.relay_urls().next();
             let relay_url = relay_url
