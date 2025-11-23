@@ -274,7 +274,7 @@ async fn run_swarm_client_inner(
         .ssh_key_from_file(ssh_key_path)
         .await
     {
-        Ok(builder) => match builder.build(config.coordinator_node_id).await {
+        Ok(builder) => match builder.remote(config.coordinator_node_id).build().await {
             Ok(client) => client,
             Err(e) => {
                 error!("Failed to build n0des client: {}", e);

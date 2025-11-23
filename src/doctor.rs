@@ -745,7 +745,8 @@ async fn make_endpoint(
         let client = iroh_n0des::Client::builder(&endpoint)
             .ssh_key_from_file(ssh_key_path)
             .await?
-            .build(remote_node)
+            .remote(remote_node)
+            .build()
             .await?;
         Some(client)
     } else {
