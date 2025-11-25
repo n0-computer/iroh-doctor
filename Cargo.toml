@@ -25,8 +25,7 @@ indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.95", features = ["metrics"] }
 iroh-base = "0.95"
 iroh-metrics = { version = "0.37", features = ["service", "static_core"] }
-# iroh-n0des = "0.6"
-iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "main" }
+iroh-n0des = "0.7"
 iroh-relay = "0.95"
 netwatch = "0.12"
 n0-watcher = "0.5"
