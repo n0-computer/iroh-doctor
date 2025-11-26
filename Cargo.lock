@@ -1953,8 +1953,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-n0des"
-version = "0.6.0"
-source = "git+https://github.com/n0-computer/iroh-n0des?branch=main#9045d976ffdced9e7cbbfbf14f036ef8630130df"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "209a5478c7d797546d71e5fc5995bae5cd6c9ccb7761409aa76657c755055f1b"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1987,7 +1988,8 @@ dependencies = [
 [[package]]
 name = "iroh-n0des-macro"
 version = "0.2.0"
-source = "git+https://github.com/n0-computer/iroh-n0des?branch=main#9045d976ffdced9e7cbbfbf14f036ef8630130df"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e15d38b6ae3d9480e49883bea72880f80d595276e34090f5096d844e6f7f5e40"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5277,3 +5279,8 @@ dependencies = [
  "quote",
  "syn 2.0.111",
 ]
+
+[[patch.unused]]
+name = "iroh-n0des"
+version = "0.6.0"
+source = "git+https://github.com/n0-computer/iroh-n0des?branch=main#9045d976ffdced9e7cbbfbf14f036ef8630130df"
