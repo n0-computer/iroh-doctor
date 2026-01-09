@@ -97,7 +97,7 @@ mod tests {
     use super::*;
 
     fn create_test_report() -> ExtendedNetworkReport {
-        let base = iroh::net_report::Report {
+        let base = iroh::NetReport {
             udp_v4: true,
             global_v4: Some(std::net::SocketAddrV4::new(
                 std::net::Ipv4Addr::new(203, 0, 113, 1),

@@ -13,12 +13,13 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-    endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
+    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::MagicsockMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
+use n0_future::stream::StreamExt;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -348,11 +349,14 @@ pub struct Gui {
 
 impl Gui {
     /// Create a new GUI struct.
-    pub fn new(endpoint: Endpoint, node_id: EndpointId) -> Self {
+    /// If `remote_info` is provided (from Monitor), it will be added to the MultiProgress.
+    pub fn new(remote_info: Option<ProgressBar>) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
-        let remote_info = mp.add(ProgressBar::hidden());
+        if let Some(ref pb) = remote_info {
+            mp.add(pb.clone());
+        }
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
@@ -362,7 +366,9 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
-        remote_info.set_style(style.clone());
+        if let Some(ref pb) = remote_info {
+            pb.set_style(style.clone());
+        }
         counters.set_style(style);
         let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -370,13 +376,14 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
+
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_remote_info(&remote_info, &endpoint, &node_id);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
+
         Self {
             mp,
             pb,
@@ -386,36 +393,6 @@ impl Gui {
             echo_pb,
             counter_task: Some(AbortOnDropHandle::new(counter_task)),
         }
-    }
-
-    /// Updates the information of the target progress bar.
-    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
-        let format_latency = |x: Option<Duration>| {
-            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-        let conn_type = endpoint.conn_type(*node_id).map(|mut c| c.get());
-
-        let msg = if let Some(conn_type) = conn_type {
-            let latency = format_latency(endpoint.latency(*node_id));
-            let node_addr = endpoint.addr();
-            let relay_url = node_addr.relay_urls().next();
-            let relay_url = relay_url
-                .map(|relay_url| relay_url.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let addrs = node_addr
-                .ip_addrs()
-                .map(|addr| addr.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-
-            format!(
-                "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
-            )
-        } else {
-            "connection info unavailable".to_string()
-        };
-        target.set_message(msg);
     }
 
     /// Updates the counters for the target progress bar.
@@ -429,8 +406,6 @@ impl Gui {
             let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
             let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
 
-            let latency_histogram = Self::format_histogram(&metrics.connection_latency_ms);
-
             let text = format!(
                 r#"Counters
 
@@ -443,53 +418,10 @@ Ipv4:
 Ipv6:
   send: {send_ipv6}
   recv: {recv_data_ipv6}
-
-Connection Latency Distribution (ms):
-{latency_histogram}
 "#,
             );
             target.set_message(text);
         }
-    }
-
-    /// Formats histogram bucket distribution for display.
-    fn format_histogram(histogram: &iroh_metrics::Histogram) -> String {
-        let count = histogram.count();
-        if count == 0 {
-            return "  No data collected yet".to_string();
-        }
-
-        let buckets = histogram.buckets();
-        let mut result = String::new();
-
-        let mut prev_bound = 0.0;
-        for (upper_bound, cumulative_count) in buckets {
-            if upper_bound.is_infinite() {
-                result.push_str(&format!(
-                    "  {:.1}+ ms: {} samples\n",
-                    prev_bound, cumulative_count
-                ));
-            } else {
-                result.push_str(&format!(
-                    "  {:.1}-{:.1} ms: {} samples\n",
-                    prev_bound, upper_bound, cumulative_count
-                ));
-                prev_bound = upper_bound;
-            }
-        }
-
-        let sum = histogram.sum();
-        let avg = sum / count as f64;
-        let p50 = histogram.percentile(0.5);
-        let p95 = histogram.percentile(0.95);
-        let p99 = histogram.percentile(0.99);
-
-        result.push_str(&format!(
-            "  Total: {} samples, Avg: {:.2}ms, p50: {:.2}ms, p95: {:.2}ms, p99: {:.2}ms",
-            count, avg, p50, p95, p99
-        ));
-
-        result
     }
 
     /// Sets the "send" text and the speed for the progress bar.
@@ -688,6 +620,7 @@ fn configure_local_relay_map() -> RelayMap {
 pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
 /// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
+#[allow(clippy::too_many_arguments)]
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
@@ -696,6 +629,7 @@ async fn make_endpoint(
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
     socket_addr: Option<SocketAddr>,
+    hooks: Option<crate::monitor::Monitor>,
 ) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
     tracing::info!(
         "public key: {}",
@@ -703,9 +637,10 @@ async fn make_endpoint(
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = endpoint::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-    transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+    let transport_config = endpoint::QuicTransportConfig::builder()
+        .keep_alive_interval(Duration::from_secs(5))
+        .max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()))
+        .build();
 
     let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
@@ -713,14 +648,7 @@ async fn make_endpoint(
         .transport_config(transport_config);
 
     if let Some(address) = socket_addr {
-        match address {
-            SocketAddr::V6(addr) => {
-                endpoint = endpoint.bind_addr_v6(addr);
-            }
-            SocketAddr::V4(addr) => {
-                endpoint = endpoint.bind_addr_v4(addr);
-            }
-        }
+        endpoint = endpoint.bind_addr((address.ip(), address.port()))?;
     }
 
     let endpoint = match discovery {
@@ -732,6 +660,12 @@ async fn make_endpoint(
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
         None => endpoint,
     };
+
+    let endpoint = match hooks {
+        Some(hooks) => endpoint.hooks(hooks),
+        None => endpoint,
+    };
+
     let endpoint = endpoint.bind().await?;
 
     {
@@ -779,17 +713,47 @@ pub fn format_addr(addr: SocketAddr) -> String {
 /// Logs the connection changes to the multiprogress.
 pub fn log_connection_changes(
     pb: MultiProgress,
-    node_id: EndpointId,
-    mut conn_type: n0_watcher::Direct<ConnectionType>,
+    endpoint_id: EndpointId,
+    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
 ) {
+    let start = Instant::now();
+    let id = endpoint_id.fmt_short();
+
     tokio::spawn(async move {
-        let start = Instant::now();
-        while let Ok(conn_type) = conn_type.updated().await {
-            pb.println(format!(
-                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
-                start.elapsed()
-            ))
-            .ok();
+        let mut stream = paths_watcher.stream();
+        let mut previous = None;
+        while let Some(paths) = stream.next().await {
+            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
+                // We can get path updates without the selected path changing. We don't want to log again in that case.
+                if Some(path) == previous.as_ref() {
+                    continue;
+                }
+                pb.println(format!(
+                    "[{id}] Connection type changed to: {:?} (RTT: {:?}) (after {:?})",
+                    path.remote_addr(),
+                    path.rtt(),
+                    start.elapsed()
+                ))
+                .ok();
+
+                println!();
+                previous = Some(path.clone());
+            } else if !paths.is_empty() {
+                pb.println(format!(
+                    "[{id}] Connection type changed to: mixed ({} paths) (after {:?})",
+                    paths.len(),
+                    start.elapsed()
+                ))
+                .ok();
+                previous = None;
+            } else {
+                pb.println(format!(
+                    "[{id}] Connection type changed to none (no active transmission paths) (after {:?})",
+                    start.elapsed()
+                ))
+                .ok();
+                previous = None;
+            }
         }
     });
 }
@@ -886,6 +850,8 @@ pub async fn run(
             let secret_key = create_secret_key(secret_key)?;
             let discovery = create_discovery(disable_discovery, &secret_key);
 
+            let remote_info = ProgressBar::hidden();
+            let monitor = crate::monitor::Monitor::new(remote_info.clone());
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
@@ -894,12 +860,19 @@ pub async fn run(
                 ssh_key,
                 metrics.iroh.clone(),
                 socket_addr,
+                Some(monitor),
             )
             .await?;
 
             futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-                if let Err(e) =
-                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await
+                if let Err(e) = commands::connect::connect(
+                    dial,
+                    remote_endpoint,
+                    relay_url,
+                    endpoint,
+                    remote_info,
+                )
+                .await
                 {
                     eprintln!("connect error: {e}");
                 }
@@ -925,6 +898,8 @@ pub async fn run(
             let config = TestConfig { size, iterations };
             let discovery = create_discovery(disable_discovery, &secret_key);
 
+            let remote_info = ProgressBar::hidden();
+            let monitor = crate::monitor::Monitor::new(remote_info.clone());
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
@@ -933,11 +908,14 @@ pub async fn run(
                 ssh_key,
                 metrics.iroh.clone(),
                 socket_addr,
+                Some(monitor),
             )
             .await?;
 
             futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-                if let Err(e) = commands::accept::accept(secret_key, config, endpoint).await {
+                if let Err(e) =
+                    commands::accept::accept(secret_key, config, endpoint, remote_info).await
+                {
                     eprintln!("accept error: {e}");
                 }
             })

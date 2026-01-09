@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 
+use indicatif::ProgressBar;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 
 use crate::doctor::{log_connection_changes, passive_side, Gui, DR_RELAY_ALPN};
@@ -12,6 +13,7 @@ pub async fn connect(
     direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
     endpoint: Endpoint,
+    remote_info: ProgressBar,
 ) -> anyhow::Result<()> {
     tracing::info!("dialing {:?}", endpoint_id);
     let mut endpoint_addr = EndpointAddr::new(endpoint_id);
@@ -24,11 +26,9 @@ pub async fn connect(
     let conn = endpoint.connect(endpoint_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            let maybe_conn_type = endpoint.conn_type(endpoint_id);
-            let gui = Gui::new(endpoint, endpoint_id);
-            if let Some(conn_type) = maybe_conn_type {
-                log_connection_changes(gui.mp.clone(), endpoint_id, conn_type);
-            }
+            let paths = connection.paths();
+            let gui = Gui::new(Some(remote_info));
+            log_connection_changes(gui.mp.clone(), endpoint_id, paths);
 
             let close_reason = connection
                 .close_reason()

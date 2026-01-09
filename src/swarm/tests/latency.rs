@@ -24,22 +24,12 @@ pub async fn run_latency_test_with_config(
 
     let conn = endpoint.connect(node_id, DOCTOR_SWARM_ALPN).await?;
 
-    run_latency_test_on_connection(
-        &conn,
-        endpoint,
-        node_id,
-        iterations,
-        ping_interval,
-        ping_timeout,
-    )
-    .await
+    run_latency_test_on_connection(&conn, iterations, ping_interval, ping_timeout).await
 }
 
 /// Run a latency test on an existing connection
 pub async fn run_latency_test_on_connection(
     conn: &Connection,
-    endpoint: &Endpoint,
-    node_id: EndpointId,
     iterations: u32,
     ping_interval: Duration,
     ping_timeout: Duration,
@@ -129,6 +119,6 @@ pub async fn run_latency_test_on_connection(
         total_iterations: iterations,
         duration: start.elapsed(),
         error: None,
-        connection_type: get_connection_type(endpoint, node_id),
+        connection_type: get_connection_type(conn),
     })
 }

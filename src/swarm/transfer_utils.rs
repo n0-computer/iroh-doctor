@@ -10,7 +10,7 @@ use iroh::endpoint::{RecvStream, SendStream};
 ///
 /// Adapted from iroh/examples/transfer.rs
 pub async fn drain_stream(
-    stream: &mut RecvStream,
+    mut stream: RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
@@ -22,8 +22,9 @@ pub async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
+        let mut stream = stream.into_unordered();
         while let Some(chunk) = stream
-            .read_chunk(usize::MAX, false)
+            .read_chunk(usize::MAX)
             .await
             .context("Failed to read chunk")?
         {
@@ -106,13 +107,13 @@ pub async fn send_data_on_stream(
 /// Bidirectional transfer: receive data while simultaneously sending response data
 pub async fn handle_bidirectional_transfer(
     mut send: SendStream,
-    mut recv: RecvStream,
+    recv: RecvStream,
     data_size: u64,
     chunk_size: usize,
 ) -> Result<(u64, u64, Duration)> {
     let start = Instant::now();
 
-    let recv_task = tokio::spawn(async move { drain_stream(&mut recv, false).await });
+    let recv_task = tokio::spawn(async move { drain_stream(recv, false).await });
 
     let send_task =
         tokio::spawn(async move { send_data_on_stream(&mut send, data_size, chunk_size).await });
