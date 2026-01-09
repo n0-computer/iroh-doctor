@@ -23,16 +23,16 @@ futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.95", features = ["metrics"] }
-iroh-base = { version = "0.95" }
+iroh-base = "0.95"
 iroh-metrics = { version = "0.37", features = ["service", "static_core"] }
-iroh-n0des = { version = "0.6.0" }
-iroh-relay = { version = "0.95" }
-netwatch = { version = "0.12" }
+iroh-n0des = "0.7"
+iroh-relay = "0.95"
+netwatch = "0.12"
 n0-watcher = "0.5"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
-portmapper = "0.11"
+portmapper = "0.12"
 prometheus-client = "0.24"
 quinn = { package = "iroh-quinn", version = "0.14" }
 rand = "0.9"
@@ -54,13 +54,12 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "1.0"
 ed25519-dalek = "3.0.0-pre.1"
 irpc = { version = "0.11", features = ["derive", "default"] }
-irpc-iroh = { version = "0.11" }
-rcan = "0.2.0"
+irpc-iroh = "0.11"
+rcan = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 url = "2.5.2"
 
 [dev-dependencies]
-iroh-base = { version = "0.95.0" }
 url = "2.5.2"
 
 [patch.crates-io]
