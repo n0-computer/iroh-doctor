@@ -24,8 +24,8 @@ hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.95", features = ["metrics"] }
 iroh-base = "0.95"
-iroh-metrics = { version = "0.37", features = ["service", "static_core"] }
-iroh-n0des = "0.7"
+iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
+iroh-n0des = "0.8"
 iroh-relay = "0.95"
 netwatch = "0.12"
 n0-watcher = "0.5"
@@ -34,7 +34,7 @@ portable-atomic = "1.9.0"
 postcard = "1.0.10"
 portmapper = "0.12"
 prometheus-client = "0.24"
-quinn = { package = "iroh-quinn", version = "0.14" }
+quinn = { package = "iroh-quinn", version = "0.15" }
 rand = "0.9"
 ratatui = "0.29.0"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -63,11 +63,9 @@ url = "2.5.2"
 url = "2.5.2"
 
 [patch.crates-io]
-iroh = { git = "https://github.com/n0-computer/iroh", branch = "feat-multipath" }
-iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "feat-multipath" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "feat-multipath" }
+iroh = { git = "https://github.com/n0-computer/iroh", branch = "release-0-96" }
+iroh-base = { git = "https://github.com/n0-computer/iroh", branch = "release-0-96" }
+iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "release-0-96" }
 irpc = { git = "https://github.com/n0-computer/irpc", branch = "feat-multipath" }
 irpc-iroh = { git = "https://github.com/n0-computer/irpc", branch = "feat-multipath" }
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "feat-multipath" }

@@ -3,7 +3,8 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use iroh::{endpoint::ConnectionType, Endpoint, EndpointId, Watcher};
+use iroh::{endpoint::Connection, Endpoint, EndpointId, TransportAddr, Watcher};
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::swarm::{
@@ -19,12 +20,29 @@ use crate::swarm::{
     },
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum ConnectionType {
+    Ip,
+    Relay,
+}
+
+impl From<&TransportAddr> for ConnectionType {
+    fn from(value: &TransportAddr) -> Self {
+        match value {
+            TransportAddr::Ip(_) => ConnectionType::Ip,
+            TransportAddr::Relay(_) => ConnectionType::Relay,
+            _ => panic!(),
+        }
+    }
+}
+
 /// Helper function to get the real connection type from the endpoint
-pub(crate) fn get_connection_type(
-    endpoint: &Endpoint,
-    node_id: EndpointId,
-) -> Option<ConnectionType> {
-    endpoint.conn_type(node_id).map(|mut watcher| watcher.get())
+pub(crate) fn get_connection_type(conn: &Connection) -> Option<ConnectionType> {
+    conn.paths()
+        .get()
+        .into_iter()
+        .find(|path| path.is_selected())
+        .map(|path| path.remote_addr().into())
 }
 
 pub async fn perform_test_assignment(
@@ -102,7 +120,7 @@ async fn execute_throughput_test(
                         parallel_streams,
                         chunk_size_bytes,
                     )
-                    .with_connection_type(get_connection_type(&endpoint, assignment.node_id))
+                    .with_connection_type(get_connection_type(&conn))
                     .with_transfer_results(
                         result.bytes_sent,
                         result.bytes_received,
@@ -121,7 +139,7 @@ async fn execute_throughput_test(
                         duration: start.elapsed(),
                         test_type: Some(assignment.test_type),
                         remote_id: Some(assignment.node_id),
-                        connection_type: get_connection_type(&endpoint, assignment.node_id),
+                        connection_type: get_connection_type(&conn),
                     }))
                 }
                 Err(_) => {
@@ -131,7 +149,7 @@ async fn execute_throughput_test(
                         duration: start.elapsed(),
                         test_type: Some(assignment.test_type),
                         remote_id: Some(assignment.node_id),
-                        connection_type: get_connection_type(&endpoint, assignment.node_id),
+                        connection_type: get_connection_type(&conn),
                     }))
                 }
             }
@@ -279,7 +297,7 @@ async fn execute_fingerprint_test(
         parallel_streams,
         chunk_size_bytes,
     )
-    .with_connection_type(get_connection_type(&endpoint, assignment.node_id));
+    .with_connection_type(get_connection_type(&connection));
 
     match tokio::time::timeout(
         data_transfer_timeout,
@@ -330,7 +348,7 @@ async fn execute_fingerprint_test(
         latency: latency_result,
         throughput: throughput_result,
         error: None,
-        connection_type: get_connection_type(&endpoint, assignment.node_id),
+        connection_type: get_connection_type(&connection),
     };
 
     info!("Fingerprint test completed. Success: {}", overall_success);
