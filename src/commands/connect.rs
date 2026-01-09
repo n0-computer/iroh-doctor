@@ -24,8 +24,8 @@ pub async fn connect(
     let conn = endpoint.connect(endpoint_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            let gui = Gui::new(endpoint, endpoint_id);
             let paths = connection.paths();
+            let gui = Gui::new(paths.clone());
             log_connection_changes(gui.mp.clone(), endpoint_id, paths);
 
             let close_reason = connection

@@ -15,7 +15,8 @@ use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
     endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::MagicsockMetrics,
-    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
+    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
+    Watcher,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -349,7 +350,7 @@ pub struct Gui {
 
 impl Gui {
     /// Create a new GUI struct.
-    pub fn new(endpoint: Endpoint, node_id: EndpointId) -> Self {
+    pub fn new(paths: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
@@ -372,14 +373,15 @@ impl Gui {
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
 
-        // TODO: install monitor with `remote_info`
-
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
+
+        tokio::spawn(Self::update_remote_info_task(remote_info, paths));
+
         Self {
             mp,
             pb,
@@ -388,6 +390,50 @@ impl Gui {
             recv_pb,
             echo_pb,
             counter_task: Some(AbortOnDropHandle::new(counter_task)),
+        }
+    }
+
+    async fn update_remote_info_task(
+        target: ProgressBar,
+        paths: impl Watcher<Value = PathInfoList> + Send + Unpin,
+    ) {
+        let format_latency = |x: Option<Duration>| {
+            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
+                .unwrap_or_else(|| "unknown".to_string())
+        };
+
+        let mut stream = paths.stream();
+        while let Some(infos) = stream.next().await {
+            let rtt = infos.iter().map(|p| p.rtt()).min();
+            let latency = format_latency(rtt);
+
+            let mut relay_urls = Vec::new();
+            let mut ips = Vec::new();
+            let mut conn_type = None;
+
+            for info in infos.iter() {
+                match info.remote_addr() {
+                    TransportAddr::Relay(addr) => relay_urls.push(addr.to_string()),
+                    TransportAddr::Ip(addr) => ips.push(addr.to_string()),
+                    _ => {}
+                }
+                if info.is_selected() {
+                    conn_type.replace(info.remote_addr());
+                }
+            }
+
+            let relay_urls = relay_urls.join("; ");
+            let addrs = ips.join("; ");
+            let conn_type = match conn_type {
+                None => "unknown",
+                Some(TransportAddr::Relay(_)) => "relay",
+                Some(TransportAddr::Ip(_)) => "direct",
+                Some(_) => "unknown",
+            };
+
+            target.set_message(format!(
+                "relay urls: [{relay_urls}], latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
+            ));
         }
     }
 

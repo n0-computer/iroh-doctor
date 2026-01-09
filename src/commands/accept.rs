@@ -52,7 +52,6 @@ pub async fn accept(
             }
         };
         let connections = connections.clone();
-        let endpoint = endpoint.clone();
         tokio::task::spawn(async move {
             let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
             match connecting.await {
@@ -61,8 +60,8 @@ pub async fn accept(
                         let remote_peer_id = connection.remote_id();
                         println!("Accepted connection from {remote_peer_id}");
                         let t0 = Instant::now();
-                        let gui = Gui::new(endpoint.clone(), remote_peer_id);
                         let paths = connection.paths();
+                        let gui = Gui::new(paths.clone());
                         log_connection_changes(gui.mp.clone(), remote_peer_id, paths);
 
                         let res = active_side(&connection, &config, Some(&gui)).await;
