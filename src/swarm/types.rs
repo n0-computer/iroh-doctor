@@ -121,7 +121,7 @@ pub struct StreamStats {
 pub struct ConnectionStats {
     /// Round-trip time in milliseconds
     pub rtt_ms: u32,
-    /// Smoothed round-trip time in milliseconds  
+    /// Smoothed round-trip time in milliseconds
     pub smoothed_rtt_ms: u32,
     /// Latest RTT sample in milliseconds
     pub latest_rtt_ms: u32,
@@ -147,6 +147,12 @@ pub struct ConnectionStats {
     pub lost_plpmtu_probes: u64,
     /// Number of black hole events detected (when packets suddenly stop being delivered)
     pub black_hole_detected: u64,
+}
+
+impl From<quinn::ConnectionStats> for ConnectionStats {
+    fn from(stats: quinn::ConnectionStats) -> Self {
+        todo!()
+    }
 }
 
 impl From<quinn::PathStats> for ConnectionStats {

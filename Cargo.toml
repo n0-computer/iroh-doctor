@@ -25,9 +25,10 @@ indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.95", features = ["metrics"] }
 iroh-base = "0.95"
 iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
-iroh-n0des = "0.8"
+iroh-n0des = { version = "0.8", features = ["ssh-key"] }
 iroh-relay = "0.95"
 netwatch = "0.12"
+n0-future = "0.3"
 n0-watcher = "0.5"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
@@ -37,10 +38,7 @@ prometheus-client = "0.24"
 quinn = { package = "iroh-quinn", version = "0.15" }
 rand = "0.9"
 ratatui = "0.29.0"
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"

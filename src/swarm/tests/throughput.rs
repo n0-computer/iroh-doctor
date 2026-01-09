@@ -93,7 +93,12 @@ pub async fn run_bidirectional_throughput_test_with_config(
 
                 debug!(
                     "Stream {} completed: sent={}, received={}, upload_duration={:?}, download_duration={:?}, throughput={:.2} Mbps",
-                    idx, bytes_sent, bytes_received, upload_duration, download_duration, stream_throughput_mbps
+                    idx,
+                    bytes_sent,
+                    bytes_received,
+                    upload_duration,
+                    download_duration,
+                    stream_throughput_mbps
                 );
             }
             Ok(Err(e)) => {
@@ -184,7 +189,7 @@ async fn run_single_stream_test_with_config(
         stream_idx, data_size, chunk_size
     );
 
-    let (mut send, mut recv) = conn
+    let (mut send, recv) = conn
         .open_bi()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to open stream {stream_idx}: {e}"))?;
@@ -203,10 +208,9 @@ async fn run_single_stream_test_with_config(
     let upload_duration = upload_start.elapsed();
 
     let download_start = Instant::now();
-    let (bytes_received, _time_to_first_byte, _num_chunks) =
-        drain_stream(&mut recv, false)
-            .await
-            .map_err(|e| anyhow::anyhow!("Stream {stream_idx} download failed: {e}"))?;
+    let (bytes_received, _time_to_first_byte, _num_chunks) = drain_stream(recv, false)
+        .await
+        .map_err(|e| anyhow::anyhow!("Stream {stream_idx} download failed: {e}"))?;
     let download_duration = download_start.elapsed();
 
     let bytes_sent = data_size;
@@ -215,7 +219,8 @@ async fn run_single_stream_test_with_config(
     );
 
     debug!(
-        "Stream {stream_idx} completed: sent={bytes_sent} bytes in {upload_duration:?}, received={bytes_received} bytes in {download_duration:?}");
+        "Stream {stream_idx} completed: sent={bytes_sent} bytes in {upload_duration:?}, received={bytes_received} bytes in {download_duration:?}"
+    );
 
     Ok((
         bytes_sent,

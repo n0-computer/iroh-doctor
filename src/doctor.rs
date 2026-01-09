@@ -13,12 +13,13 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-    endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
+    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::MagicsockMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
+use n0_future::stream::StreamExt;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
@@ -370,10 +371,12 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
+
+        // TODO: install monitor with `remote_info`
+
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_remote_info(&remote_info, &endpoint, &node_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -388,36 +391,6 @@ impl Gui {
         }
     }
 
-    /// Updates the information of the target progress bar.
-    async fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
-        let format_latency = |x: Option<Duration>| {
-            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-        let conn_type = endpoint.conn_type(*node_id).map(|mut c| c.get());
-
-        let msg = if let Some(conn_type) = conn_type {
-            let latency = format_latency(endpoint.latency(*node_id).await);
-            let node_addr = endpoint.addr();
-            let relay_url = node_addr.relay_urls().next();
-            let relay_url = relay_url
-                .map(|relay_url| relay_url.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let addrs = node_addr
-                .ip_addrs()
-                .map(|addr| addr.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-
-            format!(
-                "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
-            )
-        } else {
-            "connection info unavailable".to_string()
-        };
-        target.set_message(msg);
-    }
-
     /// Updates the counters for the target progress bar.
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
@@ -428,8 +401,6 @@ impl Gui {
             let recv_data_relay = HumanBytes(metrics.recv_data_relay.get());
             let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
             let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
-
-            let latency_histogram = Self::format_histogram(&metrics.connection_latency_ms);
 
             let text = format!(
                 r#"Counters
@@ -443,9 +414,6 @@ Ipv4:
 Ipv6:
   send: {send_ipv6}
   recv: {recv_data_ipv6}
-
-Connection Latency Distribution (ms):
-{latency_histogram}
 "#,
             );
             target.set_message(text);
@@ -703,9 +671,10 @@ async fn make_endpoint(
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = endpoint::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-    transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+    let transport_config = endpoint::QuicTransportConfig::builder()
+        .keep_alive_interval(Duration::from_secs(5))
+        .max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()))
+        .build();
 
     let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
@@ -713,14 +682,7 @@ async fn make_endpoint(
         .transport_config(transport_config);
 
     if let Some(address) = socket_addr {
-        match address {
-            SocketAddr::V6(addr) => {
-                endpoint = endpoint.bind_addr_v6(addr);
-            }
-            SocketAddr::V4(addr) => {
-                endpoint = endpoint.bind_addr_v4(addr);
-            }
-        }
+        endpoint = endpoint.bind_addr((address.ip(), address.port()))?;
     }
 
     let endpoint = match discovery {
@@ -779,17 +741,47 @@ pub fn format_addr(addr: SocketAddr) -> String {
 /// Logs the connection changes to the multiprogress.
 pub fn log_connection_changes(
     pb: MultiProgress,
-    node_id: EndpointId,
-    mut conn_type: n0_watcher::Direct<ConnectionType>,
+    endpoint_id: EndpointId,
+    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
 ) {
+    let start = Instant::now();
+    let id = endpoint_id.fmt_short();
+
     tokio::spawn(async move {
-        let start = Instant::now();
-        while let Ok(conn_type) = conn_type.updated().await {
-            pb.println(format!(
-                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
-                start.elapsed()
-            ))
-            .ok();
+        let mut stream = paths_watcher.stream();
+        let mut previous = None;
+        while let Some(paths) = stream.next().await {
+            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
+                // We can get path updates without the selected path changing. We don't want to log again in that case.
+                if Some(path) == previous.as_ref() {
+                    continue;
+                }
+                pb.println(format!(
+                    "[{id}] Connection type changed to: {:?} (RTT: {:?}) (after {:?})",
+                    path.remote_addr(),
+                    path.rtt(),
+                    start.elapsed()
+                ))
+                .ok();
+
+                println!();
+                previous = Some(path.clone());
+            } else if !paths.is_empty() {
+                pb.println(format!(
+                    "[{id}] Connection type changed to: mixed ({} paths) (after {:?})",
+                    paths.len(),
+                    start.elapsed()
+                ))
+                .ok();
+                previous = None;
+            } else {
+                pb.println(format!(
+                    "[{id}] Connection type changed to none (no active transmission paths) (after {:?})",
+                    start.elapsed()
+                ))
+                .ok();
+                previous = None;
+            }
         }
     });
 }
