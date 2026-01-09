@@ -15,8 +15,7 @@ use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
     endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::MagicsockMetrics,
-    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
-    Watcher,
+    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -350,11 +349,14 @@ pub struct Gui {
 
 impl Gui {
     /// Create a new GUI struct.
-    pub fn new(paths: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static) -> Self {
+    /// If `remote_info` is provided (from Monitor), it will be added to the MultiProgress.
+    pub fn new(remote_info: Option<ProgressBar>) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
-        let remote_info = mp.add(ProgressBar::hidden());
+        if let Some(ref pb) = remote_info {
+            mp.add(pb.clone());
+        }
         let send_pb = mp.add(ProgressBar::hidden());
         let recv_pb = mp.add(ProgressBar::hidden());
         let echo_pb = mp.add(ProgressBar::hidden());
@@ -364,7 +366,9 @@ impl Gui {
         send_pb.set_style(style.clone());
         recv_pb.set_style(style.clone());
         echo_pb.set_style(style.clone());
-        remote_info.set_style(style.clone());
+        if let Some(ref pb) = remote_info {
+            pb.set_style(style.clone());
+        }
         counters.set_style(style);
         let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -380,8 +384,6 @@ impl Gui {
             }
         });
 
-        tokio::spawn(Self::update_remote_info_task(remote_info, paths));
-
         Self {
             mp,
             pb,
@@ -390,50 +392,6 @@ impl Gui {
             recv_pb,
             echo_pb,
             counter_task: Some(AbortOnDropHandle::new(counter_task)),
-        }
-    }
-
-    async fn update_remote_info_task(
-        target: ProgressBar,
-        paths: impl Watcher<Value = PathInfoList> + Send + Unpin,
-    ) {
-        let format_latency = |x: Option<Duration>| {
-            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-
-        let mut stream = paths.stream();
-        while let Some(infos) = stream.next().await {
-            let rtt = infos.iter().map(|p| p.rtt()).min();
-            let latency = format_latency(rtt);
-
-            let mut relay_urls = Vec::new();
-            let mut ips = Vec::new();
-            let mut conn_type = None;
-
-            for info in infos.iter() {
-                match info.remote_addr() {
-                    TransportAddr::Relay(addr) => relay_urls.push(addr.to_string()),
-                    TransportAddr::Ip(addr) => ips.push(addr.to_string()),
-                    _ => {}
-                }
-                if info.is_selected() {
-                    conn_type.replace(info.remote_addr());
-                }
-            }
-
-            let relay_urls = relay_urls.join("; ");
-            let addrs = ips.join("; ");
-            let conn_type = match conn_type {
-                None => "unknown",
-                Some(TransportAddr::Relay(_)) => "relay",
-                Some(TransportAddr::Ip(_)) => "direct",
-                Some(_) => "unknown",
-            };
-
-            target.set_message(format!(
-                "relay urls: [{relay_urls}], latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
-            ));
         }
     }
 
@@ -464,46 +422,6 @@ Ipv6:
             );
             target.set_message(text);
         }
-    }
-
-    /// Formats histogram bucket distribution for display.
-    fn format_histogram(histogram: &iroh_metrics::Histogram) -> String {
-        let count = histogram.count();
-        if count == 0 {
-            return "  No data collected yet".to_string();
-        }
-
-        let buckets = histogram.buckets();
-        let mut result = String::new();
-
-        let mut prev_bound = 0.0;
-        for (upper_bound, cumulative_count) in buckets {
-            if upper_bound.is_infinite() {
-                result.push_str(&format!(
-                    "  {:.1}+ ms: {} samples\n",
-                    prev_bound, cumulative_count
-                ));
-            } else {
-                result.push_str(&format!(
-                    "  {:.1}-{:.1} ms: {} samples\n",
-                    prev_bound, upper_bound, cumulative_count
-                ));
-                prev_bound = upper_bound;
-            }
-        }
-
-        let sum = histogram.sum();
-        let avg = sum / count as f64;
-        let p50 = histogram.percentile(0.5);
-        let p95 = histogram.percentile(0.95);
-        let p99 = histogram.percentile(0.99);
-
-        result.push_str(&format!(
-            "  Total: {} samples, Avg: {:.2}ms, p50: {:.2}ms, p95: {:.2}ms, p99: {:.2}ms",
-            count, avg, p50, p95, p99
-        ));
-
-        result
     }
 
     /// Sets the "send" text and the speed for the progress bar.
@@ -710,6 +628,7 @@ async fn make_endpoint(
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
     socket_addr: Option<SocketAddr>,
+    hooks: Option<crate::monitor::Monitor>,
 ) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
     tracing::info!(
         "public key: {}",
@@ -740,6 +659,12 @@ async fn make_endpoint(
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
         None => endpoint,
     };
+
+    let endpoint = match hooks {
+        Some(hooks) => endpoint.hooks(hooks),
+        None => endpoint,
+    };
+
     let endpoint = endpoint.bind().await?;
 
     {
@@ -924,6 +849,8 @@ pub async fn run(
             let secret_key = create_secret_key(secret_key)?;
             let discovery = create_discovery(disable_discovery, &secret_key);
 
+            let remote_info = ProgressBar::hidden();
+            let monitor = crate::monitor::Monitor::new(remote_info.clone());
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
@@ -932,12 +859,19 @@ pub async fn run(
                 ssh_key,
                 metrics.iroh.clone(),
                 socket_addr,
+                Some(monitor),
             )
             .await?;
 
             futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-                if let Err(e) =
-                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await
+                if let Err(e) = commands::connect::connect(
+                    dial,
+                    remote_endpoint,
+                    relay_url,
+                    endpoint,
+                    remote_info,
+                )
+                .await
                 {
                     eprintln!("connect error: {e}");
                 }
@@ -963,6 +897,8 @@ pub async fn run(
             let config = TestConfig { size, iterations };
             let discovery = create_discovery(disable_discovery, &secret_key);
 
+            let remote_info = ProgressBar::hidden();
+            let monitor = crate::monitor::Monitor::new(remote_info.clone());
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
@@ -971,11 +907,14 @@ pub async fn run(
                 ssh_key,
                 metrics.iroh.clone(),
                 socket_addr,
+                Some(monitor),
             )
             .await?;
 
             futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-                if let Err(e) = commands::accept::accept(secret_key, config, endpoint).await {
+                if let Err(e) =
+                    commands::accept::accept(secret_key, config, endpoint, remote_info).await
+                {
                     eprintln!("accept error: {e}");
                 }
             })

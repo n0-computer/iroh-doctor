@@ -150,7 +150,7 @@ pub struct ConnectionStats {
 }
 
 impl From<quinn::ConnectionStats> for ConnectionStats {
-    fn from(stats: quinn::ConnectionStats) -> Self {
+    fn from(_stats: quinn::ConnectionStats) -> Self {
         todo!()
     }
 }

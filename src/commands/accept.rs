@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Instant};
 
+use indicatif::ProgressBar;
 use iroh::{Endpoint, SecretKey};
 use portable_atomic::AtomicU64;
 use tracing::warn;
@@ -13,6 +14,7 @@ pub async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
     endpoint: Endpoint,
+    remote_info: ProgressBar,
 ) -> anyhow::Result<()> {
     let endpoint_addr = endpoint.addr();
 
@@ -52,6 +54,7 @@ pub async fn accept(
             }
         };
         let connections = connections.clone();
+        let remote_info = remote_info.clone();
         tokio::task::spawn(async move {
             let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
             match connecting.await {
@@ -61,7 +64,7 @@ pub async fn accept(
                         println!("Accepted connection from {remote_peer_id}");
                         let t0 = Instant::now();
                         let paths = connection.paths();
-                        let gui = Gui::new(paths.clone());
+                        let gui = Gui::new(Some(remote_info));
                         log_connection_changes(gui.mp.clone(), remote_peer_id, paths);
 
                         let res = active_side(&connection, &config, Some(&gui)).await;

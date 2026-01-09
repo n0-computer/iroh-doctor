@@ -21,7 +21,7 @@ use crate::swarm::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum ConnectionType {
+pub enum ConnectionType {
     Ip,
     Relay,
 }
