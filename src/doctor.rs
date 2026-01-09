@@ -620,6 +620,7 @@ fn configure_local_relay_map() -> RelayMap {
 pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
 /// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
+#[allow(clippy::too_many_arguments)]
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
