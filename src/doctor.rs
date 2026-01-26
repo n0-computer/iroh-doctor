@@ -12,7 +12,7 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+    address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
     endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
     metrics::MagicsockMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
@@ -105,12 +105,12 @@ pub enum Commands {
 
         /// Do not allow the node to dial and be dialed by id only.
         ///
-        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
-        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        /// This disables DNS address lookup, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for address lookup.
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
-        disable_discovery: bool,
+        disable_address_lookup: bool,
 
         /// Bind to this specific socket address.
         ///
@@ -149,12 +149,12 @@ pub enum Commands {
 
         /// Do not allow the node to dial and be dialed by id only.
         ///
-        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
-        /// It also disables Pkarr Publishing, which would allow the node to announce its address for DNS discovery.
+        /// This disables DNS address lookup, which would allow the node to dial other nodes by id only.
+        /// It also disables Pkarr Publishing, which would allow the node to announce its address for address lookup .
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
-        disable_discovery: bool,
+        disable_address_lookup: bool,
 
         /// Bind to this specific socket address.
         ///
@@ -687,11 +687,11 @@ fn configure_local_relay_map() -> RelayMap {
 /// ALPN protocol address.
 pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
-/// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
+/// Creates an iroh [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`AddressLookup`].
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
-    discovery: Option<ConcurrentDiscovery>,
+    address_lookup: Option<ConcurrentAddressLookup>,
     service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
@@ -703,9 +703,10 @@ async fn make_endpoint(
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = endpoint::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-    transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+    let transport_config = endpoint::QuicTransportConfig::builder()
+        .keep_alive_interval(Duration::from_secs(5))
+        .max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()))
+        .build();
 
     let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
@@ -713,18 +714,11 @@ async fn make_endpoint(
         .transport_config(transport_config);
 
     if let Some(address) = socket_addr {
-        match address {
-            SocketAddr::V6(addr) => {
-                endpoint = endpoint.bind_addr_v6(addr);
-            }
-            SocketAddr::V4(addr) => {
-                endpoint = endpoint.bind_addr_v4(addr);
-            }
-        }
+        endpoint = endpoint.bind_addr(address)?;
     }
 
-    let endpoint = match discovery {
-        Some(discovery) => endpoint.discovery(discovery),
+    let endpoint = match address_lookup {
+        Some(address_lookup) => endpoint.address_lookup(address_lookup),
         None => endpoint,
     };
 
@@ -818,17 +812,17 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-/// Creates a [`Discovery`] service from a [`SecretKey`].
-fn create_discovery(
-    disable_discovery: bool,
+/// Creates an [`AddressLookup`] service from a [`SecretKey`].
+fn create_address_lookup(
+    disable_address_lookup: bool,
     secret_key: &SecretKey,
-) -> Option<ConcurrentDiscovery> {
-    if disable_discovery {
+) -> Option<ConcurrentAddressLookup> {
+    if disable_address_lookup {
         None
     } else {
-        Some(ConcurrentDiscovery::from_services(vec![
-            // Enable DNS discovery by default
-            Box::new(DnsDiscovery::n0_dns().build()),
+        Some(ConcurrentAddressLookup::from_services(vec![
+            // Enable DNS address lookup by default
+            Box::new(DnsAddressLookup::n0_dns().build()),
             // Enable pkarr publishing by default
             Box::new(PkarrPublisher::n0_dns().build(secret_key.clone())),
         ]))
@@ -873,7 +867,7 @@ pub async fn run(
             local_relay_server,
             relay_url,
             remote_endpoint,
-            disable_discovery,
+            disable_address_lookup,
             socket_addr,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
@@ -884,12 +878,12 @@ pub async fn run(
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            let discovery = create_discovery(disable_discovery, &secret_key);
+            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                discovery,
+                address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
@@ -913,7 +907,7 @@ pub async fn run(
             local_relay_server,
             size,
             iterations,
-            disable_discovery,
+            disable_address_lookup,
             socket_addr,
         } => {
             let relay_map = if local_relay_server {
@@ -923,12 +917,12 @@ pub async fn run(
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            let discovery = create_discovery(disable_discovery, &secret_key);
+            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                discovery,
+                address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),

@@ -34,7 +34,7 @@ pub async fn accept(
             relay_url,
         );
     }
-    if !endpoint.discovery().is_empty() {
+    if !endpoint.address_lookup().is_empty() {
         println!(
             "\tUsing just the node id:\niroh-doctor connect {}\n",
             secret_key.public(),

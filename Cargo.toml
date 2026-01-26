@@ -69,3 +69,6 @@ iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "release-0-
 irpc = { git = "https://github.com/n0-computer/irpc", branch = "feat-multipath" }
 irpc-iroh = { git = "https://github.com/n0-computer/irpc", branch = "feat-multipath" }
 iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "feat-multipath" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main" }
