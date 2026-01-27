@@ -23,7 +23,7 @@ pub async fn drain_stream(
 
     if read_unordered {
         while let Some(chunk) = stream
-            .read_chunk(usize::MAX, false)
+            .read_chunk(usize::MAX)
             .await
             .context("Failed to read chunk")?
         {

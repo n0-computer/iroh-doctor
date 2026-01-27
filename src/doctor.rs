@@ -13,7 +13,7 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
-    endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
+    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::MagicsockMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
@@ -389,32 +389,19 @@ impl Gui {
     }
 
     /// Updates the information of the target progress bar.
-    async fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
-        let format_latency = |x: Option<Duration>| {
-            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-        let conn_type = endpoint.conn_type(*node_id).map(|mut c| c.get());
+    async fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, _node_id: &EndpointId) {
+        let node_addr = endpoint.addr();
+        let relay_url = node_addr.relay_urls().next();
+        let relay_url = relay_url
+            .map(|relay_url| relay_url.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let addrs = node_addr
+            .ip_addrs()
+            .map(|addr| addr.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
 
-        let msg = if let Some(conn_type) = conn_type {
-            let latency = format_latency(endpoint.latency(*node_id).await);
-            let node_addr = endpoint.addr();
-            let relay_url = node_addr.relay_urls().next();
-            let relay_url = relay_url
-                .map(|relay_url| relay_url.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let addrs = node_addr
-                .ip_addrs()
-                .map(|addr| addr.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-
-            format!(
-                "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
-            )
-        } else {
-            "connection info unavailable".to_string()
-        };
+        let msg = format!("relay url: {relay_url}, addrs: [{addrs}]");
         target.set_message(msg);
     }
 
@@ -429,8 +416,6 @@ impl Gui {
             let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
             let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
 
-            let latency_histogram = Self::format_histogram(&metrics.connection_latency_ms);
-
             let text = format!(
                 r#"Counters
 
@@ -443,53 +428,10 @@ Ipv4:
 Ipv6:
   send: {send_ipv6}
   recv: {recv_data_ipv6}
-
-Connection Latency Distribution (ms):
-{latency_histogram}
 "#,
             );
             target.set_message(text);
         }
-    }
-
-    /// Formats histogram bucket distribution for display.
-    fn format_histogram(histogram: &iroh_metrics::Histogram) -> String {
-        let count = histogram.count();
-        if count == 0 {
-            return "  No data collected yet".to_string();
-        }
-
-        let buckets = histogram.buckets();
-        let mut result = String::new();
-
-        let mut prev_bound = 0.0;
-        for (upper_bound, cumulative_count) in buckets {
-            if upper_bound.is_infinite() {
-                result.push_str(&format!(
-                    "  {:.1}+ ms: {} samples\n",
-                    prev_bound, cumulative_count
-                ));
-            } else {
-                result.push_str(&format!(
-                    "  {:.1}-{:.1} ms: {} samples\n",
-                    prev_bound, upper_bound, cumulative_count
-                ));
-                prev_bound = upper_bound;
-            }
-        }
-
-        let sum = histogram.sum();
-        let avg = sum / count as f64;
-        let p50 = histogram.percentile(0.5);
-        let p95 = histogram.percentile(0.95);
-        let p99 = histogram.percentile(0.99);
-
-        result.push_str(&format!(
-            "  Total: {} samples, Avg: {:.2}ms, p50: {:.2}ms, p95: {:.2}ms, p99: {:.2}ms",
-            count, avg, p50, p95, p99
-        ));
-
-        result
     }
 
     /// Sets the "send" text and the speed for the progress bar.
@@ -774,13 +716,18 @@ pub fn format_addr(addr: SocketAddr) -> String {
 pub fn log_connection_changes(
     pb: MultiProgress,
     node_id: EndpointId,
-    mut conn_type: n0_watcher::Direct<ConnectionType>,
+    mut paths: impl Watcher<Value = PathInfoList> + Send + 'static,
 ) {
     tokio::spawn(async move {
         let start = Instant::now();
-        while let Ok(conn_type) = conn_type.updated().await {
+        while let Ok(path_list) = paths.updated().await {
+            let selected = path_list.iter().find(|p| p.is_selected());
+            let path_desc = match selected {
+                Some(p) => format!("{:?}", p.remote_addr()),
+                None => "no path".to_string(),
+            };
             pb.println(format!(
-                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
+                "Connection with {node_id:#} changed: {path_desc} (after {:?})",
                 start.elapsed()
             ))
             .ok();

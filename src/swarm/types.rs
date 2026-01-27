@@ -157,12 +157,10 @@ impl From<quinn::PathStats> for ConnectionStats {
             latest_rtt_ms: 0,                              // Not separately tracked in iroh-quinn
             rtt_variance_ms: 0,                            // Not separately tracked in iroh-quinn
             cwnd: stats.cwnd,
-            sent_packets: stats.sent_packets,
+            sent_packets: stats.udp_tx.datagrams,
             lost_packets: stats.lost_packets,
-            // sent_bytes: stats.bytes,
-            // recv_bytes: stats.bytes,
-            sent_bytes: 0,
-            recv_bytes: 0,
+            sent_bytes: stats.udp_tx.bytes,
+            recv_bytes: stats.udp_rx.bytes,
             congestion_events: stats.congestion_events,
             sent_ack_only_packets: 0, // Not available in iroh-quinn
             sent_plpmtu_probes: stats.sent_plpmtud_probes,
