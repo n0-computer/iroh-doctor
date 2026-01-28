@@ -14,7 +14,7 @@ use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
     endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
-    metrics::MagicsockMetrics,
+    metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
@@ -408,7 +408,7 @@ impl Gui {
     /// Updates the counters for the target progress bar.
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
-            let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
+            let metrics = core.get_collector::<SocketMetrics>().unwrap();
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
             let send_relay = HumanBytes(metrics.send_relay.get());
@@ -759,7 +759,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-/// Creates an [`AddressLookup`] service from a [`SecretKey`].
+/// Creates an [`iroh::address_lookup::AddressLookup`] service from a [`SecretKey`].
 fn create_address_lookup(
     disable_address_lookup: bool,
     secret_key: &SecretKey,
