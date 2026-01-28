@@ -2,9 +2,11 @@
 
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionType, EndpointId};
+use iroh::EndpointId;
 use portable_atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
+
+use crate::swarm::execution::ConnectionType;
 
 // Common default configuration values used across the swarm module
 pub const DEFAULT_DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
@@ -147,23 +149,23 @@ pub struct ConnectionStats {
     pub black_hole_detected: u64,
 }
 
-impl From<quinn::ConnectionStats> for ConnectionStats {
-    fn from(stats: quinn::ConnectionStats) -> Self {
+impl From<quinn::PathStats> for ConnectionStats {
+    fn from(stats: quinn::PathStats) -> Self {
         Self {
-            rtt_ms: stats.path.rtt.as_millis() as u32,
-            smoothed_rtt_ms: stats.path.rtt.as_millis() as u32, // PathStats.rtt is the smoothed RTT estimate
-            latest_rtt_ms: 0,   // Not separately tracked in iroh-quinn
-            rtt_variance_ms: 0, // Not separately tracked in iroh-quinn
-            cwnd: stats.path.cwnd,
-            sent_packets: stats.path.sent_packets,
-            lost_packets: stats.path.lost_packets,
+            rtt_ms: stats.rtt.as_millis() as u32,
+            smoothed_rtt_ms: stats.rtt.as_millis() as u32, // PathStats.rtt is the smoothed RTT estimate
+            latest_rtt_ms: 0,                              // Not separately tracked in iroh-quinn
+            rtt_variance_ms: 0,                            // Not separately tracked in iroh-quinn
+            cwnd: stats.cwnd,
+            sent_packets: stats.udp_tx.datagrams,
+            lost_packets: stats.lost_packets,
             sent_bytes: stats.udp_tx.bytes,
             recv_bytes: stats.udp_rx.bytes,
-            congestion_events: stats.path.congestion_events,
+            congestion_events: stats.congestion_events,
             sent_ack_only_packets: 0, // Not available in iroh-quinn
-            sent_plpmtu_probes: stats.path.sent_plpmtud_probes,
-            lost_plpmtu_probes: stats.path.lost_plpmtud_probes,
-            black_hole_detected: stats.path.black_holes_detected,
+            sent_plpmtu_probes: stats.sent_plpmtud_probes,
+            lost_plpmtu_probes: stats.lost_plpmtud_probes,
+            black_hole_detected: stats.black_holes_detected,
         }
     }
 }

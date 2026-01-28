@@ -21,9 +21,9 @@ pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
 ///   - not using ansi colors.
 /// - create log files in the [`FileLogging::dir`] directory. If not provided, the `logs` dir
 ///   inside the given `iroh_data_root` is used.
-/// - rotate files every [`Self::rotation`].
-/// - keep at most [`Self::max_files`] log files.
-/// - use the filtering defined by [`Self::rust_log`]. When not provided, the default
+/// - rotate files every [`FileLogging::rotation`].
+/// - keep at most [`FileLogging::max_files`] log files.
+/// - use the filtering defined by [`FileLogging::rust_log`]. When not provided, the default
 ///   [`DEFAULT_FILE_RUST_LOG`] is used.
 /// - create log files with the name `iroh-<ROTATION_BASED_NAME>.log` (ex: iroh-2024-02-02.log)
 pub(crate) fn init_terminal_and_file_logging(

@@ -34,7 +34,7 @@ pub async fn accept(
             relay_url,
         );
     }
-    if !endpoint.discovery().is_empty() {
+    if !endpoint.address_lookup().is_empty() {
         println!(
             "\tUsing just the node id:\niroh-doctor connect {}\n",
             secret_key.public(),
@@ -62,9 +62,7 @@ pub async fn accept(
                         println!("Accepted connection from {remote_peer_id}");
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        if let Some(conn_type) = endpoint.conn_type(remote_peer_id) {
-                            log_connection_changes(gui.mp.clone(), remote_peer_id, conn_type);
-                        }
+                        log_connection_changes(gui.mp.clone(), remote_peer_id, connection.paths());
                         let res = active_side(&connection, &config, Some(&gui)).await;
                         gui.clear();
                         let dt = t0.elapsed().as_secs_f64();

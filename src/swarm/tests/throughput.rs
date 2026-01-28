@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use iroh::Watcher;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -120,7 +121,13 @@ pub async fn run_bidirectional_throughput_test_with_config(
     let total_duration = test_start.elapsed();
 
     let statistics = if !stream_stats.is_empty() {
-        let connection_stats = conn.stats().into();
+        let connection_stats = conn
+            .paths()
+            .get()
+            .into_iter()
+            .find(|p| p.is_selected())
+            .map(|p| p.stats().into())
+            .unwrap_or_default();
         let stats = TestStats::from_streams(stream_stats, connection_stats);
         Some(stats)
     } else {

@@ -12,9 +12,9 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-    endpoint::{self, Connection, ConnectionType, RecvStream, SendStream},
-    metrics::MagicsockMetrics,
+    address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
+    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
+    metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
@@ -105,12 +105,12 @@ pub enum Commands {
 
         /// Do not allow the node to dial and be dialed by id only.
         ///
-        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
-        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        /// This disables DNS address lookup, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for address lookup.
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
-        disable_discovery: bool,
+        disable_address_lookup: bool,
 
         /// Bind to this specific socket address.
         ///
@@ -149,12 +149,12 @@ pub enum Commands {
 
         /// Do not allow the node to dial and be dialed by id only.
         ///
-        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
-        /// It also disables Pkarr Publishing, which would allow the node to announce its address for DNS discovery.
+        /// This disables DNS address lookup, which would allow the node to dial other nodes by id only.
+        /// It also disables Pkarr Publishing, which would allow the node to announce its address for address lookup .
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
-        disable_discovery: bool,
+        disable_address_lookup: bool,
 
         /// Bind to this specific socket address.
         ///
@@ -373,7 +373,7 @@ impl Gui {
         let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_remote_info(&remote_info, &endpoint, &node_id);
+                Self::update_remote_info(&remote_info, &endpoint, &node_id).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -389,47 +389,32 @@ impl Gui {
     }
 
     /// Updates the information of the target progress bar.
-    fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &EndpointId) {
-        let format_latency = |x: Option<Duration>| {
-            x.map(|x| format!("{:.6}s", x.as_secs_f64()))
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-        let conn_type = endpoint.conn_type(*node_id).map(|mut c| c.get());
+    async fn update_remote_info(target: &ProgressBar, endpoint: &Endpoint, _node_id: &EndpointId) {
+        let node_addr = endpoint.addr();
+        let relay_url = node_addr.relay_urls().next();
+        let relay_url = relay_url
+            .map(|relay_url| relay_url.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let addrs = node_addr
+            .ip_addrs()
+            .map(|addr| addr.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
 
-        let msg = if let Some(conn_type) = conn_type {
-            let latency = format_latency(endpoint.latency(*node_id));
-            let node_addr = endpoint.addr();
-            let relay_url = node_addr.relay_urls().next();
-            let relay_url = relay_url
-                .map(|relay_url| relay_url.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let addrs = node_addr
-                .ip_addrs()
-                .map(|addr| addr.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-
-            format!(
-                "relay url: {relay_url}, latency: {latency}, connection type: {conn_type}, addrs: [{addrs}]"
-            )
-        } else {
-            "connection info unavailable".to_string()
-        };
+        let msg = format!("relay url: {relay_url}, addrs: [{addrs}]");
         target.set_message(msg);
     }
 
     /// Updates the counters for the target progress bar.
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
-            let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
+            let metrics = core.get_collector::<SocketMetrics>().unwrap();
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
             let send_relay = HumanBytes(metrics.send_relay.get());
             let recv_data_relay = HumanBytes(metrics.recv_data_relay.get());
             let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
             let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
-
-            let latency_histogram = Self::format_histogram(&metrics.connection_latency_ms);
 
             let text = format!(
                 r#"Counters
@@ -443,53 +428,10 @@ Ipv4:
 Ipv6:
   send: {send_ipv6}
   recv: {recv_data_ipv6}
-
-Connection Latency Distribution (ms):
-{latency_histogram}
 "#,
             );
             target.set_message(text);
         }
-    }
-
-    /// Formats histogram bucket distribution for display.
-    fn format_histogram(histogram: &iroh_metrics::Histogram) -> String {
-        let count = histogram.count();
-        if count == 0 {
-            return "  No data collected yet".to_string();
-        }
-
-        let buckets = histogram.buckets();
-        let mut result = String::new();
-
-        let mut prev_bound = 0.0;
-        for (upper_bound, cumulative_count) in buckets {
-            if upper_bound.is_infinite() {
-                result.push_str(&format!(
-                    "  {:.1}+ ms: {} samples\n",
-                    prev_bound, cumulative_count
-                ));
-            } else {
-                result.push_str(&format!(
-                    "  {:.1}-{:.1} ms: {} samples\n",
-                    prev_bound, upper_bound, cumulative_count
-                ));
-                prev_bound = upper_bound;
-            }
-        }
-
-        let sum = histogram.sum();
-        let avg = sum / count as f64;
-        let p50 = histogram.percentile(0.5);
-        let p95 = histogram.percentile(0.95);
-        let p99 = histogram.percentile(0.99);
-
-        result.push_str(&format!(
-            "  Total: {} samples, Avg: {:.2}ms, p50: {:.2}ms, p95: {:.2}ms, p99: {:.2}ms",
-            count, avg, p50, p95, p99
-        ));
-
-        result
     }
 
     /// Sets the "send" text and the speed for the progress bar.
@@ -687,11 +629,11 @@ fn configure_local_relay_map() -> RelayMap {
 /// ALPN protocol address.
 pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
-/// Creates an iroh net [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`Discovery`].
+/// Creates an iroh [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`AddressLookup`].
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
-    discovery: Option<ConcurrentDiscovery>,
+    address_lookup: Option<ConcurrentAddressLookup>,
     service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
@@ -703,9 +645,10 @@ async fn make_endpoint(
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = endpoint::TransportConfig::default();
-    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-    transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+    let transport_config = endpoint::QuicTransportConfig::builder()
+        .keep_alive_interval(Duration::from_secs(5))
+        .max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()))
+        .build();
 
     let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
@@ -713,18 +656,11 @@ async fn make_endpoint(
         .transport_config(transport_config);
 
     if let Some(address) = socket_addr {
-        match address {
-            SocketAddr::V6(addr) => {
-                endpoint = endpoint.bind_addr_v6(addr);
-            }
-            SocketAddr::V4(addr) => {
-                endpoint = endpoint.bind_addr_v4(addr);
-            }
-        }
+        endpoint = endpoint.bind_addr(address)?;
     }
 
-    let endpoint = match discovery {
-        Some(discovery) => endpoint.discovery(discovery),
+    let endpoint = match address_lookup {
+        Some(address_lookup) => endpoint.address_lookup(address_lookup),
         None => endpoint,
     };
 
@@ -780,13 +716,18 @@ pub fn format_addr(addr: SocketAddr) -> String {
 pub fn log_connection_changes(
     pb: MultiProgress,
     node_id: EndpointId,
-    mut conn_type: n0_watcher::Direct<ConnectionType>,
+    mut paths: impl Watcher<Value = PathInfoList> + Send + 'static,
 ) {
     tokio::spawn(async move {
         let start = Instant::now();
-        while let Ok(conn_type) = conn_type.updated().await {
+        while let Ok(path_list) = paths.updated().await {
+            let selected = path_list.iter().find(|p| p.is_selected());
+            let path_desc = match selected {
+                Some(p) => format!("{:?}", p.remote_addr()),
+                None => "no path".to_string(),
+            };
             pb.println(format!(
-                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
+                "Connection with {node_id:#} changed: {path_desc} (after {:?})",
                 start.elapsed()
             ))
             .ok();
@@ -818,17 +759,17 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-/// Creates a [`Discovery`] service from a [`SecretKey`].
-fn create_discovery(
-    disable_discovery: bool,
+/// Creates an [`iroh::address_lookup::AddressLookup`] service from a [`SecretKey`].
+fn create_address_lookup(
+    disable_address_lookup: bool,
     secret_key: &SecretKey,
-) -> Option<ConcurrentDiscovery> {
-    if disable_discovery {
+) -> Option<ConcurrentAddressLookup> {
+    if disable_address_lookup {
         None
     } else {
-        Some(ConcurrentDiscovery::from_services(vec![
-            // Enable DNS discovery by default
-            Box::new(DnsDiscovery::n0_dns().build()),
+        Some(ConcurrentAddressLookup::from_services(vec![
+            // Enable DNS address lookup by default
+            Box::new(DnsAddressLookup::n0_dns().build()),
             // Enable pkarr publishing by default
             Box::new(PkarrPublisher::n0_dns().build(secret_key.clone())),
         ]))
@@ -873,7 +814,7 @@ pub async fn run(
             local_relay_server,
             relay_url,
             remote_endpoint,
-            disable_discovery,
+            disable_address_lookup,
             socket_addr,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
@@ -884,12 +825,12 @@ pub async fn run(
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            let discovery = create_discovery(disable_discovery, &secret_key);
+            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                discovery,
+                address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
@@ -913,7 +854,7 @@ pub async fn run(
             local_relay_server,
             size,
             iterations,
-            disable_discovery,
+            disable_address_lookup,
             socket_addr,
         } => {
             let relay_map = if local_relay_server {
@@ -923,12 +864,12 @@ pub async fn run(
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            let discovery = create_discovery(disable_discovery, &secret_key);
+            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                discovery,
+                address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),

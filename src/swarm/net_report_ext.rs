@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtendedNetworkReport {
     /// Base network report from iroh
-    pub base_report: Option<iroh::net_report::Report>,
+    pub base_report: Option<iroh::NetReport>,
 
     /// Whether the NAT mapping varies by destination PORT for IPv4 (not implemented)
     pub mapping_varies_by_dest_port_ipv4: Option<bool>,
@@ -18,7 +18,7 @@ pub struct ExtendedNetworkReport {
 
 impl ExtendedNetworkReport {
     /// Create an extended report from a standard iroh Report
-    pub fn from_base_report(base: Option<iroh::net_report::Report>) -> Self {
+    pub fn from_base_report(base: Option<iroh::NetReport>) -> Self {
         Self {
             base_report: base,
             mapping_varies_by_dest_port_ipv4: None,

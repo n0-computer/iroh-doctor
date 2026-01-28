@@ -22,19 +22,19 @@ futures-lite = "2.3.0"
 futures-util = "0.3"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
-iroh = { version = "0.95", features = ["metrics"] }
-iroh-base = "0.95"
-iroh-metrics = { version = "0.37", features = ["service", "static_core"] }
-iroh-n0des = "0.7"
-iroh-relay = "0.95"
-netwatch = "0.12"
-n0-watcher = "0.5"
+iroh = { version = "0.96", features = ["metrics"] }
+iroh-base = "0.96"
+iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
+iroh-n0des = { version = "0.9", features = ["ssh-key"] }
+iroh-relay = "0.96"
+netwatch = "0.14"
+n0-watcher = "0.6"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
-portmapper = "0.12"
+portmapper = "0.13"
 prometheus-client = "0.24"
-quinn = { package = "iroh-quinn", version = "0.14" }
+quinn = { package = "iroh-quinn", version = "0.16" }
 rand = "0.9"
 ratatui = "0.29.0"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -53,16 +53,11 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "1.0"
 ed25519-dalek = "3.0.0-pre.1"
-irpc = { version = "0.11", features = ["derive", "default"] }
-irpc-iroh = "0.11"
+irpc = { version = "0.12", features = ["derive", "default"] }
+irpc-iroh = "0.12"
 rcan = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 url = "2.5.2"
 
 [dev-dependencies]
 url = "2.5.2"
-
-[patch.crates-io]
-iroh = { git = "https://github.com/n0-computer/iroh", branch = "main" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh", branch = "main" }
-iroh-n0des = { git = "https://github.com/n0-computer/iroh-n0des", branch = "main" }

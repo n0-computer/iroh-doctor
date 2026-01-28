@@ -49,23 +49,25 @@ impl SwarmClient {
             RelayMode::Default
         };
 
-        let mut transport_config = endpoint::TransportConfig::default();
+        let mut builder = endpoint::QuicTransportConfig::builder();
         // Always enable keep-alive for swarm connections
-        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+        builder = builder.keep_alive_interval(Duration::from_secs(1));
 
         if let Some(ref transport) = config.transport {
             if let Some(max_streams) = transport.max_concurrent_bidi_streams {
-                transport_config.max_concurrent_bidi_streams(max_streams.into());
+                builder = builder.max_concurrent_bidi_streams(max_streams.into());
             }
 
             if let Some(send_window_kb) = transport.send_window_kb {
-                transport_config.send_window((send_window_kb * 1024) as u64);
+                builder = builder.send_window((send_window_kb * 1024) as u64);
             }
 
             if let Some(receive_window_kb) = transport.receive_window_kb {
-                transport_config.receive_window((receive_window_kb * 1024).into());
+                builder = builder.receive_window((receive_window_kb * 1024).into());
             }
         }
+
+        let transport_config = builder.build();
 
         let endpoint = Endpoint::builder()
             .secret_key(config.secret_key.clone())
