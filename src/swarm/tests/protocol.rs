@@ -5,11 +5,11 @@ use postcard;
 use serde::{Deserialize, Serialize};
 
 /// ALPN protocol identifier for doctor swarm tests
-pub const DOCTOR_SWARM_ALPN: &[u8] = b"n0/doctor-swarm/1";
+pub(crate) const DOCTOR_SWARM_ALPN: &[u8] = b"n0/doctor-swarm/1";
 
 /// Test protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
-pub enum TestProtocolType {
+pub(crate) enum TestProtocolType {
     #[display("THROUGHPUT")]
     Throughput,
     #[display("LATENCY")]
@@ -18,32 +18,32 @@ pub enum TestProtocolType {
 
 /// Protocol messages for latency testing
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LatencyMessage {
+pub(crate) enum LatencyMessage {
     Ping(u32),
     Pong(u32),
 }
 
 impl LatencyMessage {
-    pub fn ping(number: u32) -> Self {
-        LatencyMessage::Ping(number)
+    pub(crate) fn ping(number: u32) -> Self {
+        Self::Ping(number)
     }
 
-    pub fn pong(number: u32) -> Self {
-        LatencyMessage::Pong(number)
+    pub(crate) fn pong(number: u32) -> Self {
+        Self::Pong(number)
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
         postcard::to_allocvec(self).expect("failed to serialize latency message")
     }
 
-    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+    pub(crate) fn from_bytes(data: &[u8]) -> Option<Self> {
         postcard::from_bytes(data).ok()
     }
 }
 
 /// Protocol header for test messages
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TestProtocolHeader {
+pub(crate) struct TestProtocolHeader {
     pub test_type: TestProtocolType,
     pub data_size: u64,
     pub parallel_streams: Option<usize>,
@@ -51,7 +51,7 @@ pub struct TestProtocolHeader {
 }
 
 impl TestProtocolHeader {
-    pub fn new(test_type: TestProtocolType, data_size: u64) -> Self {
+    pub(crate) fn new(test_type: TestProtocolType, data_size: u64) -> Self {
         Self {
             test_type,
             data_size,
@@ -60,7 +60,7 @@ impl TestProtocolHeader {
         }
     }
 
-    pub fn with_config(
+    pub(crate) fn with_config(
         test_type: TestProtocolType,
         data_size: u64,
         parallel_streams: usize,
@@ -74,7 +74,7 @@ impl TestProtocolHeader {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let header_bytes =
             postcard::to_allocvec(self).expect("failed to serialize protocol header");
         let header_len = header_bytes.len() as u16;
@@ -85,7 +85,7 @@ impl TestProtocolHeader {
         result
     }
 
-    pub async fn read_from(recv: &mut iroh::endpoint::RecvStream) -> Result<Self> {
+    pub(crate) async fn read_from(recv: &mut iroh::endpoint::RecvStream) -> Result<Self> {
         let mut len_buf = [0u8; 2];
         recv.read_exact(&mut len_buf)
             .await

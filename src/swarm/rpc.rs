@@ -203,7 +203,7 @@ impl DoctorClient {
 }
 
 /// IRPC client type for DoctorService
-pub type DoctorServiceClient = irpc::Client<DoctorProtocol>;
+pub(super) type DoctorServiceClient = irpc::Client<DoctorProtocol>;
 
 /// Authentication message
 #[derive(Debug, Clone, Serialize, Deserialize)]

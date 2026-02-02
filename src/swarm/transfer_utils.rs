@@ -9,7 +9,7 @@ use iroh::endpoint::{RecvStream, SendStream};
 /// Drain all data from a stream with optimized vectorized reading
 ///
 /// Adapted from iroh/examples/transfer.rs
-pub async fn drain_stream(
+pub(super) async fn drain_stream(
     stream: &mut RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
@@ -67,7 +67,7 @@ pub async fn drain_stream(
 /// Send data on a stream with configurable chunk size
 ///
 /// Adapted from iroh/examples/transfer.rs with configurable chunk size
-pub async fn send_data_on_stream(
+pub(super) async fn send_data_on_stream(
     stream: &mut SendStream,
     stream_size: u64,
     chunk_size: usize,
@@ -104,7 +104,7 @@ pub async fn send_data_on_stream(
 }
 
 /// Bidirectional transfer: receive data while simultaneously sending response data
-pub async fn handle_bidirectional_transfer(
+pub(super) async fn handle_bidirectional_transfer(
     mut send: SendStream,
     mut recv: RecvStream,
     data_size: u64,

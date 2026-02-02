@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 use crate::swarm::execution::ConnectionType;
 
 // Common default configuration values used across the swarm module
-pub const DEFAULT_DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
-pub const DEFAULT_DATA_SIZE: u64 = 10 * 1024 * 1024; // 10MiB
-pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024; // 1MiB
-pub const DEFAULT_PARALLEL_STREAMS: u32 = 4;
-pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
-pub const DEFAULT_PING_INTERVAL: Duration = Duration::from_millis(10);
-pub const DEFAULT_PING_TIMEOUT: Duration = Duration::from_millis(3000);
+pub(super) const DEFAULT_DATA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(5 * 60); // 5 minutes
+pub(super) const DEFAULT_DATA_SIZE: u64 = 10 * 1024 * 1024; // 10MiB
+pub(super) const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024; // 1MiB
+pub(super) const DEFAULT_PARALLEL_STREAMS: u32 = 4;
+pub(super) const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
+pub(super) const DEFAULT_PING_INTERVAL: Duration = Duration::from_millis(10);
+pub(super) const DEFAULT_PING_TIMEOUT: Duration = Duration::from_millis(3000);
 
 /// Test types supported by doctor nodes
 #[derive(
@@ -121,7 +121,7 @@ pub struct StreamStats {
 pub struct ConnectionStats {
     /// Round-trip time in milliseconds
     pub rtt_ms: u32,
-    /// Smoothed round-trip time in milliseconds  
+    /// Smoothed round-trip time in milliseconds
     pub smoothed_rtt_ms: u32,
     /// Latest RTT sample in milliseconds
     pub latest_rtt_ms: u32,
@@ -454,10 +454,10 @@ pub enum TestAssignmentResult {
 impl TestAssignmentResult {
     pub fn duration(&self) -> Duration {
         match self {
-            TestAssignmentResult::Latency(r) => r.duration,
-            TestAssignmentResult::Throughput(r) => r.duration,
-            TestAssignmentResult::Fingerprint(r) => r.duration,
-            TestAssignmentResult::Error(r) => r.duration,
+            Self::Latency(r) => r.duration,
+            Self::Throughput(r) => r.duration,
+            Self::Fingerprint(r) => r.duration,
+            Self::Error(r) => r.duration,
         }
     }
 }

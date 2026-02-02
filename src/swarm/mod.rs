@@ -12,6 +12,7 @@ mod types;
 
 pub use client::{SwarmClient, N0DES_DOCTOR_ALPN};
 pub use config::{SwarmConfig, TransportConfig};
+pub use execution::ConnectionType;
 pub use net_report_ext::ExtendedNetworkReport;
 pub use rpc::{
     Auth, AuthResponse, CreateTestRun, CreateTestRunResponse, DoctorClient, DoctorError,
@@ -22,7 +23,7 @@ pub use rpc::{
 };
 pub use runner::run_swarm_client;
 pub use types::{
-    AdvancedTestConfig, DoctorCaps, ErrorResult, FingerprintResult, LatencyConfig, LatencyResult,
-    NetworkConfig, StreamStats, SwarmStats, TestAssignmentResult, TestConfig, TestStats, TestType,
-    ThroughputConfig, ThroughputResult,
+    AdvancedTestConfig, ConnectionStats, DoctorCaps, ErrorResult, FingerprintResult, LatencyConfig,
+    LatencyResult, NetworkConfig, StreamStats, SwarmStats, TestAssignmentResult, TestConfig,
+    TestStats, TestType, ThroughputConfig, ThroughputResult,
 };

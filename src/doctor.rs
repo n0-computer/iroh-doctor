@@ -48,11 +48,11 @@ impl std::str::FromStr for SecretKeyOption {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s_lower = s.to_ascii_lowercase();
         Ok(if s_lower == "random" {
-            SecretKeyOption::Random
+            Self::Random
         } else if s_lower == "local" {
-            SecretKeyOption::Local
+            Self::Local
         } else {
-            SecretKeyOption::Hex(s.to_string())
+            Self::Hex(s.to_string())
         })
     }
 }

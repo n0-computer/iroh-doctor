@@ -121,7 +121,7 @@ impl FromStr for EnvFilter {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // validate the RUST_LOG statement
         let _valid_env = tracing_subscriber::EnvFilter::from_str(s)?;
-        Ok(EnvFilter(s.into()))
+        Ok(Self(s.into()))
     }
 }
 
