@@ -15,7 +15,7 @@ use crate::swarm::{
 
 /// Result of a bidirectional throughput test
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BidirectionalThroughputResult {
+pub(crate) struct BidirectionalThroughputResult {
     pub upload_mbps: f64,
     pub download_mbps: f64,
     pub upload_duration: Duration,
@@ -27,7 +27,7 @@ pub struct BidirectionalThroughputResult {
 }
 
 /// Run a bidirectional throughput test with custom configuration
-pub async fn run_bidirectional_throughput_test_with_config(
+pub(crate) async fn run_bidirectional_throughput_test_with_config(
     conn: &iroh::endpoint::Connection,
     data_size: u64,
     parallel_streams: usize,

@@ -108,7 +108,7 @@ fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
 }
 
 /// Draws the [`Frame`] given a [`PlotterApp`].
-fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
+fn plotter_draw(f: &mut Frame<'_>, app: &mut PlotterApp) {
     let area = f.area();
 
     let metrics_cnt = app.metrics.len();
@@ -120,7 +120,7 @@ fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
 }
 
 /// Draws the chart defined in the [`Frame`].
-fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
+fn plot_chart(frame: &mut Frame<'_>, area: Rect, app: &PlotterApp, metric: &str) {
     let elapsed = app.internal_ts.as_secs_f64();
     let data = app.data.get(metric).unwrap().clone();
     let data_y_range = app.data_y_range.get(metric).unwrap();

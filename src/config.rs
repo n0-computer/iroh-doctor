@@ -56,7 +56,7 @@ impl NodeConfig {
     /// If the *file* is `Some` the configuration will be read from it.  Otherwise the
     /// default config file will be loaded.  If that is not present the default config will
     /// be used.
-    pub async fn load(file: Option<&Path>) -> Result<NodeConfig> {
+    pub async fn load(file: Option<&Path>) -> Result<Self> {
         let default_config = iroh_config_path(CONFIG_FILE_NAME)?;
 
         let config_file = match file {
@@ -87,7 +87,7 @@ impl NodeConfig {
         self.metrics_addr = Some(addr);
     }
 
-    fn load_toml(s: &str) -> Result<NodeConfig> {
+    fn load_toml(s: &str) -> Result<Self> {
         let config = toml::from_str(s)?;
         Ok(config)
     }

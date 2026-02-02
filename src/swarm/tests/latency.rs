@@ -10,7 +10,7 @@ use super::protocol::{LatencyMessage, TestProtocolHeader, TestProtocolType, DOCT
 use crate::swarm::{execution::get_connection_type, types::LatencyResult};
 
 /// Run a latency test between two nodes with configurable timing
-pub async fn run_latency_test_with_config(
+pub(crate) async fn run_latency_test_with_config(
     endpoint: &Endpoint,
     node_id: EndpointId,
     iterations: u32,
@@ -28,7 +28,7 @@ pub async fn run_latency_test_with_config(
 }
 
 /// Run a latency test on an existing connection
-pub async fn run_latency_test_on_connection(
+pub(crate) async fn run_latency_test_on_connection(
     conn: &Connection,
     iterations: u32,
     ping_interval: Duration,

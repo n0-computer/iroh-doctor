@@ -29,8 +29,8 @@ pub enum ConnectionType {
 impl From<&TransportAddr> for ConnectionType {
     fn from(value: &TransportAddr) -> Self {
         match value {
-            TransportAddr::Ip(_) => ConnectionType::Ip,
-            TransportAddr::Relay(_) => ConnectionType::Relay,
+            TransportAddr::Ip(_) => Self::Ip,
+            TransportAddr::Relay(_) => Self::Relay,
             _ => panic!(),
         }
     }
@@ -45,7 +45,7 @@ pub(crate) fn get_connection_type(conn: &Connection) -> Option<ConnectionType> {
         .map(|path| path.remote_addr().into())
 }
 
-pub async fn perform_test_assignment(
+pub(super) async fn perform_test_assignment(
     assignment: TestAssignment,
     endpoint: Endpoint,
     _node_id: EndpointId,

@@ -23,12 +23,10 @@ impl NatType {
     /// Returns a human-readable description of this NAT type.
     pub fn description(&self) -> &'static str {
         match self {
-            NatType::Easy => "NAT type allows easy P2P connectivity",
-            NatType::Medium => "NAT type may require additional techniques for P2P connectivity",
-            NatType::Hard => "NAT type is difficult for P2P connectivity",
-            NatType::Unknown => {
-                "NAT type could not be determined. Network report may be unavailable."
-            }
+            Self::Easy => "NAT type allows easy P2P connectivity",
+            Self::Medium => "NAT type may require additional techniques for P2P connectivity",
+            Self::Hard => "NAT type is difficult for P2P connectivity",
+            Self::Unknown => "NAT type could not be determined. Network report may be unavailable.",
         }
     }
 
@@ -36,10 +34,10 @@ impl NatType {
     /// Lower numbers indicate better P2P connectivity.
     pub fn p2p_difficulty(&self) -> u8 {
         match self {
-            NatType::Easy => 1,
-            NatType::Medium => 3,
-            NatType::Hard => 5,
-            NatType::Unknown => 4,
+            Self::Easy => 1,
+            Self::Medium => 3,
+            Self::Hard => 5,
+            Self::Unknown => 4,
         }
     }
 }
@@ -47,10 +45,10 @@ impl NatType {
 impl std::fmt::Display for NatType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            NatType::Easy => "Easy",
-            NatType::Medium => "Medium",
-            NatType::Hard => "Hard",
-            NatType::Unknown => "Unknown",
+            Self::Easy => "Easy",
+            Self::Medium => "Medium",
+            Self::Hard => "Hard",
+            Self::Unknown => "Unknown",
         };
         write!(f, "{name}")
     }
