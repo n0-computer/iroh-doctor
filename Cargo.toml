@@ -15,7 +15,6 @@ async-channel = "2.3.1"
 bytes = "1.8.0"
 clap = { version = "4.5.20", features = ["derive"] }
 console = "0.16"
-crossterm = "0.29"
 derive_more = { version = "2.0", features = ["display", "from_str"] }
 dirs-next = "2.0.0"
 futures-lite = "2.3.0"
@@ -36,11 +35,6 @@ portmapper = "0.13"
 prometheus-client = "0.24"
 quinn = { package = "iroh-quinn", version = "0.16" }
 rand = "0.9"
-ratatui = "0.29.0"
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"

@@ -193,23 +193,6 @@ pub enum Commands {
         #[clap(long, default_value_t = 5)]
         count: usize,
     },
-    /// Plot metric counters
-    Plot {
-        /// How often to collect samples in milliseconds.
-        #[clap(long, default_value_t = 500)]
-        interval: u64,
-        /// Which metrics to plot. Commas separated list of metric names.
-        metrics: String,
-        /// What the plotted time frame should be in seconds.
-        #[clap(long, default_value_t = 60)]
-        timeframe: usize,
-        /// Endpoint to scrape for prometheus metrics
-        #[clap(long, default_value = "http://localhost:9090")]
-        scrape_url: String,
-        /// File to read the metrics from. Takes precedence over scrape_url.
-        #[clap(long)]
-        file: Option<PathBuf>,
-    },
     /// Join a doctor swarm as a test node
     SwarmClient {
         /// SSH private key path for authentication
@@ -909,13 +892,6 @@ pub async fn run(
             commands::port_map::port_map_probe(config).await
         }
         Commands::RelayUrls { count } => commands::relay_urls::relay_urls(count, config).await,
-        Commands::Plot {
-            interval,
-            metrics,
-            timeframe,
-            scrape_url,
-            file,
-        } => commands::plot::plot(interval, metrics, timeframe, scrape_url, file).await,
         Commands::SwarmClient {
             ssh_key,
             coordinator,
