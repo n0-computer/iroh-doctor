@@ -18,9 +18,14 @@ use anyhow::Result;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
 #[allow(unused_imports)]
-use iroh::{dns::DnsResolver, Endpoint, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher};
+use iroh::{
+    dns::DnsResolver, Endpoint, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
+};
 #[allow(unused_imports)]
-use iroh_relay::{protos::relay::{ClientToRelayMsg, RelayToClientMsg}, RelayQuicConfig};
+use iroh_relay::{
+    protos::relay::{ClientToRelayMsg, RelayToClientMsg},
+    RelayQuicConfig,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -180,7 +185,10 @@ async fn diagnose_with_timeout(
     let node_id = endpoint.id();
 
     // 1. Wait for relay connection
-    if let Err(_) = tokio::time::timeout(timeout, endpoint.online()).await {
+    if tokio::time::timeout(timeout, endpoint.online())
+        .await
+        .is_err()
+    {
         eprintln!("waiting for relay connection timed out after {timeout:?}");
     }
 
@@ -195,18 +203,17 @@ async fn diagnose_with_timeout(
     };
 
     // 3. Extract fields + classify NAT
-    let (udp_v4, udp_v6, global_v4, global_v6, varies_dest_v4, varies_dest_v6) =
-        match net_report {
-            Some(ref r) => (
-                r.udp_v4,
-                r.udp_v6,
-                r.global_v4,
-                r.global_v6,
-                r.mapping_varies_by_dest_ipv4,
-                r.mapping_varies_by_dest_ipv6,
-            ),
-            None => (false, false, None, None, None, None),
-        };
+    let (udp_v4, udp_v6, global_v4, global_v6, varies_dest_v4, varies_dest_v6) = match net_report {
+        Some(ref r) => (
+            r.udp_v4,
+            r.udp_v6,
+            r.global_v4,
+            r.global_v6,
+            r.mapping_varies_by_dest_ipv4,
+            r.mapping_varies_by_dest_ipv6,
+        ),
+        None => (false, false, None, None, None, None),
+    };
 
     let nat_type = classify_nat(&net_report);
 
@@ -381,7 +388,11 @@ async fn probe_port_mapping() -> Result<String> {
 }
 
 fn yn(b: bool) -> &'static str {
-    if b { "yes" } else { "no" }
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 fn opt_bool(b: Option<bool>) -> &'static str {
