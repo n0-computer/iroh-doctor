@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use futures_lite::future::race;
+use n0_future::future::race;
 use iroh::{
     endpoint::{Connection, StreamId},
     protocol::{AcceptError, ProtocolHandler, Router},

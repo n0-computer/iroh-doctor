@@ -5,8 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_lite::StreamExt;
-use futures_util::SinkExt;
+use n0_future::{SinkExt, StreamExt};
 use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
 

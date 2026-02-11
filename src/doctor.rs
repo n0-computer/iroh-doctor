@@ -597,7 +597,7 @@ pub async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<(
         eprintln!("Connection closed.");
         anyhow::Ok(())
     };
-    futures_lite::future::race(conn_closed, accept_loop).await
+    n0_future::future::race(conn_closed, accept_loop).await
 }
 
 /// Configures a relay map with some default values.
@@ -821,7 +821,7 @@ pub async fn run(
             )
             .await?;
 
-            futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
+            n0_future::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
                 if let Err(e) =
                     commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await
                 {
@@ -860,7 +860,7 @@ pub async fn run(
             )
             .await?;
 
-            futures_lite::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
+            n0_future::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
                 if let Err(e) = commands::accept::accept(secret_key, config, endpoint).await {
                     eprintln!("accept error: {e}");
                 }
