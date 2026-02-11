@@ -5,9 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use n0_future::{SinkExt, StreamExt};
 use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
+use n0_future::{SinkExt, StreamExt};
 
 use crate::config::NodeConfig;
 

@@ -3,13 +3,13 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use n0_future::future::race;
 use iroh::{
     endpoint::{Connection, StreamId},
     protocol::{AcceptError, ProtocolHandler, Router},
     Endpoint, EndpointId,
 };
 use iroh_n0des;
+use n0_future::future::race;
 use tokio::{sync::broadcast, task::JoinSet};
 use tracing::{debug, error, info, trace, warn};
 
