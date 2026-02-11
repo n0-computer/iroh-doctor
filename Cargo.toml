@@ -17,8 +17,7 @@ clap = { version = "4.5.20", features = ["derive"] }
 console = "0.16"
 derive_more = { version = "2.0", features = ["display", "from_str"] }
 dirs-next = "2.0.0"
-futures-lite = "2.3.0"
-futures-util = "0.3"
+n0-future = "0.3.2"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.96", features = ["metrics"] }
@@ -31,7 +30,7 @@ n0-watcher = "0.6"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
-portmapper = "0.13"
+portmapper = "0.14"
 prometheus-client = "0.24"
 quinn = { package = "iroh-quinn", version = "0.16" }
 rand = "0.9"
@@ -46,7 +45,7 @@ tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "1.0"
-ed25519-dalek = "3.0.0-pre.1"
+ed25519-dalek = "=3.0.0-pre.1"
 irpc = { version = "0.12", features = ["derive", "default"] }
 irpc-iroh = "0.12"
 rcan = "0.3"
