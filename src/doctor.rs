@@ -12,10 +12,8 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
     endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::SocketMetrics,
-    tls::CaRootsConfig,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
@@ -613,12 +611,11 @@ fn configure_local_relay_map() -> RelayMap {
 /// ALPN protocol address.
 pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
-/// Creates an iroh [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`AddressLookup`].
+/// Creates an iroh [`Endpoint`] from a [`SecretKey`] and a [`RelayMap`].
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
-    ca_roots: CaRootsConfig,
-    address_lookup: Option<ConcurrentAddressLookup>,
+    disable_address_lookup: bool,
     service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
@@ -637,18 +634,16 @@ async fn make_endpoint(
 
     let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
-        .ca_roots_config(ca_roots)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
+
+    if disable_address_lookup {
+        endpoint = endpoint.clear_address_lookup();
+    }
 
     if let Some(address) = socket_addr {
         endpoint = endpoint.bind_addr(address)?;
     }
-
-    let endpoint = match address_lookup {
-        Some(address_lookup) => endpoint.address_lookup(address_lookup),
-        None => endpoint,
-    };
 
     let endpoint = match relay_map {
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
@@ -745,27 +740,6 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-/// Creates an [`iroh::address_lookup::AddressLookup`] service from a [`SecretKey`].
-fn create_address_lookup(
-    disable_address_lookup: bool,
-    secret_key: &SecretKey,
-    ca_roots: &CaRootsConfig,
-) -> anyhow::Result<Option<ConcurrentAddressLookup>> {
-    if disable_address_lookup {
-        Ok(None)
-    } else {
-        Ok(Some(ConcurrentAddressLookup::from_services(vec![
-            // Enable DNS address lookup by default
-            Box::new(DnsAddressLookup::n0_dns().build()),
-            // Enable pkarr publishing by default
-            Box::new(PkarrPublisher::n0_dns().build(
-                secret_key.clone(),
-                ca_roots.client_config(iroh_relay::tls::default_provider())?,
-            )),
-        ])))
-    }
-}
-
 /// Runs the doctor commands.
 pub async fn run(
     command: Commands,
@@ -815,15 +789,11 @@ pub async fn run(
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            let ca_roots = CaRootsConfig::default();
-            let address_lookup =
-                create_address_lookup(disable_address_lookup, &secret_key, &ca_roots)?;
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                ca_roots,
-                address_lookup,
+                disable_address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
@@ -857,15 +827,11 @@ pub async fn run(
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            let ca_roots = CaRootsConfig::default();
-            let address_lookup =
-                create_address_lookup(disable_address_lookup, &secret_key, &ca_roots)?;
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                ca_roots,
-                address_lookup,
+                disable_address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
