@@ -15,6 +15,7 @@ use iroh::{
     address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
     endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
     metrics::SocketMetrics,
+    tls::CaRootsConfig,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
@@ -616,6 +617,7 @@ pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
+    ca_roots: CaRootsConfig,
     address_lookup: Option<ConcurrentAddressLookup>,
     service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
@@ -635,6 +637,7 @@ async fn make_endpoint(
 
     let mut endpoint = Endpoint::builder()
         .secret_key(secret_key)
+        .ca_roots_config(ca_roots)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
 
@@ -746,16 +749,20 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 fn create_address_lookup(
     disable_address_lookup: bool,
     secret_key: &SecretKey,
-) -> Option<ConcurrentAddressLookup> {
+    ca_roots: &CaRootsConfig,
+) -> anyhow::Result<Option<ConcurrentAddressLookup>> {
     if disable_address_lookup {
-        None
+        Ok(None)
     } else {
-        Some(ConcurrentAddressLookup::from_services(vec![
+        Ok(Some(ConcurrentAddressLookup::from_services(vec![
             // Enable DNS address lookup by default
             Box::new(DnsAddressLookup::n0_dns().build()),
             // Enable pkarr publishing by default
-            Box::new(PkarrPublisher::n0_dns().build(secret_key.clone())),
-        ]))
+            Box::new(PkarrPublisher::n0_dns().build(
+                secret_key.clone(),
+                ca_roots.client_config(iroh_relay::tls::default_provider())?,
+            )),
+        ])))
     }
 }
 
@@ -808,11 +815,14 @@ pub async fn run(
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
+            let ca_roots = CaRootsConfig::default();
+            let address_lookup =
+                create_address_lookup(disable_address_lookup, &secret_key, &ca_roots)?;
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
+                ca_roots,
                 address_lookup,
                 service_node,
                 ssh_key,
@@ -847,11 +857,14 @@ pub async fn run(
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
+            let ca_roots = CaRootsConfig::default();
+            let address_lookup =
+                create_address_lookup(disable_address_lookup, &secret_key, &ca_roots)?;
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
+                ca_roots,
                 address_lookup,
                 service_node,
                 ssh_key,
