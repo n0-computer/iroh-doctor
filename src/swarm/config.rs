@@ -25,7 +25,7 @@ pub struct SwarmConfig {
 
 /// Transport configuration for QUIC connection tuning
 ///
-/// All fields are optional. When None, quinn/iroh defaults are used.
+/// All fields are optional. When None, noq/iroh defaults are used.
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
     /// Maximum number of concurrent bidirectional streams
