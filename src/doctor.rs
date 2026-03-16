@@ -620,7 +620,7 @@ async fn make_endpoint(
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
     socket_addr: Option<SocketAddr>,
-) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
+) -> anyhow::Result<(Endpoint, Option<iroh_services::Client>)> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
@@ -659,7 +659,7 @@ async fn make_endpoint(
     let rpc_client = if let Some(remote_node) = service_node {
         // Grab ssh key
         let ssh_key_path = ssh_key.expect("missing ssh key location");
-        let client = iroh_n0des::Client::builder(&endpoint)
+        let client = iroh_services::Client::builder(&endpoint)
             .ssh_key_from_file(ssh_key_path)
             .await?
             .remote(remote_node)

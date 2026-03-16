@@ -4,11 +4,10 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use iroh::{
+    Endpoint, EndpointId,
     endpoint::{Connection, StreamId},
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, EndpointId,
 };
-use iroh_n0des;
 use n0_future::future::race;
 use tokio::{sync::broadcast, task::JoinSet};
 use tracing::{debug, error, info, trace, warn};
@@ -21,12 +20,12 @@ use crate::{
         config::SwarmConfig,
         execution::perform_test_assignment,
         tests::protocol::{
-            LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN,
+            DOCTOR_SWARM_ALPN, LatencyMessage, TestProtocolHeader, TestProtocolType,
         },
         transfer_utils::handle_bidirectional_transfer,
         types::{
-            ErrorResult, SwarmStats, TestAssignmentResult, DEFAULT_CHUNK_SIZE,
-            DEFAULT_CONNECTION_TIMEOUT, DEFAULT_DATA_TRANSFER_TIMEOUT,
+            DEFAULT_CHUNK_SIZE, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_DATA_TRANSFER_TIMEOUT,
+            ErrorResult, SwarmStats, TestAssignmentResult,
         },
     },
 };
@@ -270,7 +269,7 @@ async fn run_swarm_client_inner(
     let node_id = client.id();
 
     // Keep the n0des client alive for metrics collection
-    let _rpc_client = match iroh_n0des::Client::builder(&endpoint)
+    let _rpc_client = match iroh_services::Client::builder(&endpoint)
         .ssh_key_from_file(ssh_key_path)
         .await
     {
