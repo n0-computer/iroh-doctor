@@ -4,8 +4,8 @@ use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
 use iroh::{
-    Endpoint, EndpointId, RelayMode, Watcher,
     endpoint::{self, presets},
+    Endpoint, EndpointId, RelayMode, Watcher,
 };
 use tracing::info;
 use uuid::Uuid;

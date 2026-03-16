@@ -1,7 +1,6 @@
 //! Report command implementation
 
-use iroh::endpoint::presets;
-use iroh::{Endpoint, RelayMap, RelayMode, Watcher};
+use iroh::{endpoint::presets, Endpoint, RelayMap, RelayMode, Watcher};
 use n0_future::StreamExt;
 
 use crate::config::NodeConfig;

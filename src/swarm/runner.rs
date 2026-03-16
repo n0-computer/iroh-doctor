@@ -4,9 +4,9 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use iroh::{
-    Endpoint, EndpointId,
     endpoint::{Connection, StreamId},
     protocol::{AcceptError, ProtocolHandler, Router},
+    Endpoint, EndpointId,
 };
 use n0_future::future::race;
 use tokio::{sync::broadcast, task::JoinSet};
@@ -20,12 +20,12 @@ use crate::{
         config::SwarmConfig,
         execution::perform_test_assignment,
         tests::protocol::{
-            DOCTOR_SWARM_ALPN, LatencyMessage, TestProtocolHeader, TestProtocolType,
+            LatencyMessage, TestProtocolHeader, TestProtocolType, DOCTOR_SWARM_ALPN,
         },
         transfer_utils::handle_bidirectional_transfer,
         types::{
-            DEFAULT_CHUNK_SIZE, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_DATA_TRANSFER_TIMEOUT,
-            ErrorResult, SwarmStats, TestAssignmentResult,
+            ErrorResult, SwarmStats, TestAssignmentResult, DEFAULT_CHUNK_SIZE,
+            DEFAULT_CONNECTION_TIMEOUT, DEFAULT_DATA_TRANSFER_TIMEOUT,
         },
     },
 };

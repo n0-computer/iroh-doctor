@@ -12,9 +12,9 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
-    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream, presets},
+    endpoint::{self, presets, Connection, PathInfoList, RecvStream, SendStream},
     metrics::SocketMetrics,
+    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -25,7 +25,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     commands,
-    config::{NodeConfig, iroh_data_root},
+    config::{iroh_data_root, NodeConfig},
     metrics::{IrohMetricsRegistry, MetricsRegistry},
     progress::ProgressWriter,
 };
