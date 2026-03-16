@@ -3,7 +3,10 @@
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
-use iroh::{endpoint, Endpoint, EndpointId, RelayMode, Watcher};
+use iroh::{
+    Endpoint, EndpointId, RelayMode, Watcher,
+    endpoint::{self, presets},
+};
 use tracing::info;
 use uuid::Uuid;
 
@@ -69,7 +72,7 @@ impl SwarmClient {
 
         let transport_config = builder.build();
 
-        let endpoint = Endpoint::builder()
+        let endpoint = Endpoint::builder(presets::N0)
             .secret_key(config.secret_key.clone())
             .alpns(vec![DOCTOR_SWARM_ALPN.to_vec(), N0DES_DOCTOR_ALPN.to_vec()])
             .relay_mode(relay_mode)

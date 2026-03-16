@@ -12,9 +12,9 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
-    metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
+    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream, presets},
+    metrics::SocketMetrics,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -25,7 +25,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     commands,
-    config::{iroh_data_root, NodeConfig},
+    config::{NodeConfig, iroh_data_root},
     metrics::{IrohMetricsRegistry, MetricsRegistry},
     progress::ProgressWriter,
 };
@@ -632,7 +632,7 @@ async fn make_endpoint(
         .max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()))
         .build();
 
-    let mut endpoint = Endpoint::builder()
+    let mut endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);

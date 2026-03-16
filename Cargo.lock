@@ -1818,7 +1818,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "0.96.1"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#993b018eb3e5344fff03ee73d74b84134ab90650"
+source = "git+https://github.com/n0-computer/iroh.git?branch=main#b3da9402f48c876f0dd60c9014f7c3443de23b6b"
 dependencies = [
  "backon",
  "bytes",
@@ -1830,14 +1830,13 @@ dependencies = [
  "getrandom 0.3.4",
  "hickory-resolver",
  "http",
- "igd-next",
+ "ipnet",
  "iroh-base",
  "iroh-metrics",
  "iroh-relay",
  "n0-error",
  "n0-future",
  "n0-watcher",
- "netdev",
  "netwatch",
  "noq",
  "noq-proto",
@@ -1856,7 +1855,7 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "smallvec",
- "strum",
+ "strum 0.28.0",
  "sync_wrapper",
  "time",
  "tokio",
@@ -1871,7 +1870,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "0.96.1"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#993b018eb3e5344fff03ee73d74b84134ab90650"
+source = "git+https://github.com/n0-computer/iroh.git?branch=main#b3da9402f48c876f0dd60c9014f7c3443de23b6b"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -1993,7 +1992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ssh-key",
- "strum",
+ "strum 0.27.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2015,7 +2014,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "0.96.1"
-source = "git+https://github.com/n0-computer/iroh.git?branch=main#993b018eb3e5344fff03ee73d74b84134ab90650"
+source = "git+https://github.com/n0-computer/iroh.git?branch=main#b3da9402f48c876f0dd60c9014f7c3443de23b6b"
 dependencies = [
  "blake3",
  "bytes",
@@ -2045,7 +2044,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_bytes",
- "strum",
+ "strum 0.28.0",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -2075,7 +2074,7 @@ dependencies = [
 [[package]]
 name = "irpc"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/irpc.git?branch=feat-noq#5ed674d8051fe25151e8d955dda1fb609eeaca02"
+source = "git+https://github.com/n0-computer/irpc.git?branch=feat-noq#95b8a2a9fceb4790529eb7e47b519291f4a16b18"
 dependencies = [
  "futures-buffered",
  "futures-util",
@@ -2096,7 +2095,7 @@ dependencies = [
 [[package]]
 name = "irpc-derive"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/irpc.git?branch=feat-noq#5ed674d8051fe25151e8d955dda1fb609eeaca02"
+source = "git+https://github.com/n0-computer/irpc.git?branch=feat-noq#95b8a2a9fceb4790529eb7e47b519291f4a16b18"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2106,7 +2105,7 @@ dependencies = [
 [[package]]
 name = "irpc-iroh"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/irpc.git?branch=feat-noq#5ed674d8051fe25151e8d955dda1fb609eeaca02"
+source = "git+https://github.com/n0-computer/irpc.git?branch=feat-noq#95b8a2a9fceb4790529eb7e47b519291f4a16b18"
 dependencies = [
  "getrandom 0.3.4",
  "iroh",
@@ -3817,7 +3816,16 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros 0.28.0",
 ]
 
 [[package]]
@@ -3825,6 +3833,18 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",
