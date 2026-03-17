@@ -8,7 +8,6 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
     Endpoint, EndpointId,
 };
-use iroh_n0des;
 use n0_future::future::race;
 use tokio::{sync::broadcast, task::JoinSet};
 use tracing::{debug, error, info, trace, warn};
@@ -270,7 +269,7 @@ async fn run_swarm_client_inner(
     let node_id = client.id();
 
     // Keep the n0des client alive for metrics collection
-    let _rpc_client = match iroh_n0des::Client::builder(&endpoint)
+    let _rpc_client = match iroh_services::Client::builder(&endpoint)
         .ssh_key_from_file(ssh_key_path)
         .await
     {

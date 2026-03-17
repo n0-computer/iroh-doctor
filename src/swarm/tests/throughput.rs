@@ -94,7 +94,12 @@ pub(crate) async fn run_bidirectional_throughput_test_with_config(
 
                 debug!(
                     "Stream {} completed: sent={}, received={}, upload_duration={:?}, download_duration={:?}, throughput={:.2} Mbps",
-                    idx, bytes_sent, bytes_received, upload_duration, download_duration, stream_throughput_mbps
+                    idx,
+                    bytes_sent,
+                    bytes_received,
+                    upload_duration,
+                    download_duration,
+                    stream_throughput_mbps
                 );
             }
             Ok(Err(e)) => {
@@ -126,9 +131,9 @@ pub(crate) async fn run_bidirectional_throughput_test_with_config(
             .get()
             .into_iter()
             .find(|p| p.is_selected())
-            .map(|p| p.stats().into())
+            .and_then(|p| p.stats())
             .unwrap_or_default();
-        let stats = TestStats::from_streams(stream_stats, connection_stats);
+        let stats = TestStats::from_streams(stream_stats, connection_stats.into());
         Some(stats)
     } else {
         None
@@ -222,7 +227,8 @@ async fn run_single_stream_test_with_config(
     );
 
     debug!(
-        "Stream {stream_idx} completed: sent={bytes_sent} bytes in {upload_duration:?}, received={bytes_received} bytes in {download_duration:?}");
+        "Stream {stream_idx} completed: sent={bytes_sent} bytes in {upload_duration:?}, received={bytes_received} bytes in {download_duration:?}"
+    );
 
     Ok((
         bytes_sent,

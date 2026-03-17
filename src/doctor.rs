@@ -12,8 +12,7 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    address_lookup::{dns::DnsAddressLookup, pkarr::PkarrPublisher, ConcurrentAddressLookup},
-    endpoint::{self, Connection, PathInfoList, RecvStream, SendStream},
+    endpoint::{self, presets, Connection, PathInfoList, RecvStream, SendStream},
     metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
 };
@@ -612,16 +611,16 @@ fn configure_local_relay_map() -> RelayMap {
 /// ALPN protocol address.
 pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
 
-/// Creates an iroh [`Endpoint`] from a [SecreetKey`], a [`RelayMap`] and a [`AddressLookup`].
+/// Creates an iroh [`Endpoint`] from a [`SecretKey`] and a [`RelayMap`].
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
-    address_lookup: Option<ConcurrentAddressLookup>,
+    disable_address_lookup: bool,
     service_node: Option<EndpointId>,
     ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
     socket_addr: Option<SocketAddr>,
-) -> anyhow::Result<(Endpoint, Option<iroh_n0des::Client>)> {
+) -> anyhow::Result<(Endpoint, Option<iroh_services::Client>)> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
@@ -633,19 +632,18 @@ async fn make_endpoint(
         .max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()))
         .build();
 
-    let mut endpoint = Endpoint::builder()
+    let mut endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
 
+    if disable_address_lookup {
+        endpoint = endpoint.clear_address_lookup();
+    }
+
     if let Some(address) = socket_addr {
         endpoint = endpoint.bind_addr(address)?;
     }
-
-    let endpoint = match address_lookup {
-        Some(address_lookup) => endpoint.address_lookup(address_lookup),
-        None => endpoint,
-    };
 
     let endpoint = match relay_map {
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
@@ -661,7 +659,7 @@ async fn make_endpoint(
     let rpc_client = if let Some(remote_node) = service_node {
         // Grab ssh key
         let ssh_key_path = ssh_key.expect("missing ssh key location");
-        let client = iroh_n0des::Client::builder(&endpoint)
+        let client = iroh_services::Client::builder(&endpoint)
             .ssh_key_from_file(ssh_key_path)
             .await?
             .remote(remote_node)
@@ -742,23 +740,6 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
-/// Creates an [`iroh::address_lookup::AddressLookup`] service from a [`SecretKey`].
-fn create_address_lookup(
-    disable_address_lookup: bool,
-    secret_key: &SecretKey,
-) -> Option<ConcurrentAddressLookup> {
-    if disable_address_lookup {
-        None
-    } else {
-        Some(ConcurrentAddressLookup::from_services(vec![
-            // Enable DNS address lookup by default
-            Box::new(DnsAddressLookup::n0_dns().build()),
-            // Enable pkarr publishing by default
-            Box::new(PkarrPublisher::n0_dns().build(secret_key.clone())),
-        ]))
-    }
-}
-
 /// Runs the doctor commands.
 pub async fn run(
     command: Commands,
@@ -808,12 +789,11 @@ pub async fn run(
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                address_lookup,
+                disable_address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),
@@ -847,12 +827,11 @@ pub async fn run(
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            let address_lookup = create_address_lookup(disable_address_lookup, &secret_key);
 
             let (endpoint, _client) = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
-                address_lookup,
+                disable_address_lookup,
                 service_node,
                 ssh_key,
                 metrics.iroh.clone(),

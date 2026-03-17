@@ -116,7 +116,7 @@ pub struct StreamStats {
     pub throughput_mbps: f64,
 }
 
-/// Connection statistics extracted from quinn::ConnectionStats
+/// Connection statistics extracted from noq::ConnectionStats
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionStats {
     /// Round-trip time in milliseconds
@@ -149,20 +149,20 @@ pub struct ConnectionStats {
     pub black_hole_detected: u64,
 }
 
-impl From<quinn::PathStats> for ConnectionStats {
-    fn from(stats: quinn::PathStats) -> Self {
+impl From<noq::PathStats> for ConnectionStats {
+    fn from(stats: noq::PathStats) -> Self {
         Self {
             rtt_ms: stats.rtt.as_millis() as u32,
             smoothed_rtt_ms: stats.rtt.as_millis() as u32, // PathStats.rtt is the smoothed RTT estimate
-            latest_rtt_ms: 0,                              // Not separately tracked in iroh-quinn
-            rtt_variance_ms: 0,                            // Not separately tracked in iroh-quinn
+            latest_rtt_ms: 0,                              // Not separately tracked in noq
+            rtt_variance_ms: 0,                            // Not separately tracked in noq
             cwnd: stats.cwnd,
             sent_packets: stats.udp_tx.datagrams,
             lost_packets: stats.lost_packets,
             sent_bytes: stats.udp_tx.bytes,
             recv_bytes: stats.udp_rx.bytes,
             congestion_events: stats.congestion_events,
-            sent_ack_only_packets: 0, // Not available in iroh-quinn
+            sent_ack_only_packets: 0, // Not available in noq
             sent_plpmtu_probes: stats.sent_plpmtud_probes,
             lost_plpmtu_probes: stats.lost_plpmtud_probes,
             black_hole_detected: stats.black_holes_detected,
@@ -185,7 +185,7 @@ pub struct TestStats {
     pub min_stream_throughput: f64,
     /// Maximum throughput observed across streams (Mbps)
     pub max_stream_throughput: f64,
-    /// Connection-level statistics from quinn
+    /// Connection-level statistics from noq
     pub connection_stats: ConnectionStats,
 }
 

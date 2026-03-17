@@ -20,25 +20,25 @@ dirs-next = "2.0.0"
 n0-future = "0.3.2"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
-iroh = { version = "0.96", features = ["metrics"] }
+iroh = { version = "0.97", features = ["metrics"] }
 iroh-base = "0.96"
 iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
-iroh-n0des = { version = "0.9", features = ["ssh-key"] }
-iroh-relay = "0.96"
-netwatch = "0.14"
+iroh-services = { version = "0.12", features = ["ssh-key"] }
+iroh-relay = "0.97"
+netwatch = "0.15"
 n0-watcher = "0.6"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
-portmapper = "0.14"
+portmapper = "0.15"
 prometheus-client = "0.24"
-quinn = { package = "iroh-quinn", version = "0.16" }
+noq = "0.17"
 rand = "0.9"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"
 ssh-key = { version = "0.7.0-rc.3", features = ["ed25519", "std", "rand_core"] }
-tokio = "1.40.0"
+tokio = { version = "1.40.0", features = ["signal"] }
 tokio-util = "0.7.12"
 toml = { version = "0.9", features = ["preserve_order"] }
 tracing = "0.1.40"
@@ -46,8 +46,8 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "1.0"
 ed25519-dalek = "=3.0.0-pre.1"
-irpc = { version = "0.12", features = ["derive", "default"] }
-irpc-iroh = "0.12"
+irpc = { version = "0.13", features = ["derive", "default"] }
+irpc-iroh = "0.13"
 rcan = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 url = "2.5.2"

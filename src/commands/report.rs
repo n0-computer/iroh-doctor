@@ -1,6 +1,6 @@
 //! Report command implementation
 
-use iroh::{Endpoint, RelayMap, RelayMode, Watcher};
+use iroh::{endpoint::presets, Endpoint, RelayMap, RelayMode, Watcher};
 use n0_future::StreamExt;
 
 use crate::config::NodeConfig;
@@ -30,7 +30,7 @@ pub async fn report(
     }
     let relay_map = config.relay_map()?.unwrap_or_else(RelayMap::empty);
 
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .bind()
         .await?;
