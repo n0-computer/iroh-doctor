@@ -23,7 +23,7 @@ indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.97", features = ["metrics"] }
 iroh-base = "0.96"
 iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
-iroh-services = { version = "0.11", features = ["ssh-key"] }
+iroh-services = { version = "0.12", features = ["ssh-key"] }
 iroh-relay = "0.97"
 netwatch = "0.15"
 n0-watcher = "0.6"
@@ -63,6 +63,3 @@ unreachable_pub = "warn"
 [lints.clippy]
 or_fun_call = "warn"
 use_self = "warn"
-
-[patch.crates-io]
-iroh-services = { git = "https://github.com/n0-computer/iroh-services", branch = "iroh-X" }
