@@ -23,7 +23,7 @@ indicatif = { version = "0.18", features = ["tokio"] }
 iroh = { version = "0.97", features = ["metrics"] }
 iroh-base = "0.96"
 iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
-iroh-services = { version = "0.12", features = ["ssh-key"] }
+iroh-services = "0.13"
 iroh-relay = "0.97"
 netwatch = "0.15"
 n0-watcher = "0.6"
