@@ -602,10 +602,7 @@ pub async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<(
 /// Configures a relay map with some default values.
 fn configure_local_relay_map() -> RelayMap {
     let url = "http://localhost:3340".parse().unwrap();
-    RelayMap::from(RelayConfig {
-        url,
-        quic: Some(RelayQuicConfig::default()),
-    })
+    RelayMap::from(RelayConfig::new(url, Some(RelayQuicConfig::default())))
 }
 
 /// ALPN protocol address.
@@ -719,7 +716,7 @@ pub fn log_connection_changes(
 /// Creates a [`SecretKey`] from a [`SecretKeyOption`].
 fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     Ok(match secret_key {
-        SecretKeyOption::Random => SecretKey::generate(&mut rand::rng()),
+        SecretKeyOption::Random => SecretKey::generate(),
         SecretKeyOption::Hex(hex) => {
             let bytes = hex::decode(hex)?;
             SecretKey::try_from(&bytes[..])?
@@ -734,7 +731,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
                     "Local key not found in {}. Using random key.",
                     path.display()
                 );
-                SecretKey::generate(&mut rand::rng())
+                SecretKey::generate()
             }
         }
     })

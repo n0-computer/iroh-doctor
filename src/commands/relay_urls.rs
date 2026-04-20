@@ -13,7 +13,7 @@ use crate::config::NodeConfig;
 
 /// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
 pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()> {
-    let key = SecretKey::generate(&mut rand::rng());
+    let key = SecretKey::generate();
     if config.relay_nodes.is_empty() {
         println!("No relay nodes specified in the config file.");
     }

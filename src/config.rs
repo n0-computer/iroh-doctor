@@ -228,10 +228,10 @@ mod tests {
         "#;
         let config = NodeConfig::load_toml(source).unwrap();
 
-        let expected = RelayConfig {
-            url: Url::parse("https://example.org./").unwrap().into(),
-            quic: Some(RelayQuicConfig { port: 7842 }),
-        };
+        let expected = RelayConfig::new(
+            Url::parse("https://example.org./").unwrap().into(),
+            Some(RelayQuicConfig::new(7842)),
+        );
         assert_eq!(config.relay_nodes, vec![expected]);
     }
 
