@@ -20,20 +20,20 @@ dirs-next = "2.0.0"
 n0-future = "0.3.2"
 hex = "0.4.3"
 indicatif = { version = "0.18", features = ["tokio"] }
-iroh = { version = "0.97", features = ["metrics"] }
-iroh-base = "0.96"
+iroh = { version = "0.98", features = ["metrics"] }
+iroh-base = "0.98"
 iroh-metrics = { version = "0.38", features = ["service", "static_core"] }
-iroh-services = "0.13"
-iroh-relay = "0.97"
-netwatch = "0.15"
+iroh-services = "0.14"
+iroh-relay = "0.98"
+netwatch = "0.16"
 n0-watcher = "0.6"
 pkarr = { version = "5", default-features = false}
 portable-atomic = "1.9.0"
 postcard = "1.0.10"
-portmapper = "0.15"
+portmapper = "0.16"
 prometheus-client = "0.24"
-noq = "0.17"
-rand = "0.9"
+noq = "0.18"
+rand = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_with = "3.11.0"
@@ -45,9 +45,9 @@ tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 webpki-roots = "1.0"
-ed25519-dalek = "=3.0.0-pre.1"
-irpc = { version = "0.13", features = ["derive", "default"] }
-irpc-iroh = "0.13"
+ed25519-dalek = "=3.0.0-pre.6"
+irpc = { version = "0.14", features = ["derive", "default"] }
+irpc-iroh = "0.14"
 rcan = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 url = "2.5.2"
