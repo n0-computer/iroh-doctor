@@ -3,7 +3,6 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use iroh::Watcher;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -128,10 +127,9 @@ pub(crate) async fn run_bidirectional_throughput_test_with_config(
     let statistics = if !stream_stats.is_empty() {
         let connection_stats = conn
             .paths()
-            .get()
-            .into_iter()
+            .iter()
             .find(|p| p.is_selected())
-            .and_then(|p| p.stats())
+            .map(|p| p.stats())
             .unwrap_or_default();
         let stats = TestStats::from_streams(stream_stats, connection_stats.into());
         Some(stats)

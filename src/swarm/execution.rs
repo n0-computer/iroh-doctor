@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use iroh::{endpoint::Connection, Endpoint, EndpointId, TransportAddr, Watcher};
+use iroh::{endpoint::Connection, Endpoint, EndpointId, TransportAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -39,8 +39,7 @@ impl From<&TransportAddr> for ConnectionType {
 /// Helper function to get the real connection type from the endpoint
 pub(crate) fn get_connection_type(conn: &Connection) -> Option<ConnectionType> {
     conn.paths()
-        .get()
-        .into_iter()
+        .iter()
         .find(|path| path.is_selected())
         .map(|path| path.remote_addr().into())
 }

@@ -25,7 +25,7 @@ pub async fn connect(
     match conn {
         Ok(connection) => {
             let gui = Gui::new(endpoint, endpoint_id);
-            log_connection_changes(gui.mp.clone(), endpoint_id, connection.paths());
+            log_connection_changes(gui.mp.clone(), endpoint_id, connection.clone());
 
             let close_reason = connection
                 .close_reason()

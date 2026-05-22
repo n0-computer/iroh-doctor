@@ -31,7 +31,7 @@ pub(super) async fn drain_stream(
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;
             }
-            read += chunk.bytes.len();
+            read += chunk.len();
             num_chunks += 1;
         }
     } else {
@@ -48,7 +48,7 @@ pub(super) async fn drain_stream(
         ];
 
         while let Some(n) = stream
-            .read_chunks(&mut bufs[..])
+            .read_many_chunks(&mut bufs[..])
             .await
             .context("Failed to read chunks")?
         {
