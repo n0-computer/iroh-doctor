@@ -193,6 +193,23 @@ pub enum Commands {
         #[clap(long, default_value_t = 5)]
         count: usize,
     },
+    /// Run the full diagnostic probe and print a combined summary.
+    ///
+    /// Combines a single net_report with a NAT classification, a direct
+    /// UPnP/PCP/NAT-PMP probe, and one round of per-relay connect plus
+    /// ping latency. Designed for "what does this network look like?"
+    /// in one command.
+    Probe {
+        /// Skip the UPnP/PCP/NAT-PMP probe.
+        #[clap(long, default_value_t = false)]
+        no_port_map: bool,
+        /// Skip the per-relay latency probe.
+        #[clap(long, default_value_t = false)]
+        no_relays: bool,
+        /// Emit the combined report as JSON to stdout.
+        #[clap(long, default_value_t = false)]
+        json: bool,
+    },
     /// Join a doctor swarm as a test node
     SwarmClient {
         /// SSH private key path for authentication
@@ -867,6 +884,11 @@ pub async fn run(
             commands::port_map::port_map_probe(config).await
         }
         Commands::RelayUrls { count } => commands::relay_urls::relay_urls(count, config).await,
+        Commands::Probe {
+            no_port_map,
+            no_relays,
+            json,
+        } => commands::probe::probe(config, no_port_map, no_relays, json).await,
         Commands::SwarmClient {
             ssh_key,
             coordinator,

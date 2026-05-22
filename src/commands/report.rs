@@ -4,6 +4,7 @@ use iroh::{endpoint::presets, Endpoint, RelayMap, RelayMode, Watcher};
 use n0_future::StreamExt;
 
 use crate::config::NodeConfig;
+use crate::nat_classifier::classify_base_report;
 
 /// Prints a client report.
 pub async fn report(
@@ -46,8 +47,19 @@ pub async fn report(
     }
 
     let mut stream = endpoint.net_report().stream();
+    let mut classified = false;
     while let Some(report) = stream.next().await {
         println!("{report:#?}");
+        if !classified {
+            if let Some(actual) = report.as_ref() {
+                let nat = classify_base_report(actual);
+                println!(
+                    "\nNAT classification: {nat} - {desc}",
+                    desc = nat.description()
+                );
+                classified = true;
+            }
+        }
     }
 
     endpoint.close().await;

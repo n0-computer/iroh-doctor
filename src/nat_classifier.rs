@@ -90,6 +90,19 @@ pub fn classify_nat_type(report: &ExtendedNetworkReport) -> NatType {
     }
 }
 
+/// Classify NAT type from a base [`iroh::NetReport`] alone.
+///
+/// Convenience wrapper for callers that have a `NetReport` and do not
+/// collect the port-variation extension yet. Returns the same
+/// classification [`classify_nat_type`] would produce when fed the
+/// equivalent [`ExtendedNetworkReport`] with no port-variation fields
+/// set.
+pub fn classify_base_report(report: &iroh::NetReport) -> NatType {
+    classify_nat_type(&ExtendedNetworkReport::from_base_report(Some(
+        report.clone(),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
