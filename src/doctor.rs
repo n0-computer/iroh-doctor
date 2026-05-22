@@ -16,9 +16,9 @@ use iroh::{
     metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
-use n0_future::StreamExt;
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
+use n0_future::StreamExt;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
