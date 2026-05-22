@@ -128,9 +128,14 @@ async fn port_map_probe() -> PortMapBlock {
         enable_nat_pmp: true,
         protocol: PortMapProtocol::Udp,
     };
+    // Drop happens at end of scope after the probe future has been
+    // awaited; the client is kept alive across the .await for that
+    // reason. The earlier version added an explicit drop after the
+    // match, which was a no-op because drop already happens at end of
+    // function.
     let client = PortMapClient::new(cfg);
     let probe_rx = client.probe();
-    let out = match tokio::time::timeout(Duration::from_secs(5), probe_rx).await {
+    match tokio::time::timeout(Duration::from_secs(5), probe_rx).await {
         Ok(Ok(Ok(p))) => PortMapBlock {
             upnp: Some(p.upnp),
             pcp: Some(p.pcp),
@@ -155,9 +160,20 @@ async fn port_map_probe() -> PortMapBlock {
             nat_pmp: None,
             error: Some("probe timed out".into()),
         },
-    };
-    drop(client);
-    out
+    }
+}
+
+/// Comparator that orders rows ascending by `ping_ms` with failures
+/// (no ping) at the bottom. Extracted as a free function so the test
+/// and the production sort cannot drift. Mirrors
+/// `iroh-pong::relay_probe::cmp_by_ping`.
+fn cmp_by_ping(a: &RelayBlock, b: &RelayBlock) -> std::cmp::Ordering {
+    match (a.ping_ms, b.ping_ms) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 async fn probe_relays(relay_map: &RelayMap) -> Vec<RelayBlock> {
@@ -167,12 +183,7 @@ async fn probe_relays(relay_map: &RelayMap) -> Vec<RelayBlock> {
     for config in relay_map.relays::<Vec<_>>() {
         rows.push(probe_one_relay(&config.url, &key, &dns).await);
     }
-    rows.sort_by(|a, b| match (a.ping_ms, b.ping_ms) {
-        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
+    rows.sort_by(cmp_by_ping);
     rows
 }
 
@@ -334,12 +345,7 @@ mod tests {
                 error: None,
             },
         ];
-        rows.sort_by(|a, b| match (a.ping_ms, b.ping_ms) {
-            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
+        rows.sort_by(cmp_by_ping);
         assert_eq!(rows[0].url, "https://a/");
         assert_eq!(rows[1].url, "https://b/");
         assert!(rows[2].error.is_some());
