@@ -47,7 +47,8 @@ Commands:
   port-map-probe  Probe the port mapping protocols
   port-map        Attempt to get a port mapping to the given local port
   relay-urls      Get the latencies of the different relay url
-  plot            Plot metric counters
+  probe           Run the full diagnostic probe and print a combined summary
+  swarm-client    Join a doctor swarm as a test node
   help            Print this message or the help of the given subcommand(s)
 
 Options:
