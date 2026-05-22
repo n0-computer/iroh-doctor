@@ -19,14 +19,15 @@ use iroh_relay::client::ClientBuilder;
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
 use n0_future::{SinkExt, StreamExt};
 use portmapper::{Client as PortMapClient, Config as PortMapConfig, Protocol as PortMapProtocol};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::NodeConfig;
 use crate::nat_classifier::{classify_base_report, NatType};
 
 /// Combined output of the `probe` command. Serialized when `--json` is
-/// set.
-#[derive(Debug, Serialize, Deserialize)]
+/// set; no consumer deserializes this in-process today, so `Deserialize`
+/// is omitted to keep the public type surface tight.
+#[derive(Debug, Serialize)]
 pub struct ProbeReport {
     pub net_report: Option<iroh::NetReport>,
     pub nat: NatType,
@@ -34,7 +35,7 @@ pub struct ProbeReport {
     pub relays: Vec<RelayBlock>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct PortMapBlock {
     pub upnp: Option<bool>,
     pub pcp: Option<bool>,
@@ -42,13 +43,18 @@ pub struct PortMapBlock {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct RelayBlock {
     pub url: String,
     pub connect_ms: Option<f64>,
     pub ping_ms: Option<f64>,
     pub error: Option<String>,
 }
+
+/// Wall-clock ceiling for the `net_report().initialized()` wait. A
+/// network with no DNS or no reachable STUN endpoints would otherwise
+/// hang the command indefinitely.
+const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Runs every probe and prints the combined report.
 pub async fn probe(
@@ -64,9 +70,26 @@ pub async fn probe(
         .bind()
         .await?;
 
-    // Wait for the first non-empty report. The reporter streams updates,
-    // so a single .initialized() is enough for a one-shot summary.
-    let net_report = endpoint.net_report().initialized().await;
+    // Run the actual work inside a helper so endpoint.close() always runs
+    // even if one of the steps returns Err.
+    let result = probe_inner(&endpoint, &relay_map, no_port_map, no_relays, json).await;
+    endpoint.close().await;
+    result
+}
+
+async fn probe_inner(
+    endpoint: &Endpoint,
+    relay_map: &RelayMap,
+    no_port_map: bool,
+    no_relays: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    // Wait for the first non-empty report with a hard ceiling. The
+    // reporter streams updates indefinitely; without a timeout the
+    // command would hang on a network with no DNS or no reachable STUN.
+    let net_report = tokio::time::timeout(NET_REPORT_TIMEOUT, endpoint.net_report().initialized())
+        .await
+        .context("net_report did not initialize within timeout")?;
     let nat = classify_base_report(&net_report);
 
     let port_map = if no_port_map {
@@ -78,7 +101,7 @@ pub async fn probe(
     let relays = if no_relays {
         Vec::new()
     } else {
-        probe_relays(&relay_map).await
+        probe_relays(relay_map).await
     };
 
     let report = ProbeReport {
@@ -95,7 +118,6 @@ pub async fn probe(
         print_text(&report);
     }
 
-    endpoint.close().await;
     Ok(())
 }
 
@@ -269,5 +291,57 @@ fn fmt_opt_ms(ms: Option<f64>) -> String {
     match ms {
         Some(v) => format!("{v:.1}ms"),
         None => "-".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tribool_text_covers_all_states() {
+        assert_eq!(tribool_text(Some(true)), "yes");
+        assert_eq!(tribool_text(Some(false)), "no");
+        assert_eq!(tribool_text(None), "(not probed)");
+    }
+
+    #[test]
+    fn fmt_opt_ms_formats_to_one_decimal_or_dash() {
+        assert_eq!(fmt_opt_ms(Some(42.0)), "42.0ms");
+        assert_eq!(fmt_opt_ms(Some(0.12)), "0.1ms");
+        assert_eq!(fmt_opt_ms(None), "-");
+    }
+
+    #[test]
+    fn relay_sort_orders_ping_then_failure() {
+        let mut rows = [
+            RelayBlock {
+                url: "https://c/".into(),
+                connect_ms: None,
+                ping_ms: None,
+                error: Some("fail".into()),
+            },
+            RelayBlock {
+                url: "https://b/".into(),
+                connect_ms: None,
+                ping_ms: Some(120.0),
+                error: None,
+            },
+            RelayBlock {
+                url: "https://a/".into(),
+                connect_ms: None,
+                ping_ms: Some(40.0),
+                error: None,
+            },
+        ];
+        rows.sort_by(|a, b| match (a.ping_ms, b.ping_ms) {
+            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        assert_eq!(rows[0].url, "https://a/");
+        assert_eq!(rows[1].url, "https://b/");
+        assert!(rows[2].error.is_some());
     }
 }

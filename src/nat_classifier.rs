@@ -176,4 +176,33 @@ mod tests {
         let nat_type = classify_nat_type(&report);
         assert_eq!(nat_type, NatType::Unknown);
     }
+
+    /// `classify_base_report` is documented as a thin shim around
+    /// `classify_nat_type` for callers that have only a base
+    /// `iroh::NetReport`. Pin the equivalence.
+    #[test]
+    fn test_classify_base_report_matches_wrapper_with_no_port_variation() {
+        let mut base = iroh::NetReport {
+            udp_v4: true,
+            global_v4: Some(std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::new(203, 0, 113, 1),
+                12345,
+            )),
+            ..Default::default()
+        };
+        base.mapping_varies_by_dest_ipv4 = Some(false);
+
+        let direct = classify_base_report(&base);
+        let via_wrapper =
+            classify_nat_type(&ExtendedNetworkReport::from_base_report(Some(base.clone())));
+        assert_eq!(direct, via_wrapper);
+        // Without port-variation data, a stable mapping is Medium.
+        assert_eq!(direct, NatType::Medium);
+    }
+
+    #[test]
+    fn test_classify_base_report_unknown_on_empty() {
+        let nat_type = classify_base_report(&iroh::NetReport::default());
+        assert_eq!(nat_type, NatType::Unknown);
+    }
 }
