@@ -108,8 +108,12 @@ where
                 let mut buf = vec![0u8; UPLOAD_CHUNK];
                 while remaining > 0 {
                     let take = remaining.min(buf.len() as u64) as usize;
-                    recv.read_exact(&mut buf[..take])
+                    // Bound each read: a client that announces an upload and
+                    // then stalls must not pin the responder, since the
+                    // continuous case has no overall handler timeout.
+                    tokio::time::timeout(IDLE_TIMEOUT, recv.read_exact(&mut buf[..take]))
                         .await
+                        .context("upload drain: idle timeout")?
                         .context("upload drain")?;
                     remaining -= take as u64;
                 }
@@ -298,6 +302,33 @@ mod tests {
         assert!(read_frame(&mut client_recv, Duration::from_secs(1))
             .await
             .is_err());
+        server.await.unwrap().expect("responder finished cleanly");
+    }
+
+    /// The responder must serve a long ping stream (the old one-shot
+    /// version capped pings and closed after a single upload) and keep
+    /// answering pings after an upload.
+    #[tokio::test]
+    async fn responder_serves_continuously() {
+        let (mut client_send, server_recv) = duplex(128 * 1024);
+        let (server_send, mut client_recv) = duplex(128 * 1024);
+        let server = tokio::spawn(serve_stream(server_send, server_recv));
+
+        // Well past the old PING_ITERATIONS * 2 cap of 10.
+        for nonce in 0..15u32 {
+            ping_once(&mut client_send, &mut client_recv, nonce)
+                .await
+                .expect("ping");
+        }
+        upload_once(&mut client_send, &mut client_recv, 64 * 1024)
+            .await
+            .expect("upload");
+        // Still answering pings after the upload.
+        ping_once(&mut client_send, &mut client_recv, 99)
+            .await
+            .expect("post-upload ping");
+
+        client_send.shutdown().await.unwrap();
         server.await.unwrap().expect("responder finished cleanly");
     }
 }
