@@ -12,9 +12,9 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    endpoint::{self, presets, Connection, PathInfoList, RecvStream, SendStream},
+    endpoint::{self, presets, Connection, RecvStream, SendStream},
     metrics::SocketMetrics,
-    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, Watcher,
+    Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
@@ -691,14 +691,12 @@ pub fn format_addr(addr: SocketAddr) -> String {
 }
 
 /// Logs the connection changes to the multiprogress.
-pub fn log_connection_changes(
-    pb: MultiProgress,
-    node_id: EndpointId,
-    mut paths: impl Watcher<Value = PathInfoList> + Send + 'static,
-) {
+pub fn log_connection_changes(pb: MultiProgress, node_id: EndpointId, connection: Connection) {
     tokio::spawn(async move {
+        use n0_future::StreamExt;
         let start = Instant::now();
-        while let Ok(path_list) = paths.updated().await {
+        let mut paths = connection.paths_stream();
+        while let Some(path_list) = paths.next().await {
             let selected = path_list.iter().find(|p| p.is_selected());
             let path_desc = match selected {
                 Some(p) => format!("{:?}", p.remote_addr()),
@@ -752,11 +750,11 @@ pub async fn run(
     let metrics_clone = metrics.clone();
     let metrics_fut = config.metrics_addr.map(|metrics_addr| {
         tokio::task::spawn(async move {
-            if let Err(e) =
-                iroh_metrics::service::start_metrics_server(metrics_addr, metrics_clone.clone())
-                    .await
+            match iroh_metrics::service::MetricsServer::spawn(metrics_addr, metrics_clone.clone())
+                .await
             {
-                eprintln!("Failed to start metrics server: {e}");
+                Ok(_server) => std::future::pending::<()>().await,
+                Err(e) => eprintln!("Failed to start metrics server: {e}"),
             }
         })
     });
