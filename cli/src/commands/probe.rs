@@ -22,8 +22,9 @@ use n0_future::{SinkExt, StreamExt};
 use portmapper::{Client as PortMapClient, Config as PortMapConfig, Protocol as PortMapProtocol};
 use serde::Serialize;
 
+use iroh_doctor_core::nat::{classify_base_report, NatType};
+
 use crate::config::NodeConfig;
-use crate::nat_classifier::{classify_base_report, NatType};
 
 /// Combined output of the `probe` command. Serialized when `--json` is
 /// set; no consumer deserializes this in-process today, so `Deserialize`

@@ -4,7 +4,9 @@ use std::net::SocketAddr;
 
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 
-use crate::doctor::{log_connection_changes, passive_side, Gui, DR_RELAY_ALPN};
+use iroh_doctor_core::doctor::ALPN;
+
+use crate::doctor::{log_connection_changes, passive_side, Gui};
 
 /// Connects to a [`EndpointId`].
 pub async fn connect(
@@ -21,7 +23,7 @@ pub async fn connect(
     for ip_addr in direct_addresses {
         endpoint_addr = endpoint_addr.with_ip_addr(ip_addr);
     }
-    let conn = endpoint.connect(endpoint_addr, &DR_RELAY_ALPN).await;
+    let conn = endpoint.connect(endpoint_addr, ALPN).await;
     match conn {
         Ok(connection) => {
             let gui = Gui::new(endpoint, endpoint_id);

@@ -2,6 +2,7 @@ use std::{path::Path, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use iroh::{Endpoint, EndpointAddr, EndpointId};
+use iroh_doctor_core::nat::ExtendedNetworkReport;
 use irpc::{channel::oneshot, rpc_requests};
 use irpc_iroh::IrohRemoteConnection;
 use rcan::Rcan;
@@ -11,7 +12,6 @@ use uuid::Uuid;
 
 use crate::swarm::{
     client::N0DES_DOCTOR_ALPN,
-    net_report_ext::ExtendedNetworkReport,
     types::{DoctorCaps, TestAssignmentResult, TestConfig, TestType},
 };
 

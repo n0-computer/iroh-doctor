@@ -4156,6 +4156,7 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-base",
+ "iroh-doctor-core",
  "iroh-metrics",
  "iroh-relay",
  "iroh-services",

@@ -7,6 +7,7 @@ use iroh::{
     endpoint::{self, presets},
     Endpoint, EndpointId, RelayMode, Watcher,
 };
+use iroh_doctor_core::nat::ExtendedNetworkReport;
 use tracing::info;
 use uuid::Uuid;
 
@@ -17,7 +18,6 @@ use crate::{
     metrics::IrohMetricsRegistry,
     swarm::{
         config::SwarmConfig,
-        net_report_ext::ExtendedNetworkReport,
         rpc::{DoctorClient, TestAssignment, TestResultReport},
         tests::protocol::DOCTOR_SWARM_ALPN,
         types::TestAssignmentResult,

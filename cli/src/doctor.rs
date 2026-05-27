@@ -16,11 +16,11 @@ use iroh::{
     metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
+use iroh_doctor_core::doctor::{TestStreamRequest, ALPN};
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
 use n0_future::StreamExt;
 use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::task::AbortOnDropHandle;
 
@@ -229,14 +229,6 @@ pub enum Commands {
         #[clap(long, default_value = "random")]
         secret_key: SecretKeyOption,
     },
-}
-
-/// Possible streams that can be requested.
-#[derive(Debug, Serialize, Deserialize, MaxSize)]
-pub enum TestStreamRequest {
-    Echo { bytes: u64 },
-    Drain { bytes: u64 },
-    Send { bytes: u64, block_size: u32 },
 }
 
 /// Configuration for testing.
@@ -623,9 +615,6 @@ fn configure_local_relay_map() -> RelayMap {
     RelayMap::from(RelayConfig::new(url, Some(RelayQuicConfig::default())))
 }
 
-/// ALPN protocol address.
-pub const DR_RELAY_ALPN: [u8; 11] = *b"n0/doctor/1";
-
 /// Creates an iroh [`Endpoint`] from a [`SecretKey`] and a [`RelayMap`].
 async fn make_endpoint(
     secret_key: SecretKey,
@@ -649,7 +638,7 @@ async fn make_endpoint(
 
     let mut endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
-        .alpns(vec![DR_RELAY_ALPN.to_vec()])
+        .alpns(vec![ALPN.to_vec()])
         .transport_config(transport_config);
 
     if disable_address_lookup {

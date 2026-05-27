@@ -3,7 +3,6 @@
 mod client;
 mod config;
 mod execution;
-mod net_report_ext;
 mod rpc;
 mod runner;
 mod tests;
@@ -13,7 +12,6 @@ mod types;
 pub use client::{SwarmClient, N0DES_DOCTOR_ALPN};
 pub use config::{SwarmConfig, TransportConfig};
 pub use execution::ConnectionType;
-pub use net_report_ext::ExtendedNetworkReport;
 pub use rpc::{
     Auth, AuthResponse, CreateTestRun, CreateTestRunResponse, DoctorClient, DoctorError,
     DoctorMessage, DoctorProtocol, DoctorRegister, DoctorRegisterResponse, DoctorService,

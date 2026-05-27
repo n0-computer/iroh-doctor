@@ -3,8 +3,9 @@
 use iroh::{endpoint::presets, Endpoint, RelayMap, RelayMode, Watcher};
 use n0_future::StreamExt;
 
+use iroh_doctor_core::nat::classify_base_report;
+
 use crate::config::NodeConfig;
-use crate::nat_classifier::classify_base_report;
 
 /// Prints a client report.
 pub async fn report(
