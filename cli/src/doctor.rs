@@ -118,7 +118,9 @@ pub enum Commands {
         #[clap(long)]
         socket_addr: Option<SocketAddr>,
     },
-    /// Connect to an iroh doctor accept node.
+    /// Connect to a peer and monitor the connection live: state, paths,
+    /// latency over time, and throughput. Use `--test` to instead run the
+    /// doctor throughput test as the passive side of an `accept` node.
     Connect {
         /// Hexadecimal node id of the node to connect to.
         dial: EndpointId,

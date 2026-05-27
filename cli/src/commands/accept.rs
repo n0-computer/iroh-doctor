@@ -21,22 +21,25 @@ pub async fn accept(
         .map(|addr| format!("--remote-endpoint {}", format_addr(*addr)))
         .collect::<Vec<_>>()
         .join(" ");
-    println!("Connect to this node using one of the following commands:\n");
+    // `accept` drives the throughput test, which pairs with the passive
+    // side of `connect --test`. A plain `connect` runs the live monitor
+    // instead, so the test instructions must pass `--test`.
+    println!("Run the throughput test against this node with one of the following commands:\n");
     println!(
-        "\tUsing the relay url and direct connections:\niroh-doctor connect {} {}\n",
+        "\tUsing the relay url and direct connections:\niroh-doctor connect --test {} {}\n",
         secret_key.public(),
         remote_addrs,
     );
     if let Some(relay_url) = endpoint_addr.relay_urls().next() {
         println!(
-            "\tUsing just the relay url:\niroh-doctor connect {} --relay-url {}\n",
+            "\tUsing just the relay url:\niroh-doctor connect --test {} --relay-url {}\n",
             secret_key.public(),
             relay_url,
         );
     }
     if !endpoint.address_lookup()?.is_empty() {
         println!(
-            "\tUsing just the node id:\niroh-doctor connect {}\n",
+            "\tUsing just the node id:\niroh-doctor connect --test {}\n",
             secret_key.public(),
         );
     }

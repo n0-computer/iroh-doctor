@@ -110,6 +110,8 @@ async fn monitor(gui: &Gui, connection: &iroh::endpoint::Connection) -> anyhow::
             }
         }
 
+        // Every tenth tick, starting at the first, so the user gets an
+        // immediate throughput sample and then one roughly every 10s.
         if nonce.is_multiple_of(10) {
             const UPLOAD_BYTES: u64 = 1024 * 1024;
             match client.upload(UPLOAD_BYTES).await {

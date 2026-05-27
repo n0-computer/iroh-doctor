@@ -314,7 +314,7 @@ mod tests {
         let (server_send, mut client_recv) = duplex(128 * 1024);
         let server = tokio::spawn(serve_stream(server_send, server_recv));
 
-        // Well past the old PING_ITERATIONS * 2 cap of 10.
+        // Well past the old per-stream ping cap (which was 10).
         for nonce in 0..15u32 {
             ping_once(&mut client_send, &mut client_recv, nonce)
                 .await
