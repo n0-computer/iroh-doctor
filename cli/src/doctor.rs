@@ -16,7 +16,7 @@ use iroh::{
     metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
-use iroh_doctor_core::doctor::{TestStreamRequest, ALPN};
+use iroh_doctor_core::doctor::TestStreamRequest;
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
 use n0_future::StreamExt;
@@ -161,6 +161,10 @@ pub enum Commands {
         /// Default is `None`, which means the endpoint will bind to a random port.
         #[clap(long)]
         socket_addr: Option<SocketAddr>,
+
+        /// Run the doctor throughput test as the passive side (pairs with `iroh-doctor accept`) instead of the live monitor.
+        #[clap(long, default_value_t = false)]
+        test: bool,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -638,7 +642,10 @@ async fn make_endpoint(
 
     let mut endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
-        .alpns(vec![ALPN.to_vec()])
+        .alpns(vec![
+            iroh_doctor_core::doctor::ALPN.to_vec(),
+            iroh_doctor_core::probe::ALPN.to_vec(),
+        ])
         .transport_config(transport_config);
 
     if disable_address_lookup {
@@ -782,6 +789,7 @@ pub async fn run(
             remote_endpoint,
             disable_address_lookup,
             socket_addr,
+            test,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
@@ -805,7 +813,8 @@ pub async fn run(
 
             n0_future::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
                 if let Err(e) =
-                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await
+                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint, test)
+                        .await
                 {
                     eprintln!("connect error: {e}");
                 }

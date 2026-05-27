@@ -54,36 +54,48 @@ pub async fn accept(
         let connections = connections.clone();
         let endpoint = endpoint.clone();
         tokio::task::spawn(async move {
-            let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
-            match connecting.await {
-                Ok(connection) => {
-                    if n == 0 {
-                        let remote_peer_id = connection.remote_id();
-                        println!("Accepted connection from {remote_peer_id}");
-                        let t0 = Instant::now();
-                        let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        log_connection_changes(gui.mp.clone(), remote_peer_id, connection.clone());
-                        let res = active_side(&connection, &config, Some(&gui)).await;
-                        gui.clear();
-                        let dt = t0.elapsed().as_secs_f64();
-                        if let Err(cause) = res {
-                            let close_reason = connection
-                                .close_reason()
-                                .map(|e| format!(" (reason: {e})"))
-                                .unwrap_or_default();
-                            eprintln!("Test finished after {dt}s: {cause}{close_reason}",);
-                        } else {
-                            eprintln!("Test finished after {dt}s",);
-                        }
-                    } else {
-                        // silent
-                        active_side(&connection, &config, None).await.ok();
-                    }
-                }
+            let connection = match connecting.await {
+                Ok(connection) => connection,
                 Err(cause) => {
                     eprintln!("error accepting connection {cause}");
+                    return;
                 }
             };
+
+            // Probe connections (the live monitor) just need the passive
+            // responder; they do not participate in the doctor-test counter.
+            if connection.alpn() == iroh_doctor_core::probe::ALPN {
+                if let Err(cause) = iroh_doctor_core::probe::handle_connection(connection).await {
+                    warn!("probe connection failed: {cause:#}");
+                }
+                return;
+            }
+
+            // Doctor ALPN: run the throughput test. The first connection
+            // drives with a Gui, the rest run silently.
+            let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
+            if n == 0 {
+                let remote_peer_id = connection.remote_id();
+                println!("Accepted connection from {remote_peer_id}");
+                let t0 = Instant::now();
+                let gui = Gui::new(endpoint.clone(), remote_peer_id);
+                log_connection_changes(gui.mp.clone(), remote_peer_id, connection.clone());
+                let res = active_side(&connection, &config, Some(&gui)).await;
+                gui.clear();
+                let dt = t0.elapsed().as_secs_f64();
+                if let Err(cause) = res {
+                    let close_reason = connection
+                        .close_reason()
+                        .map(|e| format!(" (reason: {e})"))
+                        .unwrap_or_default();
+                    eprintln!("Test finished after {dt}s: {cause}{close_reason}",);
+                } else {
+                    eprintln!("Test finished after {dt}s",);
+                }
+            } else {
+                // silent
+                active_side(&connection, &config, None).await.ok();
+            }
             connections.sub(1, portable_atomic::Ordering::SeqCst);
         });
     }
