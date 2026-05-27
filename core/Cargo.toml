@@ -1,0 +1,17 @@
+[package]
+name = "iroh-doctor-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared protocol and diagnostics types for iroh-doctor and iroh-doctor-app"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+iroh = "=1.0.0-rc.1"
+postcard = { version = "1", features = ["experimental-derive"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["io-util", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "time", "macros", "rt"] }
