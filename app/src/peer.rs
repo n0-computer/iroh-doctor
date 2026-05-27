@@ -266,7 +266,7 @@ pub struct DiagnosticsReport {
 /// network environment without going through iroh-services.
 #[derive(Debug, Clone)]
 pub struct NetReportSummary {
-    pub nat: crate::nat::NatType,
+    pub nat: iroh_doctor_core::nat::NatType,
     /// Globally routable IPv4 SocketAddr observed during the probe.
     pub global_v4: Option<String>,
     /// Globally routable IPv6 SocketAddr observed during the probe.
@@ -286,7 +286,7 @@ pub struct NetReportSummary {
 impl From<&iroh::NetReport> for NetReportSummary {
     fn from(r: &iroh::NetReport) -> Self {
         Self {
-            nat: crate::nat::classify(r),
+            nat: iroh_doctor_core::nat::classify_base_report(r),
             global_v4: r.global_v4.map(|a| a.to_string()),
             global_v6: r.global_v6.map(|a| a.to_string()),
             udp_v4: r.udp_v4,
@@ -1237,7 +1237,7 @@ async fn bind_endpoint(secret_key: SecretKey) -> Result<Endpoint> {
         iroh_blobs::ALPN.to_vec(),
         iroh_gossip::ALPN.to_vec(),
         iroh_docs::ALPN.to_vec(),
-        crate::peer_probe::ALPN.to_vec(),
+        iroh_doctor_core::probe::ALPN.to_vec(),
         crate::doctor::ALPN.to_vec(),
     ]);
     builder.bind().await.context("bind endpoint")
@@ -1392,7 +1392,7 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                     warn!(err = %e, "iroh-docs accept failed");
                 }
             });
-        } else if alpn_bytes == crate::peer_probe::ALPN {
+        } else if alpn_bytes == iroh_doctor_core::probe::ALPN {
             // Try to grab a probe-server permit. If we are at capacity
             // we drop the connection on the floor; the active side will
             // see a clean QUIC error and can retry.
@@ -1406,7 +1406,7 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                 }
             };
             tokio::spawn(async move {
-                if let Err(e) = crate::peer_probe::handle_connection(conn).await {
+                if let Err(e) = iroh_doctor_core::probe::handle_connection(conn).await {
                     warn!(err = %e, "peer-probe accept failed");
                 }
                 drop(permit);

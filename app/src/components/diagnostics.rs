@@ -859,8 +859,8 @@ fn render_portmap_rows(state: &DiagState<PortMapProbeResult>) -> Element {
     }
 }
 
-fn nat_kind_class(nat: crate::nat::NatType) -> &'static str {
-    use crate::nat::NatType;
+fn nat_kind_class(nat: iroh_doctor_core::nat::NatType) -> &'static str {
+    use iroh_doctor_core::nat::NatType;
     match nat {
         NatType::Easy => "easy",
         NatType::Medium => "medium",

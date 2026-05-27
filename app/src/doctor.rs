@@ -12,13 +12,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use iroh::endpoint;
+// The wire types now live in `iroh-doctor-core`. `ALPN` is re-exported so
+// existing `crate::doctor::ALPN` references (e.g. in `peer.rs`) keep working.
+pub use iroh_doctor_core::doctor::{TestStreamRequest, ALPN};
 use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
 use tracing::warn;
-
-/// ALPN used by `iroh-doctor connect`/`accept`. Must match
-/// `iroh_doctor::doctor::DR_RELAY_ALPN` byte-for-byte.
-pub const ALPN: &[u8] = b"n0/doctor/1";
 
 /// Overall ceiling for one doctor connection so a peer that opens the
 /// ALPN and then stalls cannot pin a handler forever. Generous because a
@@ -28,16 +26,6 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_secs(120);
 /// Block-size cap for `Send` so a peer cannot make us allocate an absurd
 /// per-write buffer. Real tests use modest block sizes.
 const MAX_BLOCK_SIZE: u32 = 1024 * 1024;
-
-/// One test-stream request, mirroring iroh-doctor's wire enum. Variant
-/// order and field types must match `iroh_doctor::doctor::TestStreamRequest`
-/// exactly or postcard decoding of the active side's request will fail.
-#[derive(Debug, Serialize, Deserialize, MaxSize)]
-pub enum TestStreamRequest {
-    Echo { bytes: u64 },
-    Drain { bytes: u64 },
-    Send { bytes: u64, block_size: u32 },
-}
 
 /// Serves the passive side of a doctor connection. Bounded by
 /// [`CONNECTION_TIMEOUT`] so a misbehaving peer cannot pin the task.

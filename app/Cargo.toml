@@ -14,6 +14,7 @@ rand = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util"] }
 tracing = "0.1"
 
+iroh-doctor-core = { path = "../core" }
 iroh = "=1.0.0-rc.1"
 iroh-base = "=1.0.0-rc.1"
 iroh-relay = "=1.0.0-rc.1"
