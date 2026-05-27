@@ -1,0 +1,8 @@
+# Bump the iOS deployment target above the default (10.0) so newer C
+# deps (blake3 NEON, ring, objc2 exception helper) can link against the
+# symbols they need (e.g. __chkstk_darwin, which first appeared on
+# iOS 13). 17.0 matches modern iPhone hardware and avoids future churn.
+# Lives at the workspace root so it applies to the app target regardless
+# of which directory the build is launched from.
+[env]
+IPHONEOS_DEPLOYMENT_TARGET = "17.0"

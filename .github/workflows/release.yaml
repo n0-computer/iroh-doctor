@@ -127,7 +127,7 @@ jobs:
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
           export CC=aarch64-linux-gnu-gcc
         fi
-        cargo build --verbose --release --target ${{ matrix.cargo_targets }}
+        cargo build --verbose --release -p iroh-doctor --target ${{ matrix.cargo_targets }}
     - name: Build archive
       shell: bash
       run: |

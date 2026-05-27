@@ -31,7 +31,12 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
-        run: cargo clippy --locked --workspace --all-targets --all-features
+        # iroh-doctor-app is a Dioxus GUI crate. Its renderer features
+        # (web/desktop/mobile) are mutually exclusive, so --all-features
+        # cannot enable them together, and it needs platform GUI libraries
+        # this runner does not have. Exclude it here until it gets its own
+        # dx-based, per-platform CI.
+        run: cargo clippy --locked --workspace --exclude iroh-doctor-app --all-targets --all-features
 
   test:
     runs-on: ${{ matrix.target.os }}
@@ -63,7 +68,9 @@ jobs:
           targets: ${{ matrix.target.toolchain }}
       - uses: swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --locked --workspace --all-features --bins --tests --examples
+        # iroh-doctor-app is excluded here; see the clippy job for why. Its
+        # tests run locally and will move to a dedicated app CI job.
+        run: cargo test --locked --workspace --exclude iroh-doctor-app --all-features --bins --tests --examples
 
   # Checks correct runtime deps and features are requested by not including dev-dependencies.
   check-deps:
@@ -73,4 +80,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - name: cargo check
-        run: cargo check --workspace --all-features --bins
+        # iroh-doctor-app is excluded here; see the clippy job for why.
+        run: cargo check --workspace --exclude iroh-doctor-app --all-features --bins
