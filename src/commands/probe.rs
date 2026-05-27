@@ -17,6 +17,7 @@ use iroh::{
 };
 use iroh_relay::client::ClientBuilder;
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
+use iroh_relay::tls::{default_provider, CaRootsConfig};
 use n0_future::{SinkExt, StreamExt};
 use portmapper::{Client as PortMapClient, Config as PortMapConfig, Protocol as PortMapProtocol};
 use serde::Serialize;
@@ -179,16 +180,40 @@ fn cmp_by_ping(a: &RelayBlock, b: &RelayBlock) -> std::cmp::Ordering {
 async fn probe_relays(relay_map: &RelayMap) -> Vec<RelayBlock> {
     let dns = DnsResolver::new();
     let key = SecretKey::generate();
+    // iroh-relay 1.0.0-rc.1 dropped the implicit TLS config; every
+    // `ClientBuilder` needs an explicit one or `connect` errors with
+    // `MissingCryptoProvider`. Build one and share it across the sweep.
+    let tls = match CaRootsConfig::embedded().client_config(default_provider()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return relay_map
+                .relays::<Vec<_>>()
+                .into_iter()
+                .map(|c| RelayBlock {
+                    url: c.url.to_string(),
+                    connect_ms: None,
+                    ping_ms: None,
+                    error: Some(format!("tls: {e}")),
+                })
+                .collect();
+        }
+    };
     let mut rows: Vec<RelayBlock> = Vec::new();
     for config in relay_map.relays::<Vec<_>>() {
-        rows.push(probe_one_relay(&config.url, &key, &dns).await);
+        rows.push(probe_one_relay(&config.url, &key, &dns, &tls).await);
     }
     rows.sort_by(cmp_by_ping);
     rows
 }
 
-async fn probe_one_relay(url: &iroh::RelayUrl, key: &SecretKey, dns: &DnsResolver) -> RelayBlock {
-    let builder = ClientBuilder::new(url.clone(), key.clone(), dns.clone());
+async fn probe_one_relay(
+    url: &iroh::RelayUrl,
+    key: &SecretKey,
+    dns: &DnsResolver,
+    tls: &rustls::ClientConfig,
+) -> RelayBlock {
+    let builder =
+        ClientBuilder::new(url.clone(), key.clone(), dns.clone()).tls_client_config(tls.clone());
     let started = Instant::now();
     let connect = tokio::time::timeout(Duration::from_secs(3), builder.connect()).await;
     let client = match connect {

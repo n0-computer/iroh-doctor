@@ -7,6 +7,7 @@ use std::{
 
 use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
 use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
+use iroh_relay::tls::{default_provider, CaRootsConfig};
 use n0_future::{SinkExt, StreamExt};
 
 use crate::config::NodeConfig;
@@ -19,6 +20,11 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
     }
 
     let dns_resolver = DnsResolver::new();
+    // iroh-relay 1.0.0-rc.1 requires an explicit TLS config on each
+    // builder. Build one and reuse it across every relay.
+    let tls = CaRootsConfig::embedded()
+        .client_config(default_provider())
+        .map_err(|e| anyhow::anyhow!("build relay TLS config: {e}"))?;
     let mut client_builders = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
@@ -26,7 +32,8 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
             node.url.clone(),
             secret_key,
             dns_resolver.clone(),
-        );
+        )
+        .tls_client_config(tls.clone());
 
         client_builders.insert(node.url.clone(), client_builder);
     }
