@@ -129,8 +129,10 @@ pub enum Commands {
         #[clap(long)]
         remote_endpoint: Vec<SocketAddr>,
 
-        /// Our own secret key, in hex. If not specified, a random key will be generated.
-        #[clap(long, default_value_t = SecretKeyOption::Random)]
+        /// Our own secret key. Defaults to the local persistent key
+        /// (created on first use under the iroh data dir), so the
+        /// command announces a stable endpoint id across runs.
+        #[clap(long, default_value_t = SecretKeyOption::Local)]
         secret_key: SecretKeyOption,
 
         /// Use a local relay:
@@ -735,16 +737,38 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
             SecretKey::try_from(&bytes[..])?
         }
         SecretKeyOption::Local => {
-            let path = iroh_data_root()?.join("keypair");
-            if path.exists() {
-                let bytes = std::fs::read(&path)?;
+            let dir = iroh_data_root()?;
+            // Backward compatibility: an existing OpenSSH `keypair` still
+            // wins, so users who already set one up keep that identity.
+            let openssh_path = dir.join("keypair");
+            if openssh_path.exists() {
+                let bytes = std::fs::read(&openssh_path)?;
                 try_secret_key_from_openssh(bytes)?
             } else {
-                println!(
-                    "Local key not found in {}. Using random key.",
-                    path.display()
-                );
-                SecretKey::generate()
+                // Otherwise persist a raw 32-byte key under the same
+                // directory and reuse it across runs, so `iroh-doctor`
+                // announces a stable endpoint id by default.
+                let raw_path = dir.join("secret_key.bin");
+                match std::fs::read(&raw_path) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let arr: [u8; 32] = bytes.try_into().expect("checked length");
+                        SecretKey::from_bytes(&arr)
+                    }
+                    Ok(_) => {
+                        tracing::warn!("{} has wrong length, regenerating", raw_path.display());
+                        let key = SecretKey::generate();
+                        std::fs::create_dir_all(&dir)?;
+                        std::fs::write(&raw_path, key.to_bytes())?;
+                        key
+                    }
+                    Err(_) => {
+                        let key = SecretKey::generate();
+                        std::fs::create_dir_all(&dir)?;
+                        std::fs::write(&raw_path, key.to_bytes())?;
+                        println!("Saved a new endpoint id to {}", raw_path.display());
+                        key
+                    }
+                }
             }
         }
     })
