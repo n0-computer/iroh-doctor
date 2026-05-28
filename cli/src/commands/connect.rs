@@ -8,7 +8,7 @@ use std::{
 
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 use iroh_doctor_core::monitor::{derive_state, snapshot_paths};
-use iroh_doctor_core::probe::ProbeClient;
+use iroh_doctor_core::probe::{run_client, ClientConfig, ClientSample};
 use n0_future::StreamExt;
 use tokio_util::task::AbortOnDropHandle;
 
@@ -155,53 +155,36 @@ async fn monitor(
         }))
     };
 
-    let mut client =
-        match tokio::time::timeout(Duration::from_secs(10), ProbeClient::connect(connection)).await
-        {
-            Ok(Ok(c)) => c,
-            Ok(Err(cause)) => {
-                view.set_probe_ended("setup", cause);
-                return Ok(());
-            }
-            Err(_) => {
-                view.set_probe_ended("setup", "timed out opening probe stream after 10s");
-                return Ok(());
-            }
-        };
+    // Drive the shared probe client loop in the background and render each
+    // sample as it arrives. The loop owns a connection clone so it outlives
+    // this borrow; AbortOnDropHandle stops it if `monitor` returns early.
+    let (samples_tx, mut samples_rx) = tokio::sync::mpsc::channel::<ClientSample>(16);
+    let driver = {
+        let conn = connection.clone();
+        AbortOnDropHandle::new(tokio::spawn(async move {
+            run_client(&conn, ClientConfig::default(), samples_tx).await
+        }))
+    };
 
-    let mut nonce: u32 = 0;
     let mut history: VecDeque<Duration> = VecDeque::with_capacity(HISTORY_LEN);
-
-    loop {
-        match client.ping(nonce).await {
-            Ok(rtt) => {
+    while let Some(sample) = samples_rx.recv().await {
+        match sample {
+            ClientSample::Latency { rtt, .. } => {
                 if history.len() == HISTORY_LEN {
                     history.pop_front();
                 }
                 history.push_back(rtt);
                 view.set_latency(rtt, &history);
             }
-            Err(cause) => {
-                view.set_probe_ended("latency", cause);
-                break;
-            }
+            ClientSample::Throughput { bytes, elapsed } => view.set_throughput(bytes, elapsed),
         }
+    }
 
-        // Every tenth tick, starting at the first, so the user gets an
-        // immediate throughput sample and then one roughly every 10s.
-        if nonce.is_multiple_of(10) {
-            const UPLOAD_BYTES: u64 = 1024 * 1024;
-            match client.upload(UPLOAD_BYTES).await {
-                Ok(elapsed) => view.set_throughput(UPLOAD_BYTES, elapsed),
-                Err(cause) => {
-                    view.set_probe_ended("throughput", cause);
-                    break;
-                }
-            }
-        }
-
-        nonce = nonce.wrapping_add(1);
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    // The sender dropped, so the driver has finished. Surface why the probe
+    // ended; a join error only happens if it was aborted, which has nothing
+    // to report.
+    if let Ok(end) = driver.await {
+        view.set_probe_ended(end.phase, end.cause);
     }
 
     Ok(())

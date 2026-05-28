@@ -213,38 +213,6 @@ html, body {
 }
 .status-line { font-size: 12px; opacity: 0.65; }
 
-/* Field */
-.field-wrap { display: flex; justify-content: center; }
-.field {
-    position: relative;
-    background: rgba(127, 127, 127, 0.08);
-    border-radius: 18px;
-    overflow: hidden;
-    user-select: none;
-    cursor: crosshair;
-}
-.center-line {
-    position: absolute;
-    left: 16px; right: 16px; top: 50%;
-    height: 0;
-    border-top: 2px dashed rgba(127, 127, 127, 0.4);
-}
-.paddle { position: absolute; border-radius: 6px; }
-.ball {
-    position: absolute;
-    border-radius: 50%;
-    background: #1c1c1e;
-}
-.score {
-    position: absolute;
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: 28px;
-    font-weight: 700;
-    pointer-events: none;
-}
-.score-top { top: 10px; left: 18px; }
-.score-bottom { bottom: 10px; right: 18px; }
-
 /* Pages (inline, not modal) */
 .page, .settings-page {
     display: flex;

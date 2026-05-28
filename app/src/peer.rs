@@ -1,8 +1,10 @@
-//! iroh endpoint binding, accept loop, per-session send/recv tasks, services telemetry.
+//! iroh endpoint binding, accept loop, the active connection monitor, and
+//! services telemetry.
 //!
-//! Mirrors the Swift `IrohPeer` + `PeerSession`: connector becomes ball authority,
-//! both peers stream tagged paddle frames at ~60Hz, authority additionally streams
-//! ball frames.
+//! Connecting to a peer dials the iroh-doctor probe protocol and runs the
+//! shared monitor loop from [`iroh_doctor_core::probe`], the same one
+//! `iroh-doctor connect` uses, so the app reports latency, paths,
+//! time-to-first-direct-byte, and throughput identically to the cli.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -14,15 +16,13 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use iroh_blobs::store::mem::MemStore;
 use iroh_blobs::BlobsProtocol;
 use iroh_docs::protocol::Docs;
+use iroh_doctor_core::probe::{ClientConfig, ClientSample};
 use iroh_gossip::net::Gossip;
 use iroh_services::Client as ServicesClient;
-use rand::thread_rng;
 use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
 use tokio::task::JoinHandle;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info, instrument, warn};
-
-use crate::game::PongGame;
-use crate::wire;
 
 pub const DEFAULT_API_SECRET: &str =
     "servicesaaqg6nnf7kr3uiacviqgbxeqconvhuz4ldr5dem4gqhsp3cyat6qxexoctwjsi7m6dh2t2qvfu2yhdoaav6eibaj4aaavhonlixbohceu4aa";
@@ -60,9 +60,6 @@ pub enum PeerCommand {
     },
     SaveApiSecret {
         secret: String,
-    },
-    UpdateMyPaddle {
-        x: f32,
     },
     PingServices {
         reply: oneshot::Sender<Result<Duration, String>>,
@@ -321,7 +318,6 @@ impl From<iroh_services::net_diagnostics::DiagnosticsReport> for DiagnosticsRepo
 
 type StateCb = Arc<dyn Fn(ConnectionState) + Send + Sync>;
 type TelemetryCb = Arc<dyn Fn(TelemetryState) + Send + Sync>;
-type GameCb = Arc<dyn Fn(PongGame) + Send + Sync>;
 type IdCb = Arc<dyn Fn(String) + Send + Sync>;
 type PathsCb = Arc<dyn Fn(Vec<PathInfo>) + Send + Sync>;
 type TtfdbCb = Arc<dyn Fn(Option<Duration>) + Send + Sync>;
@@ -346,7 +342,6 @@ pub struct PeerCallbacks {
     pub on_endpoint_id: Box<dyn Fn(String) + Send + Sync>,
     pub on_state: Box<dyn Fn(ConnectionState) + Send + Sync>,
     pub on_telemetry: Box<dyn Fn(TelemetryState) + Send + Sync>,
-    pub on_game: Box<dyn Fn(PongGame) + Send + Sync>,
     pub on_paths: Box<dyn Fn(Vec<PathInfo>) + Send + Sync>,
     /// Fires once per dial with the elapsed time from `Connect` to the
     /// first selected direct (holepunched) path, or with `None` to
@@ -367,9 +362,9 @@ struct TtfdbState {
     published: bool,
 }
 
-/// How often `run_peer` samples the pong connection's QUIC paths for the
-/// Debug view. Short enough to feel live, long enough to keep overhead in
-/// the noise floor.
+/// How often `run_peer` samples the live connection's QUIC paths for the
+/// Diagnostics view. Short enough to feel live, long enough to keep overhead
+/// in the noise floor.
 const PATHS_SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Wall-clock ceiling for `endpoint.net_report().initialized()`. Matches
@@ -387,7 +382,7 @@ pub enum PathKind {
     Custom,
 }
 
-/// Snapshot of one QUIC path on the live pong connection.
+/// Snapshot of one QUIC path on the live connection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathInfo {
     /// `TransportAddr` rendered via `Display` (`ip:1.2.3.4:5678`,
@@ -407,7 +402,6 @@ pub async fn run_peer(
     let on_endpoint_id: IdCb = Arc::from(callbacks.on_endpoint_id);
     let on_state: StateCb = Arc::from(callbacks.on_state);
     let on_telemetry: TelemetryCb = Arc::from(callbacks.on_telemetry);
-    let on_game: GameCb = Arc::from(callbacks.on_game);
     let on_paths: PathsCb = Arc::from(callbacks.on_paths);
     let on_ttfdb: TtfdbCb = Arc::from(callbacks.on_ttfdb);
     let on_throughput: ThroughputCb = Arc::from(callbacks.on_throughput);
@@ -429,8 +423,6 @@ pub async fn run_peer(
     on_endpoint_id(endpoint.id().to_string());
     on_state(ConnectionState::Ready);
 
-    let game: Arc<Mutex<PongGame>> = Arc::new(Mutex::new(PongGame::default()));
-
     let mut api_secret_override = initial_api_secret_override;
     let mut services: Option<ServicesClient> =
         start_services_client(&endpoint, &api_secret_override, &on_telemetry).await;
@@ -444,9 +436,11 @@ pub async fn run_peer(
         .spawn(endpoint.clone(), (*blobs_store).clone(), gossip.clone())
         .await
         .context("spawn iroh-docs")?;
-    info!("multi-protocol endpoint ready (pong, blobs, gossip, docs)");
+    info!("multi-protocol endpoint ready (probe, blobs, gossip, docs)");
 
-    let session: Arc<Mutex<Option<SessionHandles>>> = Arc::new(Mutex::new(None));
+    // The active monitor for the current dial. A fresh Connect aborts the
+    // previous one before installing its own, so at most one runs at a time.
+    let monitor: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let conn_slot: Arc<Mutex<Option<endpoint::Connection>>> = Arc::new(Mutex::new(None));
 
     // Long-running tasks (accept loop, paths sampler) live on a JoinSet
@@ -464,11 +458,8 @@ pub async fn run_peer(
     {
         let ctx = AcceptCtx {
             endpoint: endpoint.clone(),
-            game: game.clone(),
-            session: session.clone(),
             conn_slot: conn_slot.clone(),
             on_state: on_state.clone(),
-            on_game: on_game.clone(),
             on_throughput: on_throughput.clone(),
             ttfdb: ttfdb.clone(),
             blobs: blobs.clone(),
@@ -544,14 +535,6 @@ pub async fn run_peer(
     // JoinSet at the cost of periodic drain to bound memory.
     while let Some(cmd) = commands.recv().await {
         match cmd {
-            PeerCommand::UpdateMyPaddle { x } => {
-                let snap = {
-                    let mut g = game.lock().await;
-                    g.set_my_paddle(x);
-                    *g
-                };
-                on_game(snap);
-            }
             PeerCommand::Connect { hex_id } => {
                 on_state(ConnectionState::Connecting);
                 let trimmed = hex_id.trim().to_string();
@@ -572,43 +555,21 @@ pub async fn run_peer(
                 }
                 on_ttfdb(None);
                 let addr = EndpointAddr::from_parts(parsed, std::iter::empty());
-                // Connect + open_bi can take seconds for hole punching. Spawn so
-                // the command pump stays responsive to paddle, ping, and blob
-                // commands while this is in flight.
+                // Dialing plus hole punching can take seconds, so the monitor
+                // runs on its own task and the command pump stays responsive.
+                // Abort any monitor from a previous dial first, then own the
+                // new one in the slot.
                 let endpoint = endpoint.clone();
-                let game = game.clone();
-                let session = session.clone();
                 let conn_slot = conn_slot.clone();
                 let on_state = on_state.clone();
-                let on_game = on_game.clone();
-                tokio::spawn(async move {
-                    match endpoint.connect(addr, wire::ALPN).await {
-                        Ok(conn) => match conn.open_bi().await {
-                            Ok((send, recv)) => {
-                                let remote = conn.remote_id().to_string();
-                                adopt_session(AdoptArgs {
-                                    conn,
-                                    send,
-                                    recv,
-                                    remote_id: remote,
-                                    as_authority: true,
-                                    game,
-                                    session,
-                                    conn_slot,
-                                    on_state,
-                                    on_game,
-                                })
-                                .await;
-                            }
-                            Err(e) => {
-                                on_state(ConnectionState::Error(format!("open_bi failed: {e:#}")));
-                            }
-                        },
-                        Err(e) => {
-                            on_state(ConnectionState::Error(format!("connect failed: {e:#}")));
-                        }
-                    }
-                });
+                let on_throughput = on_throughput.clone();
+                let mut slot = monitor.lock().await;
+                if let Some(prev) = slot.take() {
+                    prev.abort();
+                }
+                *slot = Some(tokio::spawn(async move {
+                    run_monitor(endpoint, addr, conn_slot, on_state, on_throughput).await;
+                }));
             }
             PeerCommand::SaveApiSecret { secret } => {
                 api_secret_override = secret.trim().to_string();
@@ -1253,7 +1214,6 @@ async fn bind_endpoint(secret_key: SecretKey) -> Result<Endpoint> {
     // builder = builder.address_lookup(iroh::address_lookup::PkarrResolver::n0_dns());
     builder = builder.secret_key(secret_key);
     builder = builder.alpns(vec![
-        wire::ALPN.to_vec(),
         iroh_blobs::ALPN.to_vec(),
         iroh_gossip::ALPN.to_vec(),
         iroh_docs::ALPN.to_vec(),
@@ -1319,18 +1279,15 @@ fn device_name(endpoint_id_hex: &str) -> String {
 
 struct AcceptCtx {
     endpoint: Endpoint,
-    game: Arc<Mutex<PongGame>>,
-    session: Arc<Mutex<Option<SessionHandles>>>,
     conn_slot: Arc<Mutex<Option<endpoint::Connection>>>,
     on_state: StateCb,
-    on_game: GameCb,
     /// Fires per completed upload on an incoming peer-probe stream so the
     /// Diagnostics tab can show throughput against an `iroh-doctor connect`
     /// monitor.
     on_throughput: ThroughputCb,
     /// Shared TTFDB state. The probe accept arm primes `dial_at` so the
     /// existing paths sampler reports time-to-first-direct-byte for an
-    /// incoming peer-probe just like it does for outgoing pong dials.
+    /// incoming peer-probe just like it does for an outgoing dial.
     ttfdb: Arc<Mutex<TtfdbState>>,
     blobs: BlobsProtocol,
     gossip: Gossip,
@@ -1366,40 +1323,7 @@ async fn run_accept_loop(ctx: AcceptCtx) {
         };
 
         let alpn_bytes: &[u8] = alpn.as_ref();
-        if alpn_bytes == wire::ALPN {
-            // Spawn the pong adoption so a peer that completes the QUIC
-            // handshake but never opens a bidi stream cannot wedge the
-            // accept loop for the other three ALPNs. adopt_session still
-            // replaces the single pong session via conn_slot.
-            let game = ctx.game.clone();
-            let session = ctx.session.clone();
-            let conn_slot = ctx.conn_slot.clone();
-            let on_state = ctx.on_state.clone();
-            let on_game = ctx.on_game.clone();
-            tokio::spawn(async move {
-                let (send, recv) = match conn.accept_bi().await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(err = %e, "pong accept_bi failed");
-                        return;
-                    }
-                };
-                let remote_id = conn.remote_id().to_string();
-                adopt_session(AdoptArgs {
-                    conn,
-                    send,
-                    recv,
-                    remote_id,
-                    as_authority: false,
-                    game,
-                    session,
-                    conn_slot,
-                    on_state,
-                    on_game,
-                })
-                .await;
-            });
-        } else if alpn_bytes == iroh_blobs::ALPN {
+        if alpn_bytes == iroh_blobs::ALPN {
             let handler = ctx.blobs.clone();
             tokio::spawn(async move {
                 if let Err(e) = handler.accept(conn).await {
@@ -1436,7 +1360,7 @@ async fn run_accept_loop(ctx: AcceptCtx) {
             // Surface the probe connection through the same conn_slot the
             // paths sampler reads, so the diagnostics view shows the
             // connection state, paths, and live RTT for an incoming
-            // `iroh-doctor connect` monitor. If a pong session already
+            // `iroh-doctor connect` monitor. If an outgoing monitor already
             // owns the slot we respond silently in the background.
             let conn_slot = ctx.conn_slot.clone();
             let on_state = ctx.on_state.clone();
@@ -1456,10 +1380,10 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                         // Prime the TTFDB state so the existing paths
                         // sampler reports time-to-first-direct-byte for
                         // this incoming probe, just like an outgoing
-                        // pong dial does. We only do this when the
-                        // probe actually owns conn_slot; otherwise a
-                        // pong session is in charge and its dial-time
-                        // baseline must not be clobbered.
+                        // dial does. We only do this when the probe
+                        // actually owns conn_slot; otherwise an outgoing
+                        // monitor is in charge and its dial-time baseline
+                        // must not be clobbered.
                         let mut state = ttfdb.lock().await;
                         state.dial_at = Some(std::time::Instant::now());
                         state.published = false;
@@ -1503,7 +1427,7 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                 if claimed {
                     let mut slot = conn_slot.lock().await;
                     // Only clear the slot if it still holds our connection;
-                    // a pong session could have replaced it while we ran.
+                    // an outgoing monitor could have replaced it while we ran.
                     if slot
                         .as_ref()
                         .is_some_and(|c| c.remote_id().to_string() == peer_id)
@@ -1524,19 +1448,6 @@ async fn run_accept_loop(ctx: AcceptCtx) {
             });
         }
     }
-}
-
-struct AdoptArgs {
-    conn: endpoint::Connection,
-    send: endpoint::SendStream,
-    recv: endpoint::RecvStream,
-    remote_id: String,
-    as_authority: bool,
-    game: Arc<Mutex<PongGame>>,
-    session: Arc<Mutex<Option<SessionHandles>>>,
-    conn_slot: Arc<Mutex<Option<endpoint::Connection>>>,
-    on_state: StateCb,
-    on_game: GameCb,
 }
 
 fn snapshot_paths(conn: &endpoint::Connection) -> Vec<PathInfo> {
@@ -1561,149 +1472,78 @@ fn snapshot_paths(conn: &endpoint::Connection) -> Vec<PathInfo> {
         .collect()
 }
 
-struct SessionHandles {
-    send_task: JoinHandle<()>,
-    recv_task: JoinHandle<()>,
-}
+/// Dials `addr` on the iroh-doctor probe ALPN and runs the active monitor
+/// against the peer until the connection ends.
+///
+/// On a successful dial the connection is published into `conn_slot` so the
+/// long-lived paths sampler drives the latency graph, path table, and
+/// time-to-first-direct-byte the same way it does for an incoming probe.
+/// The shared [`iroh_doctor_core::probe::run_client`] loop then generates the
+/// ping and upload traffic the peer's responder measures, and its throughput
+/// samples are surfaced via `on_throughput`. Latency for the graph comes from
+/// the paths sampler (QUIC's smoothed RTT), matching `iroh-doctor accept`, so
+/// the client-side latency samples are intentionally ignored here.
+async fn run_monitor(
+    endpoint: Endpoint,
+    addr: EndpointAddr,
+    conn_slot: Arc<Mutex<Option<endpoint::Connection>>>,
+    on_state: StateCb,
+    on_throughput: ThroughputCb,
+) {
+    let conn = match endpoint.connect(addr, iroh_doctor_core::probe::ALPN).await {
+        Ok(conn) => conn,
+        Err(e) => {
+            on_state(ConnectionState::Error(format!("connect failed: {e:#}")));
+            return;
+        }
+    };
+    let peer_id = conn.remote_id().to_string();
+    let peer_short_id: String = peer_id.chars().take(10).collect();
 
-impl SessionHandles {
-    fn abort(&self) {
-        self.send_task.abort();
-        self.recv_task.abort();
-    }
-}
-
-async fn adopt_session(args: AdoptArgs) {
+    // Take over conn_slot for the paths sampler and announce the connection.
     {
-        let mut slot = args.session.lock().await;
-        if let Some(prev) = slot.take() {
-            prev.abort();
+        let mut slot = conn_slot.lock().await;
+        *slot = Some(conn.clone());
+    }
+    on_state(ConnectionState::Connected {
+        peer_id: peer_id.clone(),
+        peer_short_id: peer_short_id.clone(),
+    });
+
+    // Drive the shared probe client loop on its own task so aborting this
+    // monitor (a fresh dial) stops the loop too. We consume only throughput
+    // samples; latency is rendered from the paths sampler.
+    let (samples_tx, mut samples_rx) = mpsc::channel::<ClientSample>(16);
+    let driver = AbortOnDropHandle::new(tokio::spawn({
+        let conn = conn.clone();
+        async move {
+            iroh_doctor_core::probe::run_client(&conn, ClientConfig::default(), samples_tx).await
+        }
+    }));
+    while let Some(sample) = samples_rx.recv().await {
+        if let ClientSample::Throughput { bytes, elapsed } = sample {
+            on_throughput(ThroughputSnapshot {
+                bytes,
+                elapsed,
+                mbps: iroh_doctor_core::probe::throughput_mbps(bytes, elapsed),
+            });
         }
     }
+    let _ = driver.await;
+
+    // The loop ended: the peer went away or the stream broke. Clear the slot
+    // if it still holds our connection (a later dial may have replaced it)
+    // and tell the UI.
     {
-        let mut slot = args.conn_slot.lock().await;
-        *slot = Some(args.conn);
+        let mut slot = conn_slot.lock().await;
+        if slot
+            .as_ref()
+            .is_some_and(|c| c.remote_id().to_string() == peer_id)
+        {
+            *slot = None;
+        }
     }
-
-    {
-        let mut g = args.game.lock().await;
-        let mut rng = thread_rng();
-        g.reset_for_new_session(args.as_authority, &mut rng);
-        let snap = *g;
-        drop(g);
-        (args.on_game)(snap);
-    }
-
-    let send_task = {
-        let game = args.game.clone();
-        let on_game = args.on_game.clone();
-        let mut send = args.send;
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_micros(16_667));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                ticker.tick().await;
-                let (paddle_frame, ball_frame, snap) = {
-                    let mut g = game.lock().await;
-                    let mut rng = thread_rng();
-                    g.tick_from_clock(&mut rng);
-                    let paddle = wire::encode_paddle(g.my_paddle_x);
-                    let ball = g.ball_frame();
-                    (paddle, ball, *g)
-                };
-                on_game(snap);
-                if send.write_all(&paddle_frame).await.is_err() {
-                    break;
-                }
-                if let Some(b) = ball_frame {
-                    if send.write_all(&b).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        })
-    };
-
-    let peer_short_id: String = args.remote_id.chars().take(10).collect();
-    let recv_task = {
-        let game = args.game.clone();
-        let on_game = args.on_game.clone();
-        let on_state = args.on_state.clone();
-        let session = args.session.clone();
-        let conn_slot = args.conn_slot.clone();
-        let peer_short_id = peer_short_id.clone();
-        let mut recv = args.recv;
-        tokio::spawn(async move {
-            let mut tag_buf = [0u8; 1];
-            loop {
-                if recv.read_exact(&mut tag_buf).await.is_err() {
-                    break;
-                }
-                match tag_buf[0] {
-                    wire::TAG_PADDLE => {
-                        let mut body = [0u8; 4];
-                        if recv.read_exact(&mut body).await.is_err() {
-                            break;
-                        }
-                        if let Some(x) = wire::decode_paddle_body(&body) {
-                            let snap = {
-                                let mut g = game.lock().await;
-                                g.received_opponent_paddle(x);
-                                *g
-                            };
-                            on_game(snap);
-                        }
-                    }
-                    wire::TAG_BALL => {
-                        let mut body = [0u8; 20];
-                        if recv.read_exact(&mut body).await.is_err() {
-                            break;
-                        }
-                        if let Some(payload) = wire::decode_ball_body(&body) {
-                            let snap = {
-                                let mut g = game.lock().await;
-                                g.received_ball(payload);
-                                *g
-                            };
-                            on_game(snap);
-                        }
-                    }
-                    _ => break,
-                }
-            }
-
-            // Natural exit means the remote stream EOF'd: the peer
-            // closed their endpoint, their device disappeared, or they
-            // shut the app down. tokio::abort jumps past this block
-            // entirely, so reaching here is always a peer-initiated
-            // disconnect (not a local connection swap). Clear our
-            // session bookkeeping so the next Connect doesn't think
-            // there's still a live session, and surface the change to
-            // the UI.
-            {
-                let mut s = session.lock().await;
-                *s = None;
-            }
-            {
-                let mut c = conn_slot.lock().await;
-                *c = None;
-            }
-            on_state(ConnectionState::PeerDisconnected { peer_short_id });
-        })
-    };
-
-    {
-        let mut slot = args.session.lock().await;
-        *slot = Some(SessionHandles {
-            send_task,
-            recv_task,
-        });
-    }
-
-    (args.on_state)(ConnectionState::Connected {
-        peer_id: args.remote_id.clone(),
-        peer_short_id,
-    });
+    on_state(ConnectionState::PeerDisconnected { peer_short_id });
 }
 
 pub fn looks_like_endpoint_id(s: &str) -> bool {

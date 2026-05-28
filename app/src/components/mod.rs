@@ -4,7 +4,6 @@ mod docs;
 mod endpoints;
 mod error_dialog;
 mod gossip;
-mod pong_scene;
 
 pub use blobs::BlobsView;
 pub use diagnostics::{
@@ -18,7 +17,6 @@ pub use docs::{
 pub use endpoints::EndpointsView;
 pub use error_dialog::{AppError, ErrorDialog};
 pub use gossip::GossipView;
-pub use pong_scene::PongScene;
 
 /// Renders a byte count using IEC binary prefixes (`B`, `KiB`, `MiB`,
 /// `GiB`). Two decimal places for any unit other than bytes.
@@ -56,25 +54,6 @@ pub(crate) fn short_id(s: &str, head: usize, tail: usize) -> String {
         .rev()
         .collect();
     format!("{head_part}...{tail_part}")
-}
-
-/// Deterministic hue from an endpoint id, matching `BallColors.color` in the Swift app.
-pub fn color_for_endpoint_id(hex: &str) -> String {
-    let mut hash: u32 = 0;
-    for c in hex.chars() {
-        hash = hash.wrapping_mul(31).wrapping_add(c as u32);
-    }
-    let hue = (hash % 360) as f32;
-    format!("hsl({hue:.0} 70% 60%)")
-}
-
-pub fn opponent_color_for_state(state: &crate::peer::ConnectionState) -> String {
-    use crate::peer::ConnectionState;
-    if let ConnectionState::Connected { peer_short_id, .. } = state {
-        color_for_endpoint_id(peer_short_id)
-    } else {
-        "rgba(150, 150, 150, 0.8)".into()
-    }
 }
 
 #[cfg(test)]

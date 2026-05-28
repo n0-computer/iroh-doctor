@@ -87,6 +87,163 @@ pub fn throughput_mbps(bytes: u64, elapsed: Duration) -> Option<f64> {
     Some((bytes as f64 * 8.0) / secs / 1_000_000.0)
 }
 
+/// How long the active client waits to open the probe stream before giving
+/// up. Matches the value the cli and app previously inlined.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Pacing for the active probe client loop driven by [`run_client`].
+#[derive(Debug, Clone, Copy)]
+pub struct ClientConfig {
+    /// Delay between successive pings.
+    pub ping_interval: Duration,
+    /// Bytes to upload on each throughput sample. Bounded by
+    /// [`MAX_UPLOAD_BYTES`]; a larger value fails the upload immediately.
+    pub upload_bytes: u64,
+    /// Upload once every this many pings, counting the first (nonce 0). Zero
+    /// disables throughput sampling and runs latency only.
+    pub upload_every: u32,
+}
+
+impl Default for ClientConfig {
+    /// One ping per second, a 1 MiB upload every tenth ping. These are the
+    /// values the cli and app monitors used before [`run_client`] existed.
+    fn default() -> Self {
+        Self {
+            ping_interval: Duration::from_secs(1),
+            upload_bytes: 1024 * 1024,
+            upload_every: 10,
+        }
+    }
+}
+
+/// A single measurement emitted by [`run_client`].
+#[derive(Debug, Clone)]
+pub enum ClientSample {
+    /// Round-trip time observed for ping `nonce`.
+    Latency { nonce: u32, rtt: Duration },
+    /// A completed upload of `bytes` bytes that the peer acknowledged in
+    /// `elapsed`. Pair with [`throughput_mbps`].
+    Throughput { bytes: u64, elapsed: Duration },
+}
+
+/// Why the active probe client loop stopped.
+#[derive(Debug, Clone)]
+pub struct ClientEnd {
+    /// Which phase ended the loop: `"setup"`, `"latency"`, `"throughput"`,
+    /// or `"closed"` when the sample consumer went away.
+    pub phase: &'static str,
+    /// Human-readable cause, suitable for surfacing in a status line.
+    pub cause: String,
+}
+
+/// Runs the active side of the probe against `conn`, emitting one
+/// [`ClientSample`] on `samples` per ping and per upload until a ping or
+/// upload fails, the peer goes away, or the sample consumer is dropped.
+///
+/// This is the shared monitor loop behind both `iroh-doctor connect` and the
+/// app's Connect action, so both report latency and throughput the same way.
+/// Latency and path state are also observable independently via
+/// [`crate::monitor`]; callers that render a graph from QUIC's smoothed RTT
+/// can ignore [`ClientSample::Latency`] and use these samples only to drive
+/// probe traffic and surface throughput.
+///
+/// Returns a [`ClientEnd`] describing why the loop stopped. It does not error:
+/// a dead peer is the normal end of a monitor session, not a failure.
+pub async fn run_client(
+    conn: &endpoint::Connection,
+    config: ClientConfig,
+    samples: tokio::sync::mpsc::Sender<ClientSample>,
+) -> ClientEnd {
+    let mut client = match tokio::time::timeout(SETUP_TIMEOUT, ProbeClient::connect(conn)).await {
+        Ok(Ok(client)) => client,
+        Ok(Err(cause)) => {
+            return ClientEnd {
+                phase: "setup",
+                cause: format!("{cause:#}"),
+            }
+        }
+        Err(_) => {
+            return ClientEnd {
+                phase: "setup",
+                cause: format!(
+                    "timed out opening probe stream after {}s",
+                    SETUP_TIMEOUT.as_secs()
+                ),
+            }
+        }
+    };
+    drive_client(&mut client.send, &mut client.recv, config, &samples).await
+}
+
+/// The [`run_client`] loop, generic over the stream types so it can run over
+/// an in-memory duplex pair in tests without a QUIC connection.
+async fn drive_client<S, R>(
+    send: &mut S,
+    recv: &mut R,
+    config: ClientConfig,
+    samples: &tokio::sync::mpsc::Sender<ClientSample>,
+) -> ClientEnd
+where
+    S: AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
+{
+    let mut nonce: u32 = 0;
+    loop {
+        match ping_once(send, recv, nonce).await {
+            Ok(rtt) => {
+                if samples
+                    .send(ClientSample::Latency { nonce, rtt })
+                    .await
+                    .is_err()
+                {
+                    return consumer_gone();
+                }
+            }
+            Err(cause) => {
+                return ClientEnd {
+                    phase: "latency",
+                    cause: format!("{cause:#}"),
+                }
+            }
+        }
+
+        if config.upload_every != 0 && nonce.is_multiple_of(config.upload_every) {
+            match upload_once(send, recv, config.upload_bytes).await {
+                Ok(elapsed) => {
+                    if samples
+                        .send(ClientSample::Throughput {
+                            bytes: config.upload_bytes,
+                            elapsed,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return consumer_gone();
+                    }
+                }
+                Err(cause) => {
+                    return ClientEnd {
+                        phase: "throughput",
+                        cause: format!("{cause:#}"),
+                    }
+                }
+            }
+        }
+
+        nonce = nonce.wrapping_add(1);
+        tokio::time::sleep(config.ping_interval).await;
+    }
+}
+
+/// The loop's end when the [`ClientSample`] consumer is dropped, which the
+/// app does by aborting the monitor task on a fresh dial.
+fn consumer_gone() -> ClientEnd {
+    ClientEnd {
+        phase: "closed",
+        cause: "monitor consumer dropped".to_string(),
+    }
+}
+
 /// Serves the passive side of one probe stream until the client closes it
 /// or goes idle for [`IDLE_TIMEOUT`].
 pub async fn handle_connection(conn: endpoint::Connection) -> Result<()> {
@@ -364,6 +521,50 @@ mod tests {
             .expect("post-upload ping");
 
         client_send.shutdown().await.unwrap();
+        server.await.unwrap().expect("responder finished cleanly");
+    }
+
+    /// The shared monitor loop must emit both a latency and a throughput
+    /// sample against the real responder, and stop cleanly once the sample
+    /// consumer is dropped (how the app cancels a monitor on a fresh dial).
+    #[tokio::test]
+    async fn run_client_loop_emits_latency_and_throughput() {
+        let (mut client_send, server_recv) = duplex(256 * 1024);
+        let (server_send, mut client_recv) = duplex(256 * 1024);
+        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        // Tiny interval and an upload on every other ping so the test sees
+        // both sample kinds quickly without real time passing.
+        let config = ClientConfig {
+            ping_interval: Duration::from_millis(1),
+            upload_bytes: 64 * 1024,
+            upload_every: 2,
+        };
+        let driver = tokio::spawn(async move {
+            drive_client(&mut client_send, &mut client_recv, config, &tx).await
+        });
+
+        let mut latencies = 0;
+        let mut throughputs = 0;
+        for _ in 0..6 {
+            match rx.recv().await.expect("sample") {
+                ClientSample::Latency { .. } => latencies += 1,
+                ClientSample::Throughput { bytes, elapsed } => {
+                    assert_eq!(bytes, 64 * 1024);
+                    assert!(throughput_mbps(bytes, elapsed).unwrap() > 0.0);
+                    throughputs += 1;
+                }
+            }
+        }
+        assert!(latencies >= 1, "expected at least one latency sample");
+        assert!(throughputs >= 1, "expected at least one throughput sample");
+
+        // Dropping the consumer ends the loop with the "closed" phase, and
+        // dropping the client streams (owned by the task) ends the responder.
+        drop(rx);
+        let end = driver.await.unwrap();
+        assert_eq!(end.phase, "closed");
         server.await.unwrap().expect("responder finished cleanly");
     }
 }

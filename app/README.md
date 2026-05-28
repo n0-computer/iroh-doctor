@@ -2,7 +2,8 @@
 
 A Dioxus 0.7 desktop tool for debugging live iroh connections and
 exercising the iroh-blobs, iroh-gossip, and iroh-docs protocols
-against another peer. The original Pong game lives on as one tab.
+against another peer. Connecting to a peer runs the same latency and
+throughput monitor as `iroh-doctor connect`.
 
 ## Tabs
 
@@ -36,22 +37,25 @@ against another peer. The original Pong game lives on as one tab.
   type any string and the app hashes it deterministically with
   BLAKE3 so both peers converge); see neighbors; broadcast UTF-8
   messages; watch incoming messages with neighbor-change events.
-- **Pong**: the original two-player paddle game over a custom pong
-  ALPN.
+
+Entering a peer's endpoint id and hitting Connect dials the probe
+protocol and runs the active monitor: it pings for latency, uploads
+periodically for throughput, and drives the Diagnostics graph. This is
+the same `iroh_doctor_core::probe::run_client` loop `iroh-doctor
+connect` uses, so the cli and the app report a connection identically.
 
 ## Multi-protocol surface
 
-`peer.rs` binds one `iroh::Endpoint` that advertises six ALPNs:
-the pong ALPN (`iroh-helloiroh-pong/0`), `iroh-blobs::ALPN`
-(`/iroh-bytes/4`), `iroh-gossip::ALPN` (`/iroh-gossip/1`),
-`iroh-docs::ALPN` (`/iroh-sync/1`), the probe ALPN
-(`iroh-pong-probe/0`), and the iroh-doctor protocol (`n0/doctor/1`)
-so `iroh-doctor connect` works against this app. The accept loop
-dispatches per ALPN: pong adopts a single replaceable session via
-`conn_slot`; the others spawn the matching `ProtocolHandler::accept`
-(or `Gossip::handle_connection`, `peer_probe::handle_connection`, or
-`doctor::handle_connection`) per connection so any one transfer
-cannot wedge the accept of another.
+`peer.rs` binds one `iroh::Endpoint` that advertises five ALPNs:
+`iroh-blobs::ALPN` (`/iroh-bytes/4`), `iroh-gossip::ALPN`
+(`/iroh-gossip/1`), `iroh-docs::ALPN` (`/iroh-sync/1`), the probe ALPN
+(`iroh-pong-probe/0`), and the iroh-doctor protocol (`n0/doctor/1`) so
+`iroh-doctor connect` works against this app. The accept loop
+dispatches per ALPN: each spawns the matching `ProtocolHandler::accept`
+(or `Gossip::handle_connection`, `probe::handle_connection_with`, or
+`doctor::handle_connection`) per connection so any one transfer cannot
+wedge the accept of another. An incoming probe is also surfaced through
+`conn_slot` so the Diagnostics view shows it like an outgoing dial.
 
 `MemStore` is ephemeral and the peer task does not call
 `shutdown().await` on exit, so closing the app discards all
@@ -101,8 +105,7 @@ with the same fallback filter when `RUST_LOG` is unset.)
 ```
 src/
   main.rs                 - Dioxus app and tab routing
-  peer.rs                 - iroh endpoint, accept loop, command pump
-  game.rs                 - Pong game state machine
+  peer.rs                 - iroh endpoint, accept loop, command pump, monitor
   identity.rs             - on-disk secret key + api secret override
   endpoints.rs            - saved-endpoints store (the Endpoints tab)
   nat.rs                  - NAT classifier (Easy/Medium/Hard/Unknown)
@@ -111,7 +114,6 @@ src/
   portmap_probe.rs        - UPnP/PCP/NAT-PMP probe wrapper
   relay_probe.rs          - per-relay connect+ping probe
   diagnostics_export.rs   - diagnostics zip bundle
-  wire.rs                 - Pong wire format
   components/
     mod.rs                - shared helpers (short_id)
     diagnostics.rs        - Diagnostics tab (paths, RTT, events, report)
@@ -120,7 +122,6 @@ src/
     docs.rs               - Docs section
     endpoints.rs          - Endpoints tab
     error_dialog.rs       - global error modal
-    pong_scene.rs         - Pong tab
 assets/
   styling/main.css        - all styles
   favicon.ico

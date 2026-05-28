@@ -8,20 +8,17 @@ mod components;
 mod diagnostics_export;
 mod doctor;
 mod endpoints;
-mod game;
 mod identity;
 mod peer;
 mod portmap_probe;
 mod relay_probe;
-mod wire;
 
 use std::time::{Duration, Instant};
 
 use components::{
     AppError, BlobsView, DiagState, DiagnosticsView, DocsView, EndpointsView, ErrorDialog,
-    EventEntry, GossipView, PongScene,
+    EventEntry, GossipView,
 };
-use game::PongGame;
 use peer::{
     BlobSummary, ConnectionState, DiagnosticsReport, NetReportSummary, PathInfo, PeerCallbacks,
     PeerCommand, TelemetryState,
@@ -126,7 +123,6 @@ pub enum Tab {
     Data,
     Gossip,
     Endpoints,
-    Pong,
 }
 
 #[component]
@@ -134,7 +130,6 @@ fn App() -> Element {
     let endpoint_id = use_signal(String::new);
     let conn_state = use_signal(|| ConnectionState::Idle);
     let telemetry = use_signal(|| TelemetryState::Off);
-    let game = use_signal(PongGame::default);
     let cmd_handle: Signal<Option<PeerHandle>> = use_signal(|| None);
     let peer_id_input = use_signal(String::new);
     let current_tab = use_signal(|| Tab::Diagnostics);
@@ -193,7 +188,6 @@ fn App() -> Element {
         let (id_tx, mut id_rx) = watch::channel::<String>(String::new());
         let (state_tx, mut state_rx) = watch::channel(ConnectionState::Idle);
         let (telemetry_tx, mut telemetry_rx) = watch::channel(TelemetryState::Off);
-        let (game_tx, mut game_rx) = watch::channel(PongGame::default());
         let (paths_tx, mut paths_rx) = watch::channel(Vec::<PathInfo>::new());
         let (ttfdb_tx, mut ttfdb_rx) = watch::channel::<Option<Duration>>(None);
         let (throughput_tx, mut throughput_rx) =
@@ -206,7 +200,6 @@ fn App() -> Element {
         let id_tx = Arc::new(id_tx);
         let state_tx = Arc::new(state_tx);
         let telemetry_tx = Arc::new(telemetry_tx);
-        let game_tx = Arc::new(game_tx);
         let paths_tx = Arc::new(paths_tx);
         let ttfdb_tx = Arc::new(ttfdb_tx);
         let throughput_tx = Arc::new(throughput_tx);
@@ -215,7 +208,6 @@ fn App() -> Element {
             let id_tx = id_tx.clone();
             let state_tx = state_tx.clone();
             let telemetry_tx = telemetry_tx.clone();
-            let game_tx = game_tx.clone();
             let paths_tx = paths_tx.clone();
             let ttfdb_tx = ttfdb_tx.clone();
             let throughput_tx = throughput_tx.clone();
@@ -233,9 +225,6 @@ fn App() -> Element {
                         }),
                         on_telemetry: Box::new(move |t| {
                             let _ = telemetry_tx.send(t);
-                        }),
-                        on_game: Box::new(move |g| {
-                            let _ = game_tx.send(g);
                         }),
                         on_paths: Box::new(move |p| {
                             let _ = paths_tx.send(p);
@@ -256,7 +245,6 @@ fn App() -> Element {
             id_tx,
             state_tx,
             telemetry_tx,
-            game_tx,
             paths_tx,
             ttfdb_tx,
             throughput_tx,
@@ -274,7 +262,6 @@ fn App() -> Element {
                     conn_state.clone().set(new_state);
                 }
                 Ok(()) = telemetry_rx.changed() => telemetry.clone().set(telemetry_rx.borrow().clone()),
-                Ok(()) = game_rx.changed() => game.clone().set(*game_rx.borrow()),
                 Ok(()) = paths_rx.changed() => {
                     let snapshot = paths_rx.borrow().clone();
                     if let Some(selected) = snapshot.iter().find(|p| p.selected) {
@@ -440,7 +427,6 @@ fn App() -> Element {
                             }
                         }
                     },
-                    Tab::Pong => rsx! { PongPage { game, endpoint_id, conn_state, cmd_handle } },
                 }
             }
             div { class: "status-indicator", "data-state": "{status_kind}",
@@ -589,12 +575,6 @@ fn Nav(current_tab: Signal<Tab>) -> Element {
                 is_active: active == Tab::Endpoints,
                 on_select: move |_| current_tab.clone().set(Tab::Endpoints),
             }
-            NavItem {
-                label: "Pong",
-                icon: "⏵",
-                is_active: active == Tab::Pong,
-                on_select: move |_| current_tab.clone().set(Tab::Pong),
-            }
         }
     }
 }
@@ -654,21 +634,6 @@ fn DiagnosticsPage(
                 ttfdb,
                 throughput,
             }
-        }
-    }
-}
-
-#[component]
-fn PongPage(
-    game: Signal<PongGame>,
-    endpoint_id: Signal<String>,
-    conn_state: Signal<ConnectionState>,
-    cmd_handle: Signal<Option<PeerHandle>>,
-) -> Element {
-    rsx! {
-        div { class: "page",
-            h2 { class: "page-title", "Pong" }
-            PongScene { game, endpoint_id, conn_state, cmd_handle }
         }
     }
 }
