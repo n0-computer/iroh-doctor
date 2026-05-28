@@ -7,4 +7,3 @@ pub mod port_map;
 pub mod probe;
 pub mod relay_urls;
 pub mod report;
-pub mod swarm_client;

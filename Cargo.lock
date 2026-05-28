@@ -4151,7 +4151,6 @@ dependencies = [
  "console",
  "derive_more 2.1.1",
  "dirs-next",
- "ed25519-dalek",
  "hex",
  "indicatif",
  "iroh",
@@ -4159,9 +4158,6 @@ dependencies = [
  "iroh-doctor-core",
  "iroh-metrics",
  "iroh-relay",
- "iroh-services",
- "irpc",
- "irpc-iroh",
  "n0-future",
  "n0-watcher",
  "netwatch",
@@ -4172,7 +4168,6 @@ dependencies = [
  "postcard",
  "prometheus-client",
  "rand 0.10.1",
- "rcan",
  "rustls",
  "serde",
  "serde_json",
@@ -4185,7 +4180,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "url",
- "uuid",
  "webpki-roots",
 ]
 

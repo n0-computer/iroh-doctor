@@ -4,7 +4,6 @@
 use std::{
     net::SocketAddr,
     num::NonZeroU16,
-    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -217,25 +216,6 @@ pub enum Commands {
         /// Emit the combined report as JSON to stdout.
         #[clap(long, default_value_t = false)]
         json: bool,
-    },
-    /// Join a doctor swarm as a test node
-    SwarmClient {
-        /// SSH private key path for authentication
-        #[clap(long, required = true)]
-        ssh_key: PathBuf,
-        /// Backend coordinator node ID
-        #[clap(long, required = true)]
-        coordinator: EndpointId,
-        /// Assignment polling interval in seconds
-        #[clap(long, default_value_t = 2)]
-        assignment_interval: u64,
-        /// Optional human-readable name for this node
-        #[clap(long)]
-        named: Option<String>,
-        /// The secret key to use for the node.
-        /// Can be "random", "local" (loads from ~/.config/iroh/keypair), or a hex-encoded secret key.
-        #[clap(long, default_value = "random")]
-        secret_key: SecretKeyOption,
     },
 }
 
@@ -628,11 +608,9 @@ async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     disable_address_lookup: bool,
-    service_node: Option<EndpointId>,
-    ssh_key: Option<PathBuf>,
     metrics: IrohMetricsRegistry,
     socket_addr: Option<SocketAddr>,
-) -> anyhow::Result<(Endpoint, Option<iroh_services::Client>)> {
+) -> anyhow::Result<Endpoint> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
@@ -671,25 +649,11 @@ async fn make_endpoint(
         registry.register_all(endpoint.metrics());
     }
 
-    let rpc_client = if let Some(remote_node) = service_node {
-        // Grab ssh key
-        let ssh_key_path = ssh_key.expect("missing ssh key location");
-        let client = iroh_services::Client::builder(&endpoint)
-            .ssh_key_from_file(ssh_key_path)
-            .await?
-            .remote(remote_node)
-            .build()
-            .await?;
-        Some(client)
-    } else {
-        None
-    };
-
     tokio::time::timeout(Duration::from_secs(10), endpoint.online())
         .await
         .context("wait for relay connection")?;
 
-    Ok((endpoint, rpc_client))
+    Ok(endpoint)
 }
 
 pub async fn close_endpoint_on_ctrl_c(endpoint: Endpoint) {
@@ -775,12 +739,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 /// Runs the doctor commands.
-pub async fn run(
-    command: Commands,
-    config: &NodeConfig,
-    service_node: Option<EndpointId>,
-    ssh_key: Option<PathBuf>,
-) -> anyhow::Result<()> {
+pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
 
@@ -826,12 +785,10 @@ pub async fn run(
             };
             let secret_key = create_secret_key(secret_key)?;
 
-            let (endpoint, _client) = make_endpoint(
+            let endpoint = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
                 disable_address_lookup,
-                service_node,
-                ssh_key,
                 metrics.iroh.clone(),
                 socket_addr,
             )
@@ -865,12 +822,10 @@ pub async fn run(
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
 
-            let (endpoint, _client) = make_endpoint(
+            let endpoint = make_endpoint(
                 secret_key.clone(),
                 relay_map.clone(),
                 disable_address_lookup,
-                service_node,
-                ssh_key,
                 metrics.iroh.clone(),
                 socket_addr,
             )
@@ -913,24 +868,6 @@ pub async fn run(
             no_relays,
             json,
         } => commands::probe::probe(config, no_port_map, no_relays, json).await,
-        Commands::SwarmClient {
-            ssh_key,
-            coordinator,
-            assignment_interval,
-            named,
-            secret_key,
-        } => {
-            let secret_key = create_secret_key(secret_key)?;
-            commands::swarm_client::run_swarm_client(
-                ssh_key,
-                coordinator,
-                assignment_interval,
-                named,
-                secret_key,
-                metrics.iroh.clone(),
-            )
-            .await
-        }
     };
     if let Some(server) = metrics_server {
         server.shutdown().await;

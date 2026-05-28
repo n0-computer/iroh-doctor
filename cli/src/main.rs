@@ -2,7 +2,6 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
-use iroh::EndpointId;
 use iroh_doctor::{config::NodeConfig, doctor::Commands};
 
 /// iroh-doctor is a tool for diagnosing network issues with iroh-net.
@@ -25,13 +24,6 @@ pub(crate) struct Cli {
     /// Write metrics in CSV format at 100ms intervals. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_dump_path: Option<PathBuf>,
-
-    /// Connect to this iroh service node and report metrics if set.
-    #[clap(long, requires("ssh_key"))]
-    pub(crate) service_node: Option<EndpointId>,
-    /// Path to an ssh key to authenticate with.
-    #[clap(long, requires("service_node"))]
-    pub(crate) ssh_key: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -55,5 +47,5 @@ async fn main_impl() -> Result<()> {
     if let Some(addr) = cli.metrics_addr {
         config.set_metrics_addr(addr);
     }
-    iroh_doctor::doctor::run(cli.command, &config, cli.service_node, cli.ssh_key).await
+    iroh_doctor::doctor::run(cli.command, &config).await
 }
