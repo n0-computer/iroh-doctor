@@ -1,9 +1,14 @@
 //! Connect command implementation
 
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
+use console::style;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-
 use iroh_doctor_core::probe::{throughput_mbps, ProbeClient};
 use n0_future::StreamExt;
 
@@ -12,9 +17,9 @@ use crate::doctor::{log_connection_changes, passive_side, Gui};
 /// Connects to a [`EndpointId`].
 ///
 /// By default this runs a live connection monitor against the peer's probe
-/// protocol (latency over time, periodic throughput). With `test` set it runs
-/// the legacy doctor throughput test as the passive side, pairing with
-/// `iroh-doctor accept`.
+/// protocol (state, paths, latency over time, periodic throughput, ttfdb).
+/// With `test` set it runs the legacy doctor throughput test as the passive
+/// side, pairing with `iroh-doctor accept`.
 pub async fn connect(
     endpoint_id: EndpointId,
     direct_addresses: Vec<SocketAddr>,
@@ -41,20 +46,19 @@ pub async fn connect(
     match conn {
         Ok(connection) => {
             let gui = Gui::new(endpoint, endpoint_id);
-            log_connection_changes(gui.mp.clone(), endpoint_id, connection.clone());
-
             let close_reason = connection
                 .close_reason()
                 .map(|e| format!(" (reason: {e})"))
                 .unwrap_or_default();
 
             if test {
+                log_connection_changes(gui.mp.clone(), endpoint_id, connection.clone());
                 if let Err(cause) = passive_side(gui, &connection).await {
                     eprintln!("error handling connection: {cause}{close_reason}");
                 } else {
                     eprintln!("Connection closed{close_reason}");
                 }
-            } else if let Err(cause) = monitor(&gui, &connection).await {
+            } else if let Err(cause) = monitor(&gui, endpoint_id, &connection).await {
                 eprintln!("error monitoring connection: {cause}{close_reason}");
             } else {
                 eprintln!("Connection closed{close_reason}");
@@ -68,44 +72,274 @@ pub async fn connect(
     Ok(())
 }
 
-/// Runs the live connection monitor: repeatedly pings the peer's probe
-/// responder, tracking latency stats, and periodically measures upload
-/// throughput. Returns `Ok(())` cleanly once the peer goes away (e.g. on
-/// ctrl_c the dispatch closes the endpoint, the next ping errors, and we
-/// exit).
-async fn monitor(gui: &Gui, connection: &iroh::endpoint::Connection) -> anyhow::Result<()> {
-    // Watch for the first selected direct (ip) path and report time-to-first
-    // direct byte once.
-    spawn_ttfdb(connection.clone(), gui.mp.clone());
+/// Number of recent RTT samples kept for the sparkline and running stats.
+const HISTORY_LEN: usize = 60;
+
+#[derive(Copy, Clone)]
+enum StateKind {
+    Direct,
+    Relay,
+    Custom,
+    Unknown,
+}
+
+/// A small dashboard of in-place progress lines for the live monitor. Each
+/// line is an `indicatif` progress bar whose message we rewrite as new data
+/// arrives, so nothing scrolls past.
+#[derive(Clone)]
+struct MonitorView {
+    state_pb: ProgressBar,
+    paths_pb: ProgressBar,
+    latency_pb: ProgressBar,
+    spark_pb: ProgressBar,
+    throughput_pb: ProgressBar,
+    ttfdb_pb: ProgressBar,
+}
+
+impl MonitorView {
+    fn new(mp: &MultiProgress, peer: EndpointId) -> Self {
+        let template = ProgressStyle::default_bar().template("{msg}").unwrap();
+        let make = || {
+            let pb = mp.add(ProgressBar::hidden());
+            pb.set_style(template.clone());
+            pb.enable_steady_tick(Duration::from_millis(250));
+            pb.set_message("");
+            pb
+        };
+        let header = make();
+        let state_pb = make();
+        let paths_pb = make();
+        let ttfdb_pb = make();
+        let latency_pb = make();
+        let spark_pb = make();
+        let throughput_pb = make();
+
+        let peer_short: String = format!("{peer:#}").chars().take(16).collect();
+        header.set_message(format!(
+            "{} {}",
+            style("monitoring").bold().cyan(),
+            style(peer_short).dim()
+        ));
+        state_pb.set_message(format!(
+            "{}        {}",
+            style("state:").dim(),
+            style("connecting").yellow()
+        ));
+        paths_pb.set_message(format!("{}        -", style("paths:").dim()));
+        ttfdb_pb.set_message(format!("{}        -", style("ttfdb:").dim()));
+        latency_pb.set_message(format!("{}      -", style("latency:").dim()));
+        spark_pb.set_message(format!("{}        -", style("graph:").dim()));
+        throughput_pb.set_message(format!("{}   -", style("throughput:").dim()));
+
+        Self {
+            state_pb,
+            paths_pb,
+            latency_pb,
+            spark_pb,
+            throughput_pb,
+            ttfdb_pb,
+        }
+    }
+
+    fn set_state(&self, label: &str, kind: StateKind) {
+        let painted = match kind {
+            StateKind::Direct => style(label).bold().green(),
+            StateKind::Relay => style(label).bold().yellow(),
+            StateKind::Custom => style(label).bold().magenta(),
+            StateKind::Unknown => style(label).dim(),
+        };
+        self.state_pb
+            .set_message(format!("{}        {painted}", style("state:").dim()));
+    }
+
+    fn set_paths(&self, lines: Vec<String>) {
+        let body = if lines.is_empty() {
+            style("(no paths)").dim().to_string()
+        } else {
+            lines.join("\n  ")
+        };
+        self.paths_pb
+            .set_message(format!("{}\n  {body}", style("paths:").dim()));
+    }
+
+    fn set_ttfdb(&self, elapsed: Duration) {
+        let ms = elapsed.as_secs_f64() * 1000.0;
+        self.ttfdb_pb.set_message(format!(
+            "{}        {}",
+            style("ttfdb:").dim(),
+            style(format!("{ms:.0} ms")).bold()
+        ));
+    }
+
+    fn set_latency(&self, latest: Duration, history: &VecDeque<Duration>) {
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let latest_ms = ms(latest);
+        let latest_str = format!("{latest_ms:>6.1} ms");
+        let latest_painted = if latest_ms < 50.0 {
+            style(latest_str).bold().green()
+        } else if latest_ms < 150.0 {
+            style(latest_str).bold().yellow()
+        } else {
+            style(latest_str).bold().red()
+        };
+        let (min, avg, max, count) = stats(history);
+        self.latency_pb.set_message(format!(
+            "{}      {latest_painted}  {}",
+            style("latency:").dim(),
+            style(format!(
+                "(min {:.1} / avg {:.1} / max {:.1}, n={count})",
+                ms(min),
+                ms(avg),
+                ms(max),
+            ))
+            .dim(),
+        ));
+        self.spark_pb.set_message(format!(
+            "{}        {}",
+            style("graph:").dim(),
+            style(sparkline(history)).cyan()
+        ));
+    }
+
+    fn set_throughput(&self, bytes: u64, elapsed: Duration) {
+        let mbps_str = throughput_mbps(bytes, elapsed)
+            .map(|m| format!("{m:>6.1} Mbps"))
+            .unwrap_or_else(|| "       -    ".to_string());
+        let mib = bytes as f64 / (1024.0 * 1024.0);
+        let ms = elapsed.as_secs_f64() * 1000.0;
+        self.throughput_pb.set_message(format!(
+            "{}   {} {}",
+            style("throughput:").dim(),
+            style(mbps_str).bold(),
+            style(format!("({mib:.1} MiB in {ms:.0} ms)")).dim(),
+        ));
+    }
+
+    fn set_probe_ended(&self, kind: &str, cause: impl std::fmt::Display) {
+        self.latency_pb.set_message(format!(
+            "{}      {}",
+            style("latency:").dim(),
+            style(format!("{kind} ended: {cause}")).red()
+        ));
+    }
+}
+
+fn stats(history: &VecDeque<Duration>) -> (Duration, Duration, Duration, u64) {
+    if history.is_empty() {
+        return (Duration::ZERO, Duration::ZERO, Duration::ZERO, 0);
+    }
+    let min = history.iter().min().copied().unwrap_or(Duration::ZERO);
+    let max = history.iter().max().copied().unwrap_or(Duration::ZERO);
+    let total: Duration = history.iter().copied().sum();
+    let count = history.len() as u64;
+    let avg = total / (count as u32);
+    (min, avg, max, count)
+}
+
+fn sparkline(samples: &VecDeque<Duration>) -> String {
+    const CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if samples.is_empty() {
+        return String::new();
+    }
+    let min = samples.iter().min().copied().unwrap();
+    let max = samples.iter().max().copied().unwrap();
+    let range = max.saturating_sub(min);
+    samples
+        .iter()
+        .map(|d| {
+            if range.is_zero() {
+                CHARS[0]
+            } else {
+                let span = (*d - min).as_nanos() as f64;
+                let total = range.as_nanos() as f64;
+                let idx = ((span / total) * (CHARS.len() as f64 - 1.0)).round() as usize;
+                CHARS[idx.min(CHARS.len() - 1)]
+            }
+        })
+        .collect()
+}
+
+/// Watches the connection's path stream and updates the dashboard's
+/// state, paths, and ttfdb lines as paths come and go.
+fn spawn_paths_watcher(
+    connection: iroh::endpoint::Connection,
+    view: MonitorView,
+    started: Instant,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut paths = connection.paths_stream();
+        let mut ttfdb_set = false;
+        while let Some(path_list) = paths.next().await {
+            let (label, kind) = match path_list.iter().find(|p| p.is_selected()) {
+                Some(p) if p.remote_addr().is_ip() => ("direct", StateKind::Direct),
+                Some(p) if p.remote_addr().is_relay() => ("relay", StateKind::Relay),
+                Some(_) => ("custom", StateKind::Custom),
+                None => ("no path", StateKind::Unknown),
+            };
+            view.set_state(label, kind);
+
+            let lines: Vec<String> = path_list
+                .iter()
+                .map(|p| {
+                    let sel = if p.is_selected() { '*' } else { ' ' };
+                    let kind_str = if p.remote_addr().is_ip() {
+                        "direct"
+                    } else if p.remote_addr().is_relay() {
+                        "relay "
+                    } else {
+                        "custom"
+                    };
+                    let rtt_ms = p.rtt().as_secs_f64() * 1000.0;
+                    format!(
+                        "{sel} {kind_str}  {:<44}  rtt {rtt_ms:>6.1} ms",
+                        p.remote_addr().to_string(),
+                    )
+                })
+                .collect();
+            view.set_paths(lines);
+
+            if !ttfdb_set {
+                let has_direct = path_list
+                    .iter()
+                    .any(|p| p.is_selected() && p.remote_addr().is_ip());
+                if has_direct {
+                    view.set_ttfdb(started.elapsed());
+                    ttfdb_set = true;
+                }
+            }
+        }
+    })
+}
+
+/// Runs the live connection monitor: maintains a dashboard via the
+/// existing `Gui`'s `MultiProgress`, repeatedly pings the peer's probe
+/// responder for latency-over-time, and periodically uploads to measure
+/// throughput. Returns `Ok(())` cleanly once the peer goes away.
+async fn monitor(
+    gui: &Gui,
+    endpoint_id: EndpointId,
+    connection: &iroh::endpoint::Connection,
+) -> anyhow::Result<()> {
+    let view = MonitorView::new(&gui.mp, endpoint_id);
+    let started = Instant::now();
+    let _watcher = spawn_paths_watcher(connection.clone(), view.clone(), started);
 
     let mut client = ProbeClient::connect(connection).await?;
 
     let mut nonce: u32 = 0;
-    let mut count: u64 = 0;
-    let mut min = Duration::MAX;
-    let mut max = Duration::ZERO;
-    let mut total = Duration::ZERO;
+    let mut history: VecDeque<Duration> = VecDeque::with_capacity(HISTORY_LEN);
 
     loop {
         match client.ping(nonce).await {
             Ok(rtt) => {
-                count += 1;
-                min = min.min(rtt);
-                max = max.max(rtt);
-                total += rtt;
-                let avg = total / count as u32;
-                gui.mp
-                    .println(format!(
-                        "latency: {:.2} ms (min {:.2} / avg {:.2} / max {:.2}, n={count})",
-                        rtt.as_secs_f64() * 1000.0,
-                        min.as_secs_f64() * 1000.0,
-                        avg.as_secs_f64() * 1000.0,
-                        max.as_secs_f64() * 1000.0,
-                    ))
-                    .ok();
+                if history.len() == HISTORY_LEN {
+                    history.pop_front();
+                }
+                history.push_back(rtt);
+                view.set_latency(rtt, &history);
             }
             Err(cause) => {
-                gui.mp.println(format!("latency probe ended: {cause}")).ok();
+                view.set_probe_ended("latency", cause);
                 break;
             }
         }
@@ -115,16 +349,9 @@ async fn monitor(gui: &Gui, connection: &iroh::endpoint::Connection) -> anyhow::
         if nonce.is_multiple_of(10) {
             const UPLOAD_BYTES: u64 = 1024 * 1024;
             match client.upload(UPLOAD_BYTES).await {
-                Ok(elapsed) => {
-                    let mbps = throughput_mbps(UPLOAD_BYTES, elapsed)
-                        .map(|m| format!("{m:.2}"))
-                        .unwrap_or_else(|| "?".to_string());
-                    gui.mp.println(format!("throughput: {mbps} Mbps")).ok();
-                }
+                Ok(elapsed) => view.set_throughput(UPLOAD_BYTES, elapsed),
                 Err(cause) => {
-                    gui.mp
-                        .println(format!("throughput probe ended: {cause}"))
-                        .ok();
+                    view.set_probe_ended("throughput", cause);
                     break;
                 }
             }
@@ -135,23 +362,4 @@ async fn monitor(gui: &Gui, connection: &iroh::endpoint::Connection) -> anyhow::
     }
 
     Ok(())
-}
-
-/// Watches the connection's paths and prints "time to first direct byte" once,
-/// when a selected direct (ip) path first appears.
-fn spawn_ttfdb(connection: iroh::endpoint::Connection, mp: indicatif::MultiProgress) {
-    tokio::spawn(async move {
-        let start = std::time::Instant::now();
-        let mut paths = connection.paths_stream();
-        while let Some(path_list) = paths.next().await {
-            let has_direct = path_list
-                .iter()
-                .any(|p| p.is_selected() && p.remote_addr().is_ip());
-            if has_direct {
-                mp.println(format!("time to first direct byte: {:?}", start.elapsed()))
-                    .ok();
-                break;
-            }
-        }
-    });
 }
