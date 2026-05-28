@@ -20,7 +20,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::components::{DiagState, EventEntry};
 use crate::endpoints::Endpoint;
-use crate::peer::{BlobSummary, NetReportSummary, PathInfo};
+use crate::peer::{BlobSummary, NetReportSummary, PathInfo, ThroughputSnapshot};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
 
@@ -39,6 +39,7 @@ pub struct Snapshot {
     pub relays: Vec<RelayProbeResult>,
     pub relays_err: Option<String>,
     pub ttfdb: Option<Duration>,
+    pub throughput: Option<ThroughputSnapshot>,
     pub blobs: Vec<BlobSummary>,
     pub endpoints: Vec<Endpoint>,
     pub log_dir: Option<PathBuf>,
@@ -94,6 +95,9 @@ pub fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
 
         zip.start_file("ttfdb.txt", opts)?;
         zip.write_all(ttfdb_section(snapshot).as_bytes())?;
+
+        zip.start_file("throughput.txt", opts)?;
+        zip.write_all(throughput_section(snapshot).as_bytes())?;
 
         zip.start_file("blobs.csv", opts)?;
         zip.write_all(blobs_csv(snapshot).as_bytes())?;
@@ -253,6 +257,20 @@ fn ttfdb_section(s: &Snapshot) -> String {
         Some(d) => format!("time_to_first_direct_byte_ms: {}\n", d.as_millis()),
         None => "(no direct path observed yet)\n".to_string(),
     }
+}
+
+fn throughput_section(s: &Snapshot) -> String {
+    let Some(t) = &s.throughput else {
+        return "(no upload completed yet)\n".to_string();
+    };
+    let mut out = String::new();
+    out.push_str(&format!("bytes: {}\n", t.bytes));
+    out.push_str(&format!("elapsed_ms: {}\n", t.elapsed.as_millis()));
+    match t.mbps {
+        Some(m) => out.push_str(&format!("mbps: {m:.3}\n")),
+        None => out.push_str("mbps: (elapsed was zero)\n"),
+    }
+    out
 }
 
 fn blobs_csv(s: &Snapshot) -> String {

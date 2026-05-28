@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use crate::identity;
 use crate::peer::{
     ConnectionState, DiagnosticsReport, NetReportSummary, PathInfo, PathKind, PeerCommand,
-    TelemetryState,
+    TelemetryState, ThroughputSnapshot,
 };
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
@@ -106,6 +106,7 @@ pub fn DiagnosticsView(
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     ttfdb: Signal<Option<Duration>>,
+    throughput: Signal<Option<ThroughputSnapshot>>,
 ) -> Element {
     let busy = matches!(services_state(), DiagState::Running)
         || matches!(net_state(), DiagState::Running)
@@ -120,10 +121,15 @@ pub fn DiagnosticsView(
         ConnectionStateLabel::Relay | ConnectionStateLabel::Direct | ConnectionStateLabel::Custom
     );
     let ttfdb_value = ttfdb();
+    let throughput_value = throughput();
 
     rsx! {
         div { class: "diagnostics",
-            ConnectionStateHeader { state: connection_state, ttfdb: ttfdb_value }
+            ConnectionStateHeader {
+                state: connection_state,
+                ttfdb: ttfdb_value,
+                throughput: throughput_value,
+            }
 
             // Live connection detail: only meaningful while a peer is
             // connected, since it reflects the active QUIC paths.
@@ -226,7 +232,11 @@ fn derive_connection_state(
 }
 
 #[component]
-fn ConnectionStateHeader(state: ConnectionStateLabel, ttfdb: Option<Duration>) -> Element {
+fn ConnectionStateHeader(
+    state: ConnectionStateLabel,
+    ttfdb: Option<Duration>,
+    throughput: Option<ThroughputSnapshot>,
+) -> Element {
     let (label, kind_class) = match state {
         ConnectionStateLabel::Disconnected => ("disconnected", "disconnected"),
         ConnectionStateLabel::Connecting => ("connecting...", "connecting"),
@@ -239,6 +249,7 @@ fn ConnectionStateHeader(state: ConnectionStateLabel, ttfdb: Option<Duration>) -
         section { class: "connection-state-header",
             div { class: "connection-state-label connection-state-{kind_class}", "{label}" }
             {render_ttfdb(ttfdb)}
+            {render_throughput(throughput.as_ref())}
         }
     }
 }
@@ -253,6 +264,39 @@ fn render_ttfdb(ttfdb: Option<Duration>) -> Element {
             span { class: "ttfdb-label", "time to first direct byte: " }
             span { class: "ttfdb-number mono", "{formatted}" }
         }
+    }
+}
+
+/// Renders the most recent peer-probe upload as a throughput readout next
+/// to the TTFDB line. We show "-" when no upload has been observed yet so
+/// the row has a stable layout the moment a probe peer connects.
+fn render_throughput(throughput: Option<&ThroughputSnapshot>) -> Element {
+    let Some(t) = throughput else {
+        return rsx! {
+            div { class: "ttfdb-value",
+                span { class: "ttfdb-label", "throughput: " }
+                span { class: "ttfdb-number mono", "-" }
+            }
+        };
+    };
+    let formatted = format_throughput(t);
+    rsx! {
+        div { class: "ttfdb-value",
+            span { class: "ttfdb-label", "throughput: " }
+            span { class: "ttfdb-number mono", "{formatted}" }
+        }
+    }
+}
+
+/// Compact "{mbps} Mbps ({MiB} MiB in {ms} ms)" rendering for the
+/// Diagnostics throughput row. Falls back to "- Mbps" when elapsed was
+/// zero (the responder doesn't compute Mbps in that case).
+fn format_throughput(t: &ThroughputSnapshot) -> String {
+    let mib = t.bytes as f64 / 1024.0 / 1024.0;
+    let ms = t.elapsed.as_secs_f64() * 1000.0;
+    match t.mbps {
+        Some(m) => format!("{m:.1} Mbps ({mib:.2} MiB in {ms:.0} ms)"),
+        None => format!("- Mbps ({mib:.2} MiB in {ms:.0} ms)"),
     }
 }
 

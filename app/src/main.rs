@@ -148,6 +148,7 @@ fn App() -> Element {
         use_signal(|| DiagState::Idle);
     let paths: Signal<Vec<PathInfo>> = use_signal(Vec::new);
     let ttfdb: Signal<Option<Duration>> = use_signal(|| None);
+    let throughput: Signal<Option<peer::ThroughputSnapshot>> = use_signal(|| None);
     let rtt_history: Signal<VecDeque<f64>> =
         use_signal(|| VecDeque::with_capacity(RTT_HISTORY_LEN));
     let event_log: Signal<VecDeque<EventEntry>> =
@@ -195,6 +196,8 @@ fn App() -> Element {
         let (game_tx, mut game_rx) = watch::channel(PongGame::default());
         let (paths_tx, mut paths_rx) = watch::channel(Vec::<PathInfo>::new());
         let (ttfdb_tx, mut ttfdb_rx) = watch::channel::<Option<Duration>>(None);
+        let (throughput_tx, mut throughput_rx) =
+            watch::channel::<Option<peer::ThroughputSnapshot>>(None);
 
         cmd_handle
             .clone()
@@ -206,6 +209,7 @@ fn App() -> Element {
         let game_tx = Arc::new(game_tx);
         let paths_tx = Arc::new(paths_tx);
         let ttfdb_tx = Arc::new(ttfdb_tx);
+        let throughput_tx = Arc::new(throughput_tx);
 
         {
             let id_tx = id_tx.clone();
@@ -214,6 +218,7 @@ fn App() -> Element {
             let game_tx = game_tx.clone();
             let paths_tx = paths_tx.clone();
             let ttfdb_tx = ttfdb_tx.clone();
+            let throughput_tx = throughput_tx.clone();
             tokio::spawn(async move {
                 let _ = peer::run_peer(
                     secret_key,
@@ -238,13 +243,24 @@ fn App() -> Element {
                         on_ttfdb: Box::new(move |d| {
                             let _ = ttfdb_tx.send(d);
                         }),
+                        on_throughput: Box::new(move |t| {
+                            let _ = throughput_tx.send(Some(t));
+                        }),
                     },
                 )
                 .await;
             });
         }
 
-        let _keep_senders = (id_tx, state_tx, telemetry_tx, game_tx, paths_tx, ttfdb_tx);
+        let _keep_senders = (
+            id_tx,
+            state_tx,
+            telemetry_tx,
+            game_tx,
+            paths_tx,
+            ttfdb_tx,
+            throughput_tx,
+        );
 
         loop {
             tokio::select! {
@@ -268,6 +284,9 @@ fn App() -> Element {
                 }
                 Ok(()) = ttfdb_rx.changed() => {
                     ttfdb.clone().set(*ttfdb_rx.borrow());
+                }
+                Ok(()) = throughput_rx.changed() => {
+                    throughput.clone().set(throughput_rx.borrow().clone());
                 }
                 else => break,
             }
@@ -385,7 +404,7 @@ fn App() -> Element {
                             telemetry,
                             services_ping_state, net_state, net_report_state, relays_state,
                             portmap_state,
-                            paths, rtt_history, event_log, ttfdb,
+                            paths, rtt_history, event_log, ttfdb, throughput,
                         }
                     },
                     Tab::Data => rsx! {
@@ -442,6 +461,7 @@ fn App() -> Element {
                         portmap_state,
                         relays_state,
                         ttfdb,
+                        throughput,
                         blobs_list,
                         endpoints_list,
                     );
@@ -465,6 +485,7 @@ fn handle_send_diagnostics(
     portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
     relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
     ttfdb: Signal<Option<Duration>>,
+    throughput: Signal<Option<peer::ThroughputSnapshot>>,
     blobs_list: Signal<Vec<peer::BlobSummary>>,
     endpoints_list: Signal<Vec<endpoints::Endpoint>>,
 ) {
@@ -485,6 +506,7 @@ fn handle_send_diagnostics(
         relays: relays.unwrap_or_default(),
         relays_err,
         ttfdb: ttfdb(),
+        throughput: throughput(),
         blobs: blobs_list(),
         endpoints: endpoints_list(),
         log_dir: log_dir(),
@@ -610,6 +632,7 @@ fn DiagnosticsPage(
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     ttfdb: Signal<Option<Duration>>,
+    throughput: Signal<Option<peer::ThroughputSnapshot>>,
 ) -> Element {
     rsx! {
         div { class: "page",
@@ -629,6 +652,7 @@ fn DiagnosticsPage(
                 rtt_history,
                 event_log,
                 ttfdb,
+                throughput,
             }
         }
     }

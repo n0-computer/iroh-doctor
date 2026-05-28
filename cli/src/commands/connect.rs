@@ -296,15 +296,14 @@ fn sparkline(samples: &VecDeque<Duration>) -> String {
 }
 
 /// Watches the connection's path stream and updates the dashboard's
-/// state, paths, and ttfdb lines as paths come and go.
+/// state and paths lines as paths come and go. TTFDB is handled by a
+/// separate spawn that calls [`iroh_doctor_core::monitor::ttfdb_watch`].
 fn spawn_paths_watcher(
     connection: iroh::endpoint::Connection,
     view: MonitorView,
-    started: Instant,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut paths = connection.paths_stream();
-        let mut ttfdb_set = false;
         while let Some(path_list) = paths.next().await {
             let (label, kind) = match path_list.iter().find(|p| p.is_selected()) {
                 Some(p) if p.remote_addr().is_ip() => ("direct", StateKind::Direct),
@@ -333,16 +332,6 @@ fn spawn_paths_watcher(
                 })
                 .collect();
             view.set_paths(lines);
-
-            if !ttfdb_set {
-                let has_direct = path_list
-                    .iter()
-                    .any(|p| p.is_selected() && p.remote_addr().is_ip());
-                if has_direct {
-                    view.set_ttfdb(started.elapsed());
-                    ttfdb_set = true;
-                }
-            }
         }
     })
 }
@@ -358,7 +347,18 @@ async fn monitor(
 ) -> anyhow::Result<()> {
     let view = MonitorView::new(&gui.mp, endpoint_id);
     let started = Instant::now();
-    let _watcher = spawn_paths_watcher(connection.clone(), view.clone(), started);
+    let _watcher = spawn_paths_watcher(connection.clone(), view.clone());
+    // Time-to-first-direct-byte is computed by core so both the cli and the
+    // app report the same number for the same physical holepunch.
+    {
+        let conn = connection.clone();
+        let view = view.clone();
+        tokio::spawn(async move {
+            if let Some(elapsed) = iroh_doctor_core::monitor::ttfdb_watch(&conn, started).await {
+                view.set_ttfdb(elapsed);
+            }
+        });
+    }
 
     let mut client =
         match tokio::time::timeout(Duration::from_secs(10), ProbeClient::connect(connection)).await

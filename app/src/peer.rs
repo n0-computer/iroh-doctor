@@ -325,6 +325,19 @@ type GameCb = Arc<dyn Fn(PongGame) + Send + Sync>;
 type IdCb = Arc<dyn Fn(String) + Send + Sync>;
 type PathsCb = Arc<dyn Fn(Vec<PathInfo>) + Send + Sync>;
 type TtfdbCb = Arc<dyn Fn(Option<Duration>) + Send + Sync>;
+type ThroughputCb = Arc<dyn Fn(ThroughputSnapshot) + Send + Sync>;
+
+/// Snapshot of one completed upload from the peer probe (`iroh-doctor connect`
+/// monitor). `bytes` and `elapsed` come straight from the responder's
+/// [`iroh_doctor_core::probe::ProbeEvent::UploadCompleted`]; `mbps` is the
+/// pre-computed convenience value so the UI does not have to redo the
+/// math for every render.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThroughputSnapshot {
+    pub bytes: u64,
+    pub elapsed: Duration,
+    pub mbps: Option<f64>,
+}
 
 /// Callbacks the peer task invokes to push state into the UI. Bundling them
 /// keeps `run_peer`'s signature compact and gives future commits an obvious
@@ -339,6 +352,10 @@ pub struct PeerCallbacks {
     /// first selected direct (holepunched) path, or with `None` to
     /// clear the metric when a fresh dial begins.
     pub on_ttfdb: Box<dyn Fn(Option<Duration>) + Send + Sync>,
+    /// Fires every time the responder side of an incoming peer-probe
+    /// completes an upload. Carries the byte count, the drain time, and a
+    /// pre-formatted Mbps value.
+    pub on_throughput: Box<dyn Fn(ThroughputSnapshot) + Send + Sync>,
 }
 
 /// Shared state tracking the "time to first direct byte" measurement.
@@ -393,6 +410,7 @@ pub async fn run_peer(
     let on_game: GameCb = Arc::from(callbacks.on_game);
     let on_paths: PathsCb = Arc::from(callbacks.on_paths);
     let on_ttfdb: TtfdbCb = Arc::from(callbacks.on_ttfdb);
+    let on_throughput: ThroughputCb = Arc::from(callbacks.on_throughput);
 
     let ttfdb: Arc<Mutex<TtfdbState>> = Arc::new(Mutex::new(TtfdbState {
         dial_at: None,
@@ -451,6 +469,8 @@ pub async fn run_peer(
             conn_slot: conn_slot.clone(),
             on_state: on_state.clone(),
             on_game: on_game.clone(),
+            on_throughput: on_throughput.clone(),
+            ttfdb: ttfdb.clone(),
             blobs: blobs.clone(),
             gossip: gossip.clone(),
             docs: docs.clone(),
@@ -1304,6 +1324,14 @@ struct AcceptCtx {
     conn_slot: Arc<Mutex<Option<endpoint::Connection>>>,
     on_state: StateCb,
     on_game: GameCb,
+    /// Fires per completed upload on an incoming peer-probe stream so the
+    /// Diagnostics tab can show throughput against an `iroh-doctor connect`
+    /// monitor.
+    on_throughput: ThroughputCb,
+    /// Shared TTFDB state. The probe accept arm primes `dial_at` so the
+    /// existing paths sampler reports time-to-first-direct-byte for an
+    /// incoming peer-probe just like it does for outgoing pong dials.
+    ttfdb: Arc<Mutex<TtfdbState>>,
     blobs: BlobsProtocol,
     gossip: Gossip,
     docs: Docs,
@@ -1412,6 +1440,8 @@ async fn run_accept_loop(ctx: AcceptCtx) {
             // owns the slot we respond silently in the background.
             let conn_slot = ctx.conn_slot.clone();
             let on_state = ctx.on_state.clone();
+            let on_throughput = ctx.on_throughput.clone();
+            let ttfdb = ctx.ttfdb.clone();
             tokio::spawn(async move {
                 let peer_id = conn.remote_id().to_string();
                 let peer_short_id: String = peer_id.chars().take(10).collect();
@@ -1423,15 +1453,51 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                             peer_id: peer_id.clone(),
                             peer_short_id: peer_short_id.clone(),
                         });
+                        // Prime the TTFDB state so the existing paths
+                        // sampler reports time-to-first-direct-byte for
+                        // this incoming probe, just like an outgoing
+                        // pong dial does. We only do this when the
+                        // probe actually owns conn_slot; otherwise a
+                        // pong session is in charge and its dial-time
+                        // baseline must not be clobbered.
+                        let mut state = ttfdb.lock().await;
+                        state.dial_at = Some(std::time::Instant::now());
+                        state.published = false;
                         true
                     } else {
                         false
                     }
                 };
 
-                if let Err(e) = iroh_doctor_core::probe::handle_connection(conn).await {
+                // Bounded channel: the responder emits one event per
+                // upload, which clients pace by waiting for `UploadDone`,
+                // so 8 slots is more than enough headroom for the
+                // drainer to keep up.
+                let (tx, mut rx) = mpsc::channel::<iroh_doctor_core::probe::ProbeEvent>(8);
+                let drain = tokio::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            iroh_doctor_core::probe::ProbeEvent::UploadCompleted {
+                                bytes,
+                                elapsed,
+                            } => {
+                                on_throughput(ThroughputSnapshot {
+                                    bytes,
+                                    elapsed,
+                                    mbps: iroh_doctor_core::probe::throughput_mbps(bytes, elapsed),
+                                });
+                            }
+                        }
+                    }
+                });
+
+                if let Err(e) = iroh_doctor_core::probe::handle_connection_with(conn, tx).await {
                     warn!(err = %e, "peer-probe accept failed");
                 }
+                // Sender drops here when handle_connection_with returns;
+                // the drainer's `rx.recv()` then returns None and the
+                // task ends. Await it so we don't leak a JoinHandle.
+                let _ = drain.await;
                 drop(permit);
 
                 if claimed {
