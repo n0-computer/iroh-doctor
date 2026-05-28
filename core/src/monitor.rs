@@ -50,7 +50,8 @@ pub enum StateKind {
     NoPath,
 }
 
-/// Capture the connection's current paths.
+/// Captures the connection's current paths.
+#[must_use]
 pub fn snapshot_paths(conn: &Connection) -> Vec<PathSnapshot> {
     conn.paths()
         .iter()
@@ -73,7 +74,8 @@ pub fn snapshot_paths(conn: &Connection) -> Vec<PathSnapshot> {
         .collect()
 }
 
-/// Classify a paths snapshot into a single high-level state.
+/// Classifies a paths snapshot into a single high-level state.
+#[must_use]
 pub fn derive_state(paths: &[PathSnapshot]) -> StateKind {
     match paths.iter().find(|p| p.selected).map(|p| p.kind) {
         Some(PathKind::Direct) => StateKind::Direct,
@@ -91,6 +93,7 @@ pub fn derive_state(paths: &[PathSnapshot]) -> StateKind {
 /// dial begins) and the accepting side (start it when the connection is
 /// accepted), so both crates report a comparable number for the same
 /// physical holepunch.
+#[must_use = "the resolved time-to-first-direct-byte is the point of awaiting this"]
 pub async fn ttfdb_watch(conn: &Connection, started: Instant) -> Option<Duration> {
     let mut paths = conn.paths_stream();
     while let Some(path_list) = paths.next().await {

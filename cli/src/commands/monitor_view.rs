@@ -12,19 +12,13 @@ use std::{collections::VecDeque, time::Duration};
 use console::style;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use iroh::EndpointId;
-use iroh_doctor_core::probe::throughput_mbps;
+use iroh_doctor_core::{
+    monitor::{PathKind, PathSnapshot, StateKind},
+    probe::throughput_mbps,
+};
 
 /// Number of recent RTT samples kept for the sparkline and running stats.
 pub(crate) const HISTORY_LEN: usize = 60;
-
-/// Transport kind of the selected path.
-#[derive(Copy, Clone)]
-pub(crate) enum StateKind {
-    Direct,
-    Relay,
-    Custom,
-    Unknown,
-}
 
 /// A small dashboard of in-place progress lines. Each row is an
 /// `indicatif` progress bar whose message we rewrite as new data arrives,
@@ -102,12 +96,18 @@ impl MonitorView {
         )
     }
 
-    pub(crate) fn set_state(&self, label: &str, kind: StateKind) {
+    pub(crate) fn set_state(&self, kind: StateKind) {
+        let label = match kind {
+            StateKind::Direct => "direct",
+            StateKind::Relay => "relay",
+            StateKind::Custom => "custom",
+            StateKind::NoPath => "no path",
+        };
         let painted = match kind {
             StateKind::Direct => style(label).bold().green(),
             StateKind::Relay => style(label).bold().yellow(),
             StateKind::Custom => style(label).bold().magenta(),
-            StateKind::Unknown => style(label).dim(),
+            StateKind::NoPath => style(label).dim(),
         };
         self.state_pb
             .set_message(format!("{}        {painted}", style("state:").dim()));
@@ -185,6 +185,28 @@ impl MonitorView {
     }
 }
 
+/// Renders one aligned line per path: a selection marker, the transport
+/// kind, the remote address, and the path RTT.
+#[must_use]
+pub(crate) fn format_path_lines(paths: &[PathSnapshot]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| {
+            let sel = if p.selected { '*' } else { ' ' };
+            let kind_str = match p.kind {
+                PathKind::Direct => "direct",
+                PathKind::Relay => "relay ",
+                PathKind::Custom => "custom",
+            };
+            let rtt_ms = p.rtt.as_secs_f64() * 1000.0;
+            format!("{sel} {kind_str}  {:<44}  rtt {rtt_ms:>6.1} ms", p.addr)
+        })
+        .collect()
+}
+
+/// Returns the min, average, max, and sample count of the RTT history.
+/// All-zero with a count of zero when the history is empty.
+#[must_use]
 pub(crate) fn stats(history: &VecDeque<Duration>) -> (Duration, Duration, Duration, u64) {
     if history.is_empty() {
         return (Duration::ZERO, Duration::ZERO, Duration::ZERO, 0);
@@ -197,6 +219,9 @@ pub(crate) fn stats(history: &VecDeque<Duration>) -> (Duration, Duration, Durati
     (min, avg, max, count)
 }
 
+/// Renders the RTT history as a unicode block sparkline, scaled to the
+/// window's own min and max so relative variation is visible.
+#[must_use]
 pub(crate) fn sparkline(samples: &VecDeque<Duration>) -> String {
     const CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     if samples.is_empty() {

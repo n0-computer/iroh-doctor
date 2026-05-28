@@ -78,6 +78,7 @@ pub enum ProbeEvent {
 
 /// Megabits per second for `bytes` transferred in `elapsed`, or `None` when
 /// `elapsed` is zero.
+#[must_use]
 pub fn throughput_mbps(bytes: u64, elapsed: Duration) -> Option<f64> {
     let secs = elapsed.as_secs_f64();
     if secs <= 0.0 {

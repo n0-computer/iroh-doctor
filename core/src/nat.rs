@@ -15,14 +15,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NatType {
+    /// Address mapping does not vary by destination; holepunching is reliable.
     Easy,
+    /// Mapping is stable but other behavior may complicate holepunching.
     Medium,
+    /// Address mapping varies by destination; holepunching is unreliable.
     Hard,
+    /// Not enough information in the report to classify.
     Unknown,
 }
 
 impl NatType {
     /// Returns a human-readable description of this NAT type.
+    #[must_use]
     pub fn description(&self) -> &'static str {
         match self {
             Self::Easy => "NAT type allows easy P2P connectivity",
@@ -34,6 +39,7 @@ impl NatType {
 
     /// Returns the relative difficulty of establishing P2P connections with
     /// this NAT type. Lower numbers indicate better P2P connectivity.
+    #[must_use]
     pub fn p2p_difficulty(&self) -> u8 {
         match self {
             Self::Easy => 1,
@@ -80,11 +86,12 @@ impl ExtendedNetworkReport {
     }
 }
 
-/// Classify NAT type from an [`ExtendedNetworkReport`].
+/// Classifies NAT type from an [`ExtendedNetworkReport`].
 ///
 /// Returns [`NatType::Unknown`] when there is no base report, no globally
 /// routable address, no UDP reachability, or no address-mapping-variation
 /// data. The mapping-variation lookup is `ipv4.or(ipv6)`.
+#[must_use]
 pub fn classify_nat_type(report: &ExtendedNetworkReport) -> NatType {
     let Some(ref base) = report.base_report else {
         return NatType::Unknown;
@@ -113,11 +120,12 @@ pub fn classify_nat_type(report: &ExtendedNetworkReport) -> NatType {
     }
 }
 
-/// Classify NAT type from a base [`iroh::NetReport`] alone.
+/// Classifies NAT type from a base [`iroh::NetReport`] alone.
 ///
 /// Convenience wrapper for callers that have a `NetReport` and do not
 /// collect the port-variation extension yet. Without port-variation data a
 /// stable address maps to [`NatType::Medium`], never [`NatType::Easy`].
+#[must_use]
 pub fn classify_base_report(report: &iroh::NetReport) -> NatType {
     classify_nat_type(&ExtendedNetworkReport::from_base_report(Some(
         report.clone(),

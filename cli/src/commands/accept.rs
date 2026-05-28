@@ -16,15 +16,30 @@ use std::{
 };
 
 use iroh::{Endpoint, SecretKey};
-use iroh_doctor_core::probe::{handle_connection, handle_connection_with, ProbeEvent};
+use iroh_doctor_core::{
+    monitor::{derive_state, snapshot_paths},
+    probe::{handle_connection, handle_connection_with, ProbeEvent},
+};
 use n0_future::StreamExt;
 use portable_atomic::AtomicU64;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
 use crate::{
-    commands::monitor_view::{MonitorView, StateKind, HISTORY_LEN},
+    commands::monitor_view::{format_path_lines, MonitorView, HISTORY_LEN},
     doctor::{active_side, log_connection_changes, Gui, TestConfig},
 };
+
+/// Runs a closure on drop. Used to reset a counter or flag even if the
+/// guarded future panics, so a panicking handler cannot permanently wedge
+/// the accept loop's "one dashboard at a time" or connection-count state.
+struct OnDrop<F: FnMut()>(F);
+
+impl<F: FnMut()> Drop for OnDrop<F> {
+    fn drop(&mut self) {
+        (self.0)();
+    }
+}
 
 /// Accepts incoming connections. Probe connections drive a live monitor;
 /// doctor connections drive the throughput test.
@@ -67,8 +82,10 @@ pub async fn accept(
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
+                    // Reset on drop so a panic in the monitor cannot leave
+                    // the flag stuck and silence every later dashboard.
+                    let _reset = OnDrop(|| monitor_active.store(false, Ordering::SeqCst));
                     run_probe_monitor(endpoint, connection).await;
-                    monitor_active.store(false, Ordering::SeqCst);
                 } else if let Err(cause) = handle_connection(connection).await {
                     warn!("probe connection failed: {cause:#}");
                 }
@@ -78,6 +95,11 @@ pub async fn accept(
             // Doctor ALPN: the throughput test. The first concurrent
             // connection drives with a Gui, the rest run silently.
             let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
+            // Decrement on drop so a panic in the test driver cannot leave
+            // the counter stuck above zero and starve future tests of a Gui.
+            let _dec = OnDrop(|| {
+                connections.sub(1, portable_atomic::Ordering::SeqCst);
+            });
             if n == 0 {
                 let remote_peer_id = connection.remote_id();
                 println!("accepted doctor test from {remote_peer_id}");
@@ -99,7 +121,6 @@ pub async fn accept(
             } else {
                 active_side(&connection, &config, None).await.ok();
             }
-            connections.sub(1, portable_atomic::Ordering::SeqCst);
         });
     }
 
@@ -114,22 +135,25 @@ async fn run_probe_monitor(endpoint: Endpoint, connection: iroh::endpoint::Conne
     let view = MonitorView::new(&gui.mp, MonitorView::accepted_header(remote_peer));
     let started = Instant::now();
 
-    let _watcher = spawn_paths_watcher(connection.clone(), view.clone());
-    {
+    // All three background tasks are owned here via AbortOnDropHandle, so
+    // they stop when this function returns rather than lingering on the
+    // cloned connection.
+    let _watcher = AbortOnDropHandle::new(spawn_paths_watcher(connection.clone(), view.clone()));
+    let _ttfdb = {
         let conn = connection.clone();
         let view = view.clone();
-        tokio::spawn(async move {
+        AbortOnDropHandle::new(tokio::spawn(async move {
             if let Some(elapsed) = iroh_doctor_core::monitor::ttfdb_watch(&conn, started).await {
                 view.set_ttfdb(elapsed);
             }
-        });
-    }
+        }))
+    };
 
     // Surface throughput from the responder's perspective on each upload.
     let (events_tx, mut events_rx) = tokio::sync::mpsc::channel::<ProbeEvent>(8);
-    {
+    let _pump = {
         let view = view.clone();
-        tokio::spawn(async move {
+        AbortOnDropHandle::new(tokio::spawn(async move {
             while let Some(ev) = events_rx.recv().await {
                 match ev {
                     ProbeEvent::UploadCompleted { bytes, elapsed } => {
@@ -137,14 +161,18 @@ async fn run_probe_monitor(endpoint: Endpoint, connection: iroh::endpoint::Conne
                     }
                 }
             }
-        });
-    }
+        }))
+    };
 
-    let close_reason = connection
+    // Read the close reason after the handler returns: before then the
+    // connection is still open and would report `None`.
+    let reason_conn = connection.clone();
+    let result = handle_connection_with(connection, events_tx).await;
+    let close_reason = reason_conn
         .close_reason()
         .map(|e| format!(" (reason: {e})"))
         .unwrap_or_default();
-    if let Err(cause) = handle_connection_with(connection, events_tx).await {
+    if let Err(cause) = result {
         view.set_probe_ended("probe", format!("{cause:#}{close_reason}"));
     } else {
         view.set_probe_ended("probe", format!("closed{close_reason}"));
@@ -161,42 +189,22 @@ fn spawn_paths_watcher(
     tokio::spawn(async move {
         let mut paths = connection.paths_stream();
         let mut history: VecDeque<Duration> = VecDeque::with_capacity(HISTORY_LEN);
-        while let Some(path_list) = paths.next().await {
-            let (label, kind) = match path_list.iter().find(|p| p.is_selected()) {
-                Some(p) if p.remote_addr().is_ip() => ("direct", StateKind::Direct),
-                Some(p) if p.remote_addr().is_relay() => ("relay", StateKind::Relay),
-                Some(_) => ("custom", StateKind::Custom),
-                None => ("no path", StateKind::Unknown),
-            };
-            view.set_state(label, kind);
+        // Re-read the current paths on every change notification. Latency on
+        // this side is the selected path's smoothed RTT, since the peer
+        // drives the pings.
+        while paths.next().await.is_some() {
+            let snaps = snapshot_paths(&connection);
+            view.set_state(derive_state(&snaps));
 
-            if let Some(p) = path_list.iter().find(|p| p.is_selected()) {
+            if let Some(p) = snaps.iter().find(|p| p.selected) {
                 if history.len() == HISTORY_LEN {
                     history.pop_front();
                 }
-                history.push_back(p.rtt());
-                view.set_latency(p.rtt(), &history);
+                history.push_back(p.rtt);
+                view.set_latency(p.rtt, &history);
             }
 
-            let lines: Vec<String> = path_list
-                .iter()
-                .map(|p| {
-                    let sel = if p.is_selected() { '*' } else { ' ' };
-                    let kind_str = if p.remote_addr().is_ip() {
-                        "direct"
-                    } else if p.remote_addr().is_relay() {
-                        "relay "
-                    } else {
-                        "custom"
-                    };
-                    let rtt_ms = p.rtt().as_secs_f64() * 1000.0;
-                    format!(
-                        "{sel} {kind_str}  {:<44}  rtt {rtt_ms:>6.1} ms",
-                        p.remote_addr().to_string(),
-                    )
-                })
-                .collect();
-            view.set_paths(lines);
+            view.set_paths(format_path_lines(&snaps));
         }
     })
 }

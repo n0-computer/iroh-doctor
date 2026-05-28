@@ -7,10 +7,12 @@ use std::{
 };
 
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
+use iroh_doctor_core::monitor::{derive_state, snapshot_paths};
 use iroh_doctor_core::probe::ProbeClient;
 use n0_future::StreamExt;
+use tokio_util::task::AbortOnDropHandle;
 
-use crate::commands::monitor_view::{MonitorView, StateKind, HISTORY_LEN};
+use crate::commands::monitor_view::{format_path_lines, MonitorView, HISTORY_LEN};
 use crate::doctor::{log_connection_changes, passive_side, Gui};
 
 /// Connects to a [`EndpointId`].
@@ -116,34 +118,12 @@ fn spawn_paths_watcher(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut paths = connection.paths_stream();
-        while let Some(path_list) = paths.next().await {
-            let (label, kind) = match path_list.iter().find(|p| p.is_selected()) {
-                Some(p) if p.remote_addr().is_ip() => ("direct", StateKind::Direct),
-                Some(p) if p.remote_addr().is_relay() => ("relay", StateKind::Relay),
-                Some(_) => ("custom", StateKind::Custom),
-                None => ("no path", StateKind::Unknown),
-            };
-            view.set_state(label, kind);
-
-            let lines: Vec<String> = path_list
-                .iter()
-                .map(|p| {
-                    let sel = if p.is_selected() { '*' } else { ' ' };
-                    let kind_str = if p.remote_addr().is_ip() {
-                        "direct"
-                    } else if p.remote_addr().is_relay() {
-                        "relay "
-                    } else {
-                        "custom"
-                    };
-                    let rtt_ms = p.rtt().as_secs_f64() * 1000.0;
-                    format!(
-                        "{sel} {kind_str}  {:<44}  rtt {rtt_ms:>6.1} ms",
-                        p.remote_addr().to_string(),
-                    )
-                })
-                .collect();
-            view.set_paths(lines);
+        // Re-read the current paths on every change notification and refresh
+        // the state and path-table rows from the shared core snapshot.
+        while paths.next().await.is_some() {
+            let snaps = snapshot_paths(&connection);
+            view.set_state(derive_state(&snaps));
+            view.set_paths(format_path_lines(&snaps));
         }
     })
 }
@@ -159,18 +139,21 @@ async fn monitor(
 ) -> anyhow::Result<()> {
     let view = MonitorView::new(&gui.mp, MonitorView::monitoring_header(endpoint_id));
     let started = Instant::now();
-    let _watcher = spawn_paths_watcher(connection.clone(), view.clone());
+    // Both background tasks are owned here via AbortOnDropHandle: when the
+    // monitor returns they are aborted rather than left running on the
+    // still-cloned connection.
+    let _watcher = AbortOnDropHandle::new(spawn_paths_watcher(connection.clone(), view.clone()));
     // Time-to-first-direct-byte is computed by core so both the cli and the
     // app report the same number for the same physical holepunch.
-    {
+    let _ttfdb = {
         let conn = connection.clone();
         let view = view.clone();
-        tokio::spawn(async move {
+        AbortOnDropHandle::new(tokio::spawn(async move {
             if let Some(elapsed) = iroh_doctor_core::monitor::ttfdb_watch(&conn, started).await {
                 view.set_ttfdb(elapsed);
             }
-        });
-    }
+        }))
+    };
 
     let mut client =
         match tokio::time::timeout(Duration::from_secs(10), ProbeClient::connect(connection)).await
