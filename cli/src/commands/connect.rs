@@ -6,12 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use console::style;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-use iroh_doctor_core::probe::{throughput_mbps, ProbeClient};
+use iroh_doctor_core::probe::ProbeClient;
 use n0_future::StreamExt;
 
+use crate::commands::monitor_view::{MonitorView, StateKind, HISTORY_LEN};
 use crate::doctor::{log_connection_changes, passive_side, Gui};
 
 /// Connects to a [`EndpointId`].
@@ -108,193 +107,6 @@ async fn run(
     Ok(())
 }
 
-/// Number of recent RTT samples kept for the sparkline and running stats.
-const HISTORY_LEN: usize = 60;
-
-#[derive(Copy, Clone)]
-enum StateKind {
-    Direct,
-    Relay,
-    Custom,
-    Unknown,
-}
-
-/// A small dashboard of in-place progress lines for the live monitor. Each
-/// line is an `indicatif` progress bar whose message we rewrite as new data
-/// arrives, so nothing scrolls past.
-#[derive(Clone)]
-struct MonitorView {
-    state_pb: ProgressBar,
-    paths_pb: ProgressBar,
-    latency_pb: ProgressBar,
-    spark_pb: ProgressBar,
-    throughput_pb: ProgressBar,
-    ttfdb_pb: ProgressBar,
-}
-
-impl MonitorView {
-    fn new(mp: &MultiProgress, peer: EndpointId) -> Self {
-        let template = ProgressStyle::default_bar().template("{msg}").unwrap();
-        let make = || {
-            let pb = mp.add(ProgressBar::hidden());
-            pb.set_style(template.clone());
-            pb.enable_steady_tick(Duration::from_millis(250));
-            pb.set_message("");
-            pb
-        };
-        let header = make();
-        let state_pb = make();
-        let paths_pb = make();
-        let ttfdb_pb = make();
-        let latency_pb = make();
-        let spark_pb = make();
-        let throughput_pb = make();
-
-        let peer_short: String = format!("{peer:#}").chars().take(16).collect();
-        header.set_message(format!(
-            "{} {}",
-            style("monitoring").bold().cyan(),
-            style(peer_short).dim()
-        ));
-        state_pb.set_message(format!(
-            "{}        {}",
-            style("state:").dim(),
-            style("connecting").yellow()
-        ));
-        paths_pb.set_message(format!("{}        -", style("paths:").dim()));
-        ttfdb_pb.set_message(format!("{}        -", style("ttfdb:").dim()));
-        latency_pb.set_message(format!("{}      -", style("latency:").dim()));
-        spark_pb.set_message(format!("{}        -", style("graph:").dim()));
-        throughput_pb.set_message(format!("{}   -", style("throughput:").dim()));
-
-        Self {
-            state_pb,
-            paths_pb,
-            latency_pb,
-            spark_pb,
-            throughput_pb,
-            ttfdb_pb,
-        }
-    }
-
-    fn set_state(&self, label: &str, kind: StateKind) {
-        let painted = match kind {
-            StateKind::Direct => style(label).bold().green(),
-            StateKind::Relay => style(label).bold().yellow(),
-            StateKind::Custom => style(label).bold().magenta(),
-            StateKind::Unknown => style(label).dim(),
-        };
-        self.state_pb
-            .set_message(format!("{}        {painted}", style("state:").dim()));
-    }
-
-    fn set_paths(&self, lines: Vec<String>) {
-        let body = if lines.is_empty() {
-            style("(no paths)").dim().to_string()
-        } else {
-            lines.join("\n  ")
-        };
-        self.paths_pb
-            .set_message(format!("{}\n  {body}", style("paths:").dim()));
-    }
-
-    fn set_ttfdb(&self, elapsed: Duration) {
-        let ms = elapsed.as_secs_f64() * 1000.0;
-        self.ttfdb_pb.set_message(format!(
-            "{}        {}",
-            style("ttfdb:").dim(),
-            style(format!("{ms:.0} ms")).bold()
-        ));
-    }
-
-    fn set_latency(&self, latest: Duration, history: &VecDeque<Duration>) {
-        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        let latest_ms = ms(latest);
-        let latest_str = format!("{latest_ms:>6.1} ms");
-        let latest_painted = if latest_ms < 50.0 {
-            style(latest_str).bold().green()
-        } else if latest_ms < 150.0 {
-            style(latest_str).bold().yellow()
-        } else {
-            style(latest_str).bold().red()
-        };
-        let (min, avg, max, count) = stats(history);
-        self.latency_pb.set_message(format!(
-            "{}      {latest_painted}  {}",
-            style("latency:").dim(),
-            style(format!(
-                "(min {:.1} / avg {:.1} / max {:.1}, n={count})",
-                ms(min),
-                ms(avg),
-                ms(max),
-            ))
-            .dim(),
-        ));
-        self.spark_pb.set_message(format!(
-            "{}        {}",
-            style("graph:").dim(),
-            style(sparkline(history)).cyan()
-        ));
-    }
-
-    fn set_throughput(&self, bytes: u64, elapsed: Duration) {
-        let mbps_str = throughput_mbps(bytes, elapsed)
-            .map(|m| format!("{m:>6.1} Mbps"))
-            .unwrap_or_else(|| "       -    ".to_string());
-        let mib = bytes as f64 / (1024.0 * 1024.0);
-        let ms = elapsed.as_secs_f64() * 1000.0;
-        self.throughput_pb.set_message(format!(
-            "{}   {} {}",
-            style("throughput:").dim(),
-            style(mbps_str).bold(),
-            style(format!("({mib:.1} MiB in {ms:.0} ms)")).dim(),
-        ));
-    }
-
-    fn set_probe_ended(&self, kind: &str, cause: impl std::fmt::Display) {
-        self.latency_pb.set_message(format!(
-            "{}      {}",
-            style("latency:").dim(),
-            style(format!("{kind} ended: {cause}")).red()
-        ));
-    }
-}
-
-fn stats(history: &VecDeque<Duration>) -> (Duration, Duration, Duration, u64) {
-    if history.is_empty() {
-        return (Duration::ZERO, Duration::ZERO, Duration::ZERO, 0);
-    }
-    let min = history.iter().min().copied().unwrap_or(Duration::ZERO);
-    let max = history.iter().max().copied().unwrap_or(Duration::ZERO);
-    let total: Duration = history.iter().copied().sum();
-    let count = history.len() as u64;
-    let avg = total / (count as u32);
-    (min, avg, max, count)
-}
-
-fn sparkline(samples: &VecDeque<Duration>) -> String {
-    const CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    if samples.is_empty() {
-        return String::new();
-    }
-    let min = samples.iter().min().copied().unwrap();
-    let max = samples.iter().max().copied().unwrap();
-    let range = max.saturating_sub(min);
-    samples
-        .iter()
-        .map(|d| {
-            if range.is_zero() {
-                CHARS[0]
-            } else {
-                let span = (*d - min).as_nanos() as f64;
-                let total = range.as_nanos() as f64;
-                let idx = ((span / total) * (CHARS.len() as f64 - 1.0)).round() as usize;
-                CHARS[idx.min(CHARS.len() - 1)]
-            }
-        })
-        .collect()
-}
-
 /// Watches the connection's path stream and updates the dashboard's
 /// state and paths lines as paths come and go. TTFDB is handled by a
 /// separate spawn that calls [`iroh_doctor_core::monitor::ttfdb_watch`].
@@ -345,7 +157,7 @@ async fn monitor(
     endpoint_id: EndpointId,
     connection: &iroh::endpoint::Connection,
 ) -> anyhow::Result<()> {
-    let view = MonitorView::new(&gui.mp, endpoint_id);
+    let view = MonitorView::new(&gui.mp, MonitorView::monitoring_header(endpoint_id));
     let started = Instant::now();
     let _watcher = spawn_paths_watcher(connection.clone(), view.clone());
     // Time-to-first-direct-byte is computed by core so both the cli and the
