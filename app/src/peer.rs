@@ -1230,7 +1230,7 @@ async fn bind_endpoint(secret_key: SecretKey) -> Result<Endpoint> {
     // `PkarrResolver` fetches the same signed record over HTTPS from the n0
     // DNS server, bypassing the system resolver. iroh races all address
     // lookup services, so this is a fallback when DNS can't resolve a peer.
-    builder = builder.address_lookup(iroh::address_lookup::PkarrResolver::n0_dns());
+    // builder = builder.address_lookup(iroh::address_lookup::PkarrResolver::n0_dns());
     builder = builder.secret_key(secret_key);
     builder = builder.alpns(vec![
         wire::ALPN.to_vec(),
@@ -1405,11 +1405,47 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                     continue;
                 }
             };
+            // Surface the probe connection through the same conn_slot the
+            // paths sampler reads, so the diagnostics view shows the
+            // connection state, paths, and live RTT for an incoming
+            // `iroh-doctor connect` monitor. If a pong session already
+            // owns the slot we respond silently in the background.
+            let conn_slot = ctx.conn_slot.clone();
+            let on_state = ctx.on_state.clone();
             tokio::spawn(async move {
+                let peer_id = conn.remote_id().to_string();
+                let peer_short_id: String = peer_id.chars().take(10).collect();
+                let claimed = {
+                    let mut slot = conn_slot.lock().await;
+                    if slot.is_none() {
+                        *slot = Some(conn.clone());
+                        on_state(ConnectionState::Connected {
+                            peer_id: peer_id.clone(),
+                            peer_short_id: peer_short_id.clone(),
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                };
+
                 if let Err(e) = iroh_doctor_core::probe::handle_connection(conn).await {
                     warn!(err = %e, "peer-probe accept failed");
                 }
                 drop(permit);
+
+                if claimed {
+                    let mut slot = conn_slot.lock().await;
+                    // Only clear the slot if it still holds our connection;
+                    // a pong session could have replaced it while we ran.
+                    if slot
+                        .as_ref()
+                        .is_some_and(|c| c.remote_id().to_string() == peer_id)
+                    {
+                        *slot = None;
+                    }
+                    on_state(ConnectionState::PeerDisconnected { peer_short_id });
+                }
             });
         } else if alpn_bytes == crate::doctor::ALPN {
             // Passive side of `iroh-doctor connect`. Bounded internally by
