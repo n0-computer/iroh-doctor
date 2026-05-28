@@ -66,6 +66,16 @@ pub enum Frame {
     UploadDone,
 }
 
+/// Observable events emitted by the passive side as it serves a probe
+/// stream. Use [`handle_connection_with`] to receive these from the
+/// responder; the app side surfaces them as throughput readouts.
+#[derive(Debug, Clone)]
+pub enum ProbeEvent {
+    /// The responder drained an upload of `bytes` bytes in `elapsed` and
+    /// acknowledged it.
+    UploadCompleted { bytes: u64, elapsed: Duration },
+}
+
 /// Megabits per second for `bytes` transferred in `elapsed`, or `None` when
 /// `elapsed` is zero.
 pub fn throughput_mbps(bytes: u64, elapsed: Duration) -> Option<f64> {
@@ -83,10 +93,28 @@ pub async fn handle_connection(conn: endpoint::Connection) -> Result<()> {
         .await
         .context("accept probe bidi stream: timeout")?
         .context("accept probe bidi stream")?;
-    serve_stream(send, recv).await
+    serve_stream(send, recv, None).await
 }
 
-async fn serve_stream<S, R>(mut send: S, mut recv: R) -> Result<()>
+/// Like [`handle_connection`] but emits [`ProbeEvent`]s on the supplied
+/// channel as they happen. Used by the app to surface throughput from an
+/// incoming `iroh-doctor connect` monitor.
+pub async fn handle_connection_with(
+    conn: endpoint::Connection,
+    events: tokio::sync::mpsc::Sender<ProbeEvent>,
+) -> Result<()> {
+    let (send, recv) = tokio::time::timeout(Duration::from_secs(5), conn.accept_bi())
+        .await
+        .context("accept probe bidi stream: timeout")?
+        .context("accept probe bidi stream")?;
+    serve_stream(send, recv, Some(events)).await
+}
+
+async fn serve_stream<S, R>(
+    mut send: S,
+    mut recv: R,
+    events: Option<tokio::sync::mpsc::Sender<ProbeEvent>>,
+) -> Result<()>
 where
     S: AsyncWrite + Unpin,
     R: AsyncRead + Unpin,
@@ -106,6 +134,7 @@ where
                 }
                 let mut remaining = bytes;
                 let mut buf = vec![0u8; UPLOAD_CHUNK];
+                let drain_started = Instant::now();
                 while remaining > 0 {
                     let take = remaining.min(buf.len() as u64) as usize;
                     // Bound each read: a client that announces an upload and
@@ -117,7 +146,12 @@ where
                         .context("upload drain")?;
                     remaining -= take as u64;
                 }
+                let elapsed = drain_started.elapsed();
                 write_frame(&mut send, &Frame::UploadDone).await?;
+                if let Some(events) = events.as_ref() {
+                    // Best-effort; drop the event if the consumer is gone.
+                    let _ = events.try_send(ProbeEvent::UploadCompleted { bytes, elapsed });
+                }
             }
             Frame::Pong(_) | Frame::UploadDone => {
                 warn!(?frame, "probe: unexpected client frame");
@@ -266,7 +300,7 @@ mod tests {
     async fn ping_and_upload_roundtrip_over_duplex() {
         let (mut client_send, server_recv) = duplex(64 * 1024);
         let (server_send, mut client_recv) = duplex(64 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv));
+        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
 
         let rtt = ping_once(&mut client_send, &mut client_recv, 7)
             .await
@@ -287,7 +321,7 @@ mod tests {
     async fn responder_refuses_oversized_upload() {
         let (mut client_send, server_recv) = duplex(64 * 1024);
         let (server_send, mut client_recv) = duplex(64 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv));
+        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
 
         // Announce more than the responder will accept: it closes without
         // acking, so the client's wait for UploadDone fails.
@@ -312,7 +346,7 @@ mod tests {
     async fn responder_serves_continuously() {
         let (mut client_send, server_recv) = duplex(128 * 1024);
         let (server_send, mut client_recv) = duplex(128 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv));
+        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
 
         // Well past the old per-stream ping cap (which was 10).
         for nonce in 0..15u32 {

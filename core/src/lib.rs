@@ -13,5 +13,6 @@
 //!   throughput against a peer.
 
 pub mod doctor;
+pub mod monitor;
 pub mod nat;
 pub mod probe;
