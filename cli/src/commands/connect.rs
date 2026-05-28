@@ -27,6 +27,28 @@ pub async fn connect(
     endpoint: Endpoint,
     test: bool,
 ) -> anyhow::Result<()> {
+    let res = run(
+        endpoint_id,
+        direct_addresses,
+        relay_url,
+        endpoint.clone(),
+        test,
+    )
+    .await;
+    // Close the endpoint gracefully on every exit path; otherwise iroh logs
+    // "Endpoint dropped without calling `Endpoint::close`. Aborting
+    // ungracefully." as the process tears down.
+    endpoint.close().await;
+    res
+}
+
+async fn run(
+    endpoint_id: EndpointId,
+    direct_addresses: Vec<SocketAddr>,
+    relay_url: Option<RelayUrl>,
+    endpoint: Endpoint,
+    test: bool,
+) -> anyhow::Result<()> {
     tracing::info!("dialing {:?}", endpoint_id);
     let mut endpoint_addr = EndpointAddr::new(endpoint_id);
     if let Some(relay_url) = relay_url {
@@ -36,37 +58,51 @@ pub async fn connect(
         endpoint_addr = endpoint_addr.with_ip_addr(ip_addr);
     }
 
-    let alpn = if test {
-        iroh_doctor_core::doctor::ALPN
+    let (alpn, alpn_label) = if test {
+        (iroh_doctor_core::doctor::ALPN, "doctor test")
     } else {
-        iroh_doctor_core::probe::ALPN
+        (iroh_doctor_core::probe::ALPN, "monitor")
     };
 
-    let conn = endpoint.connect(endpoint_addr, alpn).await;
-    match conn {
-        Ok(connection) => {
-            let gui = Gui::new(endpoint, endpoint_id);
-            let close_reason = connection
-                .close_reason()
-                .map(|e| format!(" (reason: {e})"))
-                .unwrap_or_default();
+    eprintln!("dialing {endpoint_id} ({alpn_label})...");
+    let dial = tokio::time::timeout(
+        Duration::from_secs(30),
+        endpoint.connect(endpoint_addr, alpn),
+    )
+    .await;
+    let connection = match dial {
+        Ok(Ok(c)) => c,
+        Ok(Err(cause)) => {
+            eprintln!("unable to connect to {endpoint_id}: {cause:#}");
+            return Ok(());
+        }
+        Err(_) => {
+            eprintln!(
+                "timed out dialing {endpoint_id} after 30s.\n\
+                 Try passing --relay-url and/or --remote-endpoint so the peer is reachable."
+            );
+            return Ok(());
+        }
+    };
+    eprintln!("connected; starting {alpn_label}...");
 
-            if test {
-                log_connection_changes(gui.mp.clone(), endpoint_id, connection.clone());
-                if let Err(cause) = passive_side(gui, &connection).await {
-                    eprintln!("error handling connection: {cause}{close_reason}");
-                } else {
-                    eprintln!("Connection closed{close_reason}");
-                }
-            } else if let Err(cause) = monitor(&gui, endpoint_id, &connection).await {
-                eprintln!("error monitoring connection: {cause}{close_reason}");
-            } else {
-                eprintln!("Connection closed{close_reason}");
-            }
+    let gui = Gui::new(endpoint, endpoint_id);
+    let close_reason = connection
+        .close_reason()
+        .map(|e| format!(" (reason: {e})"))
+        .unwrap_or_default();
+
+    if test {
+        log_connection_changes(gui.mp.clone(), endpoint_id, connection.clone());
+        if let Err(cause) = passive_side(gui, &connection).await {
+            eprintln!("error handling connection: {cause:#}{close_reason}");
+        } else {
+            eprintln!("Connection closed{close_reason}");
         }
-        Err(cause) => {
-            eprintln!("unable to connect to {endpoint_id}: {cause}");
-        }
+    } else if let Err(cause) = monitor(&gui, endpoint_id, &connection).await {
+        eprintln!("error monitoring connection: {cause:#}{close_reason}");
+    } else {
+        eprintln!("Connection closed{close_reason}");
     }
 
     Ok(())
@@ -324,7 +360,19 @@ async fn monitor(
     let started = Instant::now();
     let _watcher = spawn_paths_watcher(connection.clone(), view.clone(), started);
 
-    let mut client = ProbeClient::connect(connection).await?;
+    let mut client =
+        match tokio::time::timeout(Duration::from_secs(10), ProbeClient::connect(connection)).await
+        {
+            Ok(Ok(c)) => c,
+            Ok(Err(cause)) => {
+                view.set_probe_ended("setup", cause);
+                return Ok(());
+            }
+            Err(_) => {
+                view.set_probe_ended("setup", "timed out opening probe stream after 10s");
+                return Ok(());
+            }
+        };
 
     let mut nonce: u32 = 0;
     let mut history: VecDeque<Duration> = VecDeque::with_capacity(HISTORY_LEN);
