@@ -357,15 +357,6 @@ pub struct PeerCallbacks {
     pub on_throughput: Box<dyn Fn(ThroughputSnapshot) + Send + Sync>,
 }
 
-/// Shared state tracking the "time to first direct byte" measurement.
-/// `dial_at` is set when the user clicks Connect; `published` flips to
-/// true once the sampler observes the first selected direct path, so
-/// the metric is reported exactly once per dial.
-struct TtfdbState {
-    dial_at: Option<std::time::Instant>,
-    published: bool,
-}
-
 /// How often `run_peer` samples the live connection's QUIC paths for the
 /// Diagnostics view. Short enough to feel live, long enough to keep overhead
 /// in the noise floor.
@@ -409,11 +400,6 @@ pub async fn run_peer(
     let on_paths: PathsCb = Arc::from(callbacks.on_paths);
     let on_ttfdb: TtfdbCb = Arc::from(callbacks.on_ttfdb);
     let on_throughput: ThroughputCb = Arc::from(callbacks.on_throughput);
-
-    let ttfdb: Arc<Mutex<TtfdbState>> = Arc::new(Mutex::new(TtfdbState {
-        dial_at: None,
-        published: false,
-    }));
 
     on_state(ConnectionState::Binding);
 
@@ -465,7 +451,7 @@ pub async fn run_peer(
             conn_slot: conn_slot.clone(),
             on_state: on_state.clone(),
             on_throughput: on_throughput.clone(),
-            ttfdb: ttfdb.clone(),
+            on_ttfdb: on_ttfdb.clone(),
             blobs: blobs.clone(),
             gossip: gossip.clone(),
             docs: docs.clone(),
@@ -487,22 +473,16 @@ pub async fn run_peer(
     let docs_active: Arc<Mutex<Option<iroh_docs::api::Doc>>> = Arc::new(Mutex::new(None));
     let docs_events_handle: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
-    // Paths sampler: every PATHS_SAMPLE_INTERVAL, snapshot the active pong
-    // connection's QUIC paths. We only notify the UI when the snapshot
-    // actually changed (RTT, selected path, or set of addresses) so an
-    // idle endpoint does not re-wake the Dioxus event pump twice a second.
-    //
-    // The sampler also detects the first time a selected direct path
-    // appears and reports the elapsed time since `Connect` was issued.
-    // QUIC migrates to a new path only after path validation succeeds,
-    // so this is a useful proxy for "first byte over a holepunched
-    // path" without reaching into iroh internals. Precise per-packet
-    // timing would need an iroh-side hook.
+    // Paths sampler: every PATHS_SAMPLE_INTERVAL, snapshot the active
+    // connection's QUIC paths for the Diagnostics view. We only notify the UI
+    // when the snapshot actually changed (RTT, selected path, or set of
+    // addresses) so an idle endpoint does not re-wake the Dioxus event pump
+    // twice a second. Time-to-first-direct-byte is handled separately by a
+    // per-connection `ttfdb_watch` task (see `run_monitor` and the probe
+    // accept arm).
     {
         let conn_slot = conn_slot.clone();
         let on_paths = on_paths.clone();
-        let ttfdb = ttfdb.clone();
-        let on_ttfdb = on_ttfdb.clone();
         long_lived.spawn(async move {
             let mut ticker = tokio::time::interval(PATHS_SAMPLE_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -516,17 +496,6 @@ pub async fn run_peer(
                 if snapshot != last {
                     on_paths(snapshot.clone());
                     last = snapshot.clone();
-                }
-                let direct_selected = snapshot
-                    .iter()
-                    .any(|p| p.selected && p.kind == PathKind::Ip);
-                if direct_selected {
-                    let mut state = ttfdb.lock().await;
-                    if let (Some(at), false) = (state.dial_at, state.published) {
-                        let elapsed = at.elapsed();
-                        state.published = true;
-                        on_ttfdb(Some(elapsed));
-                    }
                 }
             }
         });
@@ -549,14 +518,8 @@ pub async fn run_peer(
                         continue;
                     }
                 };
-                // Reset the TTFDB measurement for this fresh dial so the
-                // sampler reports the next selected direct path against this
-                // start time, and the UI clears any value from a prior run.
-                {
-                    let mut state = ttfdb.lock().await;
-                    state.dial_at = Some(std::time::Instant::now());
-                    state.published = false;
-                }
+                // Clear any TTFDB value from a prior run; the per-connection
+                // ttfdb_watch task in run_monitor publishes the new one.
                 on_ttfdb(None);
                 let addr = EndpointAddr::from_parts(parsed, std::iter::empty());
                 // Dialing plus hole punching can take seconds, so the monitor
@@ -567,12 +530,13 @@ pub async fn run_peer(
                 let conn_slot = conn_slot.clone();
                 let on_state = on_state.clone();
                 let on_throughput = on_throughput.clone();
+                let on_ttfdb = on_ttfdb.clone();
                 let mut slot = monitor.lock().await;
                 if let Some(prev) = slot.take() {
                     prev.abort();
                 }
                 *slot = Some(tokio::spawn(async move {
-                    run_monitor(endpoint, addr, conn_slot, on_state, on_throughput).await;
+                    run_monitor(endpoint, addr, conn_slot, on_state, on_throughput, on_ttfdb).await;
                 }));
             }
             PeerCommand::Disconnect => {
@@ -587,13 +551,7 @@ pub async fn run_peer(
                 if let Some(conn) = conn_slot.lock().await.take() {
                     conn.close(0u32.into(), b"disconnect");
                 }
-                // Reset the TTFDB baseline and clear the UI metric so a later
-                // reconnect starts clean.
-                {
-                    let mut state = ttfdb.lock().await;
-                    state.dial_at = None;
-                    state.published = false;
-                }
+                // Clear the UI metric so a later reconnect starts clean.
                 on_ttfdb(None);
                 on_state(ConnectionState::Ready);
             }
@@ -1310,10 +1268,10 @@ struct AcceptCtx {
     /// Diagnostics tab can show throughput against an `iroh-doctor connect`
     /// monitor.
     on_throughput: ThroughputCb,
-    /// Shared TTFDB state. The probe accept arm primes `dial_at` so the
-    /// existing paths sampler reports time-to-first-direct-byte for an
-    /// incoming peer-probe just like it does for an outgoing dial.
-    ttfdb: Arc<Mutex<TtfdbState>>,
+    /// Reports time-to-first-direct-byte for an incoming peer-probe, the same
+    /// metric an outgoing dial publishes. The accept arm runs a `ttfdb_watch`
+    /// task when it owns `conn_slot`.
+    on_ttfdb: TtfdbCb,
     blobs: BlobsProtocol,
     gossip: Gossip,
     docs: Docs,
@@ -1390,10 +1348,11 @@ async fn run_accept_loop(ctx: AcceptCtx) {
             let conn_slot = ctx.conn_slot.clone();
             let on_state = ctx.on_state.clone();
             let on_throughput = ctx.on_throughput.clone();
-            let ttfdb = ctx.ttfdb.clone();
+            let on_ttfdb = ctx.on_ttfdb.clone();
             tokio::spawn(async move {
                 let peer_id = conn.remote_id().to_string();
                 let peer_short_id: String = peer_id.chars().take(10).collect();
+                let started = std::time::Instant::now();
                 let claimed = {
                     let mut slot = conn_slot.lock().await;
                     if slot.is_none() {
@@ -1402,21 +1361,26 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                             peer_id: peer_id.clone(),
                             peer_short_id: peer_short_id.clone(),
                         });
-                        // Prime the TTFDB state so the existing paths
-                        // sampler reports time-to-first-direct-byte for
-                        // this incoming probe, just like an outgoing
-                        // dial does. We only do this when the probe
-                        // actually owns conn_slot; otherwise an outgoing
-                        // monitor is in charge and its dial-time baseline
-                        // must not be clobbered.
-                        let mut state = ttfdb.lock().await;
-                        state.dial_at = Some(std::time::Instant::now());
-                        state.published = false;
                         true
                     } else {
                         false
                     }
                 };
+
+                // When we own the slot, report time-to-first-direct-byte for
+                // this incoming probe just like an outgoing dial does. Owned
+                // via AbortOnDropHandle so it stops when this handler returns.
+                let _ttfdb_task = claimed.then(|| {
+                    let conn = conn.clone();
+                    let on_ttfdb = on_ttfdb.clone();
+                    AbortOnDropHandle::new(tokio::spawn(async move {
+                        if let Some(elapsed) =
+                            iroh_doctor_core::monitor::ttfdb_watch(&conn, started).await
+                        {
+                            on_ttfdb(Some(elapsed));
+                        }
+                    }))
+                });
 
                 // Bounded channel: the responder emits one event per
                 // upload, which clients pace by waiting for `UploadDone`,
@@ -1466,24 +1430,23 @@ async fn run_accept_loop(ctx: AcceptCtx) {
     }
 }
 
+/// Projects core's path snapshots onto the app's render-facing [`PathInfo`].
+///
+/// The path classification and RTT reading live in
+/// [`iroh_doctor_core::monitor::snapshot_paths`]; this only maps them to the
+/// UI type (RTT in milliseconds, the app's [`PathKind`] naming).
 fn snapshot_paths(conn: &endpoint::Connection) -> Vec<PathInfo> {
-    conn.paths()
-        .iter()
-        .map(|p| {
-            let addr = p.remote_addr();
-            let kind = if addr.is_relay() {
-                PathKind::Relay
-            } else if addr.is_ip() {
-                PathKind::Ip
-            } else {
-                PathKind::Custom
-            };
-            PathInfo {
-                addr: addr.to_string(),
-                kind,
-                selected: p.is_selected(),
-                rtt_ms: p.rtt().as_secs_f64() * 1000.0,
-            }
+    iroh_doctor_core::monitor::snapshot_paths(conn)
+        .into_iter()
+        .map(|p| PathInfo {
+            addr: p.addr,
+            kind: match p.kind {
+                iroh_doctor_core::monitor::PathKind::Direct => PathKind::Ip,
+                iroh_doctor_core::monitor::PathKind::Relay => PathKind::Relay,
+                iroh_doctor_core::monitor::PathKind::Custom => PathKind::Custom,
+            },
+            selected: p.selected,
+            rtt_ms: p.rtt.as_secs_f64() * 1000.0,
         })
         .collect()
 }
@@ -1492,8 +1455,9 @@ fn snapshot_paths(conn: &endpoint::Connection) -> Vec<PathInfo> {
 /// against the peer until the connection ends.
 ///
 /// On a successful dial the connection is published into `conn_slot` so the
-/// long-lived paths sampler drives the latency graph, path table, and
-/// time-to-first-direct-byte the same way it does for an incoming probe.
+/// long-lived paths sampler drives the latency graph and path table. A
+/// per-connection [`iroh_doctor_core::monitor::ttfdb_watch`] task reports
+/// time-to-first-direct-byte, the same metric an incoming probe publishes.
 /// The shared [`iroh_doctor_core::probe::run_client`] loop then generates the
 /// ping and upload traffic the peer's responder measures, and its throughput
 /// samples are surfaced via `on_throughput`. Latency for the graph comes from
@@ -1505,7 +1469,9 @@ async fn run_monitor(
     conn_slot: Arc<Mutex<Option<endpoint::Connection>>>,
     on_state: StateCb,
     on_throughput: ThroughputCb,
+    on_ttfdb: TtfdbCb,
 ) {
+    let started = std::time::Instant::now();
     let conn = match endpoint.connect(addr, iroh_doctor_core::probe::ALPN).await {
         Ok(conn) => conn,
         Err(e) => {
@@ -1525,6 +1491,18 @@ async fn run_monitor(
         peer_id: peer_id.clone(),
         peer_short_id: peer_short_id.clone(),
     });
+
+    // Report time-to-first-direct-byte against the dial start. Owned via
+    // AbortOnDropHandle so it stops if this monitor is aborted by a new dial.
+    let _ttfdb_task = AbortOnDropHandle::new(tokio::spawn({
+        let conn = conn.clone();
+        let on_ttfdb = on_ttfdb.clone();
+        async move {
+            if let Some(elapsed) = iroh_doctor_core::monitor::ttfdb_watch(&conn, started).await {
+                on_ttfdb(Some(elapsed));
+            }
+        }
+    }));
 
     // Drive the shared probe client loop on its own task so aborting this
     // monitor (a fresh dial) stops the loop too. We consume only throughput

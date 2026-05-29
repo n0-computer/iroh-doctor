@@ -5,22 +5,20 @@
 //! (UPnP/PCP/NAT-PMP) the local gateway offers, and one round of per-relay
 //! connect plus ping latency. The default output is a set of tables; `--json`
 //! emits the same data as a single structure for piping into another tool.
+//!
+//! The relay and port-map probes and the NAT classifier live in
+//! `iroh-doctor-core` so the app reports the same numbers; this module only
+//! orchestrates them and renders the tables.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Context;
-use iroh::{
-    dns::DnsResolver, endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, SecretKey,
-    Watcher,
-};
-use iroh_relay::client::ClientBuilder;
-use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
-use iroh_relay::tls::{default_provider, CaRootsConfig};
-use n0_future::{SinkExt, StreamExt};
-use portmapper::{Client as PortMapClient, Config as PortMapConfig, Protocol as PortMapProtocol};
+use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher};
 use serde::Serialize;
 
 use iroh_doctor_core::nat::{classify_base_report, NatType};
+use iroh_doctor_core::portmap::PortMapResult;
+use iroh_doctor_core::relay_probe::RelayProbeResult;
 
 use crate::config::NodeConfig;
 
@@ -31,28 +29,8 @@ use crate::config::NodeConfig;
 pub struct Report {
     pub net_report: Option<NetReport>,
     pub nat: NatType,
-    pub port_map: Option<PortMapBlock>,
-    pub relays: Vec<RelayBlock>,
-}
-
-/// Which port-mapping protocols the local gateway answered for. `None` on a
-/// field means the protocol was not probed; the whole block carries an
-/// `error` when the probe itself failed.
-#[derive(Debug, Serialize)]
-pub struct PortMapBlock {
-    pub upnp: Option<bool>,
-    pub pcp: Option<bool>,
-    pub nat_pmp: Option<bool>,
-    pub error: Option<String>,
-}
-
-/// One relay's connect and ping timings, or the `error` that prevented them.
-#[derive(Debug, Serialize)]
-pub struct RelayBlock {
-    pub url: String,
-    pub connect_ms: Option<f64>,
-    pub ping_ms: Option<f64>,
-    pub error: Option<String>,
+    pub port_map: Option<PortMapResult>,
+    pub relays: Vec<RelayProbeResult>,
 }
 
 /// Wall-clock ceiling for the `net_report().initialized()` wait. A network
@@ -99,13 +77,13 @@ async fn report_inner(
     let port_map = if no_port_map {
         None
     } else {
-        Some(port_map_probe().await)
+        Some(iroh_doctor_core::portmap::probe().await)
     };
 
     let relays = if no_relays {
         Vec::new()
     } else {
-        probe_relays(relay_map).await
+        iroh_doctor_core::relay_probe::probe_relays(relay_map).await
     };
 
     let report = Report {
@@ -123,161 +101,6 @@ async fn report_inner(
     }
 
     Ok(())
-}
-
-async fn port_map_probe() -> PortMapBlock {
-    let cfg = PortMapConfig {
-        enable_upnp: true,
-        enable_pcp: true,
-        enable_nat_pmp: true,
-        protocol: PortMapProtocol::Udp,
-    };
-    // The client is kept alive across the .await: dropping it cancels the
-    // in-flight probe. It is dropped at the end of the function, after the
-    // probe future has resolved.
-    let client = PortMapClient::new(cfg);
-    let probe_rx = client.probe();
-    match tokio::time::timeout(Duration::from_secs(5), probe_rx).await {
-        Ok(Ok(Ok(p))) => PortMapBlock {
-            upnp: Some(p.upnp),
-            pcp: Some(p.pcp),
-            nat_pmp: Some(p.nat_pmp),
-            error: None,
-        },
-        Ok(Ok(Err(e))) => PortMapBlock {
-            upnp: None,
-            pcp: None,
-            nat_pmp: None,
-            error: Some(e.to_string()),
-        },
-        Ok(Err(_)) => PortMapBlock {
-            upnp: None,
-            pcp: None,
-            nat_pmp: None,
-            error: Some("probe service dropped".into()),
-        },
-        Err(_) => PortMapBlock {
-            upnp: None,
-            pcp: None,
-            nat_pmp: None,
-            error: Some("probe timed out".into()),
-        },
-    }
-}
-
-/// Comparator that orders rows ascending by `ping_ms` with failures (no ping)
-/// at the bottom. Extracted as a free function so the test and the production
-/// sort cannot drift.
-fn cmp_by_ping(a: &RelayBlock, b: &RelayBlock) -> std::cmp::Ordering {
-    match (a.ping_ms, b.ping_ms) {
-        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    }
-}
-
-async fn probe_relays(relay_map: &RelayMap) -> Vec<RelayBlock> {
-    let dns = DnsResolver::new();
-    let key = SecretKey::generate();
-    // iroh-relay 1.0.0-rc.1 dropped the implicit TLS config; every
-    // `ClientBuilder` needs an explicit one or `connect` errors with
-    // `MissingCryptoProvider`. Build one and share it across the sweep.
-    let tls = match CaRootsConfig::embedded().client_config(default_provider()) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return relay_map
-                .relays::<Vec<_>>()
-                .into_iter()
-                .map(|c| RelayBlock {
-                    url: c.url.to_string(),
-                    connect_ms: None,
-                    ping_ms: None,
-                    error: Some(format!("tls: {e}")),
-                })
-                .collect();
-        }
-    };
-    let mut rows: Vec<RelayBlock> = Vec::new();
-    for config in relay_map.relays::<Vec<_>>() {
-        rows.push(probe_one_relay(&config.url, &key, &dns, &tls).await);
-    }
-    rows.sort_by(cmp_by_ping);
-    rows
-}
-
-async fn probe_one_relay(
-    url: &iroh::RelayUrl,
-    key: &SecretKey,
-    dns: &DnsResolver,
-    tls: &rustls::ClientConfig,
-) -> RelayBlock {
-    let builder =
-        ClientBuilder::new(url.clone(), key.clone(), dns.clone()).tls_client_config(tls.clone());
-    let started = Instant::now();
-    let connect = tokio::time::timeout(Duration::from_secs(3), builder.connect()).await;
-    let client = match connect {
-        Ok(Ok(c)) => c,
-        Ok(Err(e)) => {
-            return RelayBlock {
-                url: url.to_string(),
-                connect_ms: None,
-                ping_ms: None,
-                error: Some(format!("connect: {e}")),
-            };
-        }
-        Err(_) => {
-            return RelayBlock {
-                url: url.to_string(),
-                connect_ms: None,
-                ping_ms: None,
-                error: Some("connect timed out".into()),
-            };
-        }
-    };
-    let connect_elapsed = started.elapsed();
-    let (mut stream, mut sink) = client.split();
-    let nonce: [u8; 8] = rand::random();
-    let started = Instant::now();
-    if let Err(e) = sink.send(ClientToRelayMsg::Ping(nonce)).await {
-        return RelayBlock {
-            url: url.to_string(),
-            connect_ms: Some(connect_elapsed.as_secs_f64() * 1000.0),
-            ping_ms: None,
-            error: Some(format!("send ping: {e}")),
-        };
-    }
-    let ping = tokio::time::timeout(Duration::from_secs(3), async move {
-        while let Some(res) = stream.next().await {
-            match res {
-                Ok(RelayToClientMsg::Pong(d)) if d == nonce => return Ok(started.elapsed()),
-                Ok(_) => continue,
-                Err(e) => return Err(format!("recv: {e}")),
-            }
-        }
-        Err("stream ended before pong".to_string())
-    })
-    .await;
-    match ping {
-        Ok(Ok(rtt)) => RelayBlock {
-            url: url.to_string(),
-            connect_ms: Some(connect_elapsed.as_secs_f64() * 1000.0),
-            ping_ms: Some(rtt.as_secs_f64() * 1000.0),
-            error: None,
-        },
-        Ok(Err(msg)) => RelayBlock {
-            url: url.to_string(),
-            connect_ms: Some(connect_elapsed.as_secs_f64() * 1000.0),
-            ping_ms: None,
-            error: Some(msg),
-        },
-        Err(_) => RelayBlock {
-            url: url.to_string(),
-            connect_ms: Some(connect_elapsed.as_secs_f64() * 1000.0),
-            ping_ms: None,
-            error: Some("ping timed out".into()),
-        },
-    }
 }
 
 /// Prints the report as a stack of markdown tables: a network summary, the
@@ -444,34 +267,6 @@ mod tests {
     fn opt_addr_renders_value_or_dash() {
         assert_eq!(opt_addr(Some("1.2.3.4:5")), "1.2.3.4:5");
         assert_eq!(opt_addr(None::<&str>), "-");
-    }
-
-    #[test]
-    fn relay_sort_orders_ping_then_failure() {
-        let mut rows = [
-            RelayBlock {
-                url: "https://c/".into(),
-                connect_ms: None,
-                ping_ms: None,
-                error: Some("fail".into()),
-            },
-            RelayBlock {
-                url: "https://b/".into(),
-                connect_ms: None,
-                ping_ms: Some(120.0),
-                error: None,
-            },
-            RelayBlock {
-                url: "https://a/".into(),
-                connect_ms: None,
-                ping_ms: Some(40.0),
-                error: None,
-            },
-        ];
-        rows.sort_by(cmp_by_ping);
-        assert_eq!(rows[0].url, "https://a/");
-        assert_eq!(rows[1].url, "https://b/");
-        assert!(rows[2].error.is_some());
     }
 
     #[test]

@@ -107,7 +107,6 @@ src/
   peer.rs                 - iroh endpoint, accept loop, command pump, monitor
   identity.rs             - on-disk secret key + api secret override
   endpoints.rs            - saved-endpoints store (the Endpoints tab)
-  nat.rs                  - NAT classifier (Easy/Medium/Hard/Unknown)
   portmap_probe.rs        - UPnP/PCP/NAT-PMP probe wrapper
   relay_probe.rs          - per-relay connect+ping probe
   diagnostics_export.rs   - diagnostics zip bundle

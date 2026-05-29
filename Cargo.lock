@@ -4222,8 +4222,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "iroh",
+ "iroh-relay",
  "n0-future",
+ "portmapper",
  "postcard",
+ "rand 0.10.1",
+ "rustls",
  "serde",
  "tokio",
  "tracing",

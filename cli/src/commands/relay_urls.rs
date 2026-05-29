@@ -1,14 +1,10 @@
 //! Relay URLs command implementation
 
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, time::Duration};
 
 use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
-use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
+use iroh_doctor_core::relay_probe::ping_relay;
 use iroh_relay::tls::{default_provider, CaRootsConfig};
-use n0_future::{SinkExt, StreamExt};
 
 use crate::config::NodeConfig;
 
@@ -66,13 +62,13 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
                 }
                 Ok(Ok(client)) => {
                     node_details.connect = Some(start.elapsed());
-                    match ping(client).await {
+                    match ping_relay(client).await {
                         Ok(latency) => {
                             node_details.latency = Some(latency);
                         }
                         Err(e) => {
-                            tracing::warn!("ping error: {:?}", e);
-                            node_details.error = Some(e.to_string());
+                            tracing::warn!("ping error: {e}");
+                            node_details.error = Some(e);
                         }
                     }
                 }
@@ -105,31 +101,6 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
     }
 
     Ok(())
-}
-
-async fn ping(client: iroh_relay::client::Client) -> anyhow::Result<Duration> {
-    let (mut client_stream, mut client_sink) = client.split();
-    let data: [u8; 8] = rand::random();
-    let start = Instant::now();
-    client_sink.send(ClientToRelayMsg::Ping(data)).await?;
-    match tokio::time::timeout(Duration::from_secs(2), async move {
-        while let Some(res) = client_stream.next().await {
-            let res = res?;
-            if let RelayToClientMsg::Pong(d) = res {
-                if d == data {
-                    return Ok(start.elapsed());
-                }
-            }
-        }
-        anyhow::bail!("no pong received");
-    })
-    .await
-    {
-        Err(_) => {
-            anyhow::bail!("ping timeout");
-        }
-        Ok(res) => res,
-    }
 }
 
 /// Information about a node and its connection.
