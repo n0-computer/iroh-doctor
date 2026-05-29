@@ -95,7 +95,9 @@ src/
   diagnostics_export.rs   - diagnostics zip bundle
   components/
     mod.rs                - shared helpers (short_id)
-    diagnostics.rs        - Connect view (state, RTT, paths, events) + Diagnostics view (net report)
+    connection.rs         - Connect view (state, RTT, paths, events)
+    diagnostics.rs        - Diagnostics view (net report, relays, port-map, services)
+    diag_state.rs         - DiagState + the trigger_* probe dispatchers
     gossip.rs             - Gossip tab
     endpoints.rs          - Endpoints tab
     error_dialog.rs       - global error modal

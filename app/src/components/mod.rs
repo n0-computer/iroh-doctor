@@ -1,12 +1,16 @@
+mod connection;
+mod diag_state;
 mod diagnostics;
 mod endpoints;
 mod error_dialog;
 mod gossip;
 
-pub use diagnostics::{
+pub use connection::{ConnectView, EventEntry};
+pub use diag_state::{
     trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
-    trigger_probe_relays, ConnectView, DiagState, DiagnosticsView, EventEntry,
+    trigger_probe_relays, DiagState,
 };
+pub use diagnostics::DiagnosticsView;
 pub use endpoints::EndpointsView;
 pub use error_dialog::{AppError, ErrorDialog};
 pub use gossip::GossipView;
