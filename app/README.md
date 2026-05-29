@@ -87,7 +87,11 @@ with the same fallback filter when `RUST_LOG` is unset.)
 ```
 src/
   main.rs                 - Dioxus app and tab routing
-  peer.rs                 - iroh endpoint, accept loop, command pump, monitor
+  peer/
+    mod.rs                - iroh endpoint, command pump, services telemetry
+    accept.rs             - accept loop (per-ALPN dispatch)
+    monitor.rs            - active connection monitor + path snapshots
+    gossip.rs             - gossip join + topic-id parsing
   identity.rs             - on-disk secret key + api secret override
   endpoints.rs            - saved-endpoints store (the Endpoints tab)
   portmap_probe.rs        - UPnP/PCP/NAT-PMP probe wrapper
