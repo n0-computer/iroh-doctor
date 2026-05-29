@@ -4,6 +4,7 @@
 //! hand-synchronized copies of the same logic. This crate holds the pieces
 //! that genuinely belong to both:
 //!
+//! - [`identity`]: read-or-create persistence for a raw 32-byte secret key.
 //! - [`nat`]: the NAT classification taxonomy and the function that maps an
 //!   `iroh::NetReport` onto it.
 //! - [`monitor`]: helpers for the live connection monitor (path snapshots,
@@ -14,6 +15,7 @@
 //! - [`relay_probe`]: per-relay TLS connect plus relay-protocol ping latency.
 //! - [`portmap`]: a one-shot UPnP/PCP/NAT-PMP gateway probe.
 
+pub mod identity;
 pub mod monitor;
 pub mod nat;
 pub mod portmap;

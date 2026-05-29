@@ -4181,6 +4181,7 @@ dependencies = [
  "rustls",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

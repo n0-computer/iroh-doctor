@@ -1,4 +1,4 @@
-//! `iroh-doctor report` command.
+//! `iroh-doctor diagnostics` command.
 //!
 //! One command that paints the whole picture of the current network: a NAT
 //! classification on top of iroh's `NetReport`, which port-mapping protocols
@@ -39,7 +39,7 @@ pub struct Report {
 const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Runs every probe and prints the combined report.
-pub async fn report(
+pub async fn diagnostics(
     config: &NodeConfig,
     no_port_map: bool,
     no_relays: bool,

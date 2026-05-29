@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use iroh::endpoint::{self, presets};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
-use iroh_doctor_core::probe::{ClientConfig, ClientSample};
+use iroh_doctor_core::monitor::{self, MonitorConfig, MonitorEvent};
 use iroh_gossip::net::Gossip;
 use iroh_services::Client as ServicesClient;
 use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
@@ -899,14 +899,13 @@ fn snapshot_paths(conn: &endpoint::Connection) -> Vec<PathInfo> {
 /// against the peer until the connection ends.
 ///
 /// On a successful dial the connection is published into `conn_slot` so the
-/// long-lived paths sampler drives the latency graph and path table. A
-/// per-connection [`iroh_doctor_core::monitor::ttfdb_watch`] task reports
-/// time-to-first-direct-byte, the same metric an incoming probe publishes.
-/// The shared [`iroh_doctor_core::probe::run_client`] loop then generates the
-/// ping and upload traffic the peer's responder measures, and its throughput
-/// samples are surfaced via `on_throughput`. Latency for the graph comes from
-/// the paths sampler (QUIC's smoothed RTT), matching `iroh-doctor accept`, so
-/// the client-side latency samples are intentionally ignored here.
+/// long-lived paths sampler drives the latency graph and path table. The
+/// shared [`iroh_doctor_core::monitor::run`] composition then reports
+/// time-to-first-direct-byte and drives the probe client; its throughput
+/// samples are surfaced via `on_throughput`. We leave `watch_paths` off
+/// because the app's periodic sampler already feeds the paths view, and the
+/// graph's latency comes from QUIC's smoothed RTT (matching
+/// `iroh-doctor accept`), so the client-side latency samples are ignored.
 async fn run_monitor(
     endpoint: Endpoint,
     addr: EndpointAddr,
@@ -936,38 +935,26 @@ async fn run_monitor(
         peer_short_id: peer_short_id.clone(),
     });
 
-    // Report time-to-first-direct-byte against the dial start. Owned via
-    // AbortOnDropHandle so it stops if this monitor is aborted by a new dial.
-    let _ttfdb_task = AbortOnDropHandle::new(tokio::spawn({
-        let conn = conn.clone();
-        let on_ttfdb = on_ttfdb.clone();
-        async move {
-            if let Some(elapsed) = iroh_doctor_core::monitor::ttfdb_watch(&conn, started).await {
-                on_ttfdb(Some(elapsed));
+    let config = MonitorConfig {
+        watch_paths: false,
+        ..MonitorConfig::default()
+    };
+    let mut mon = monitor::run(&conn, config, started);
+    while let Some(event) = mon.events.recv().await {
+        match event {
+            MonitorEvent::Throughput { bytes, elapsed } => {
+                on_throughput(ThroughputSnapshot {
+                    bytes,
+                    elapsed,
+                    mbps: iroh_doctor_core::probe::throughput_mbps(bytes, elapsed),
+                });
             }
-        }
-    }));
-
-    // Drive the shared probe client loop on its own task so aborting this
-    // monitor (a fresh dial) stops the loop too. We consume only throughput
-    // samples; latency is rendered from the paths sampler.
-    let (samples_tx, mut samples_rx) = mpsc::channel::<ClientSample>(16);
-    let driver = AbortOnDropHandle::new(tokio::spawn({
-        let conn = conn.clone();
-        async move {
-            iroh_doctor_core::probe::run_client(&conn, ClientConfig::default(), samples_tx).await
-        }
-    }));
-    while let Some(sample) = samples_rx.recv().await {
-        if let ClientSample::Throughput { bytes, elapsed } = sample {
-            on_throughput(ThroughputSnapshot {
-                bytes,
-                elapsed,
-                mbps: iroh_doctor_core::probe::throughput_mbps(bytes, elapsed),
-            });
+            MonitorEvent::Ttfdb(elapsed) => on_ttfdb(Some(elapsed)),
+            MonitorEvent::Ended(_) => break,
+            // Latency/State/Paths: the app's periodic sampler feeds those.
+            _ => {}
         }
     }
-    let _ = driver.await;
 
     // The loop ended: the peer went away or the stream broke. Clear the slot
     // if it still holds our connection (a later dial may have replaced it)

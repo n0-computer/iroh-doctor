@@ -61,7 +61,7 @@ pub enum Commands {
     /// classification, which port-mapping protocols (UPnP/PCP/NAT-PMP) the
     /// local gateway offers, and one round of per-relay connect plus ping
     /// latency. Prints a set of tables by default, or `--json` for tooling.
-    Report {
+    Diagnostics {
         /// Skip the UPnP/PCP/NAT-PMP port-mapping probe.
         #[clap(long, default_value_t = false)]
         no_port_map: bool,
@@ -368,27 +368,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
                 // Otherwise persist a raw 32-byte key under the same
                 // directory and reuse it across runs, so `iroh-doctor`
                 // announces a stable endpoint id by default.
-                let raw_path = dir.join("secret_key.bin");
-                match std::fs::read(&raw_path) {
-                    Ok(bytes) if bytes.len() == 32 => {
-                        let arr: [u8; 32] = bytes.try_into().expect("checked length");
-                        SecretKey::from_bytes(&arr)
-                    }
-                    Ok(_) => {
-                        tracing::warn!("{} has wrong length, regenerating", raw_path.display());
-                        let key = SecretKey::generate();
-                        std::fs::create_dir_all(&dir)?;
-                        std::fs::write(&raw_path, key.to_bytes())?;
-                        key
-                    }
-                    Err(_) => {
-                        let key = SecretKey::generate();
-                        std::fs::create_dir_all(&dir)?;
-                        std::fs::write(&raw_path, key.to_bytes())?;
-                        println!("Saved a new endpoint id to {}", raw_path.display());
-                        key
-                    }
-                }
+                iroh_doctor_core::identity::load_or_create_secret_key(&dir.join("secret_key.bin"))?
             }
         }
     })
@@ -417,11 +397,11 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         }
     };
     let cmd_res = match command {
-        Commands::Report {
+        Commands::Diagnostics {
             no_port_map,
             no_relays,
             json,
-        } => commands::report::report(config, no_port_map, no_relays, json).await,
+        } => commands::diagnostics::diagnostics(config, no_port_map, no_relays, json).await,
         Commands::Connect {
             dial,
             secret_key,

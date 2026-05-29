@@ -92,43 +92,30 @@ pub fn trigger_probe_portmap(
     });
 }
 
+/// The live view of the active peer connection: high-level state, latency
+/// graph, QUIC paths, and the connection-event log. Lives on the Connect tab
+/// next to the connect/disconnect bar.
 #[component]
-pub fn DiagnosticsView(
-    cmd_handle: Signal<Option<PeerHandle>>,
+pub fn ConnectView(
     conn_state: Signal<ConnectionState>,
-    telemetry: Signal<TelemetryState>,
-    services_state: Signal<DiagState<Duration>>,
-    net_state: Signal<DiagState<DiagnosticsReport>>,
-    net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<RelayProbeResult>>>,
-    portmap_state: Signal<DiagState<PortMapProbeResult>>,
     paths: Signal<Vec<PathInfo>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     ttfdb: Signal<Option<Duration>>,
     throughput: Signal<Option<ThroughputSnapshot>>,
 ) -> Element {
-    let busy = matches!(services_state(), DiagState::Running)
-        || matches!(net_state(), DiagState::Running)
-        || matches!(net_report_state(), DiagState::Running)
-        || matches!(relays_state(), DiagState::Running)
-        || matches!(portmap_state(), DiagState::Running);
-
-    let conn_state_value = conn_state();
-    let connection_state = derive_connection_state(&conn_state_value, &paths());
+    let connection_state = derive_connection_state(&conn_state(), &paths());
     let connected = matches!(
         connection_state,
         ConnectionStateLabel::Relay | ConnectionStateLabel::Direct | ConnectionStateLabel::Custom
     );
-    let ttfdb_value = ttfdb();
-    let throughput_value = throughput();
 
     rsx! {
         div { class: "diagnostics",
             ConnectionStateHeader {
                 state: connection_state,
-                ttfdb: ttfdb_value,
-                throughput: throughput_value,
+                ttfdb: ttfdb(),
+                throughput: throughput(),
             }
 
             // Live connection detail: only meaningful while a peer is
@@ -140,11 +127,33 @@ pub fn DiagnosticsView(
 
                 EventLog { event_log }
             }
+        }
+    }
+}
 
-            // Peer-independent diagnostics. These probe the local
-            // endpoint, the relays, and iroh-services rather than the
-            // remote peer, so they stay available even when disconnected
-            // (mirrors `iroh-doctor report`).
+/// The network-environment report: a local net_report with a NAT
+/// classification, the direct port-map probe, per-relay latency, and the
+/// iroh-services diagnostics. These probe the local endpoint, the relays, and
+/// iroh-services rather than the connected peer, so they stay available even
+/// when disconnected (the same picture `iroh-doctor diagnostics` prints).
+#[component]
+pub fn DiagnosticsView(
+    cmd_handle: Signal<Option<PeerHandle>>,
+    telemetry: Signal<TelemetryState>,
+    services_state: Signal<DiagState<Duration>>,
+    net_state: Signal<DiagState<DiagnosticsReport>>,
+    net_report_state: Signal<DiagState<NetReportSummary>>,
+    relays_state: Signal<DiagState<Vec<RelayProbeResult>>>,
+    portmap_state: Signal<DiagState<PortMapProbeResult>>,
+) -> Element {
+    let busy = matches!(services_state(), DiagState::Running)
+        || matches!(net_state(), DiagState::Running)
+        || matches!(net_report_state(), DiagState::Running)
+        || matches!(relays_state(), DiagState::Running)
+        || matches!(portmap_state(), DiagState::Running);
+
+    rsx! {
+        div { class: "diagnostics",
             section { class: "settings-section",
                 div { class: "section-head",
                     label { class: "label", "Local network report" }

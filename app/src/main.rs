@@ -15,7 +15,8 @@ mod relay_probe;
 use std::time::{Duration, Instant};
 
 use components::{
-    AppError, DiagState, DiagnosticsView, EndpointsView, ErrorDialog, EventEntry, GossipView,
+    AppError, ConnectView, DiagState, DiagnosticsView, EndpointsView, ErrorDialog, EventEntry,
+    GossipView,
 };
 use peer::{
     ConnectionState, DiagnosticsReport, NetReportSummary, PathInfo, PeerCallbacks, PeerCommand,
@@ -117,6 +118,7 @@ pub struct PeerHandle {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
+    Connect,
     Diagnostics,
     Gossip,
     Endpoints,
@@ -129,7 +131,7 @@ fn App() -> Element {
     let telemetry = use_signal(|| TelemetryState::Off);
     let cmd_handle: Signal<Option<PeerHandle>> = use_signal(|| None);
     let peer_id_input = use_signal(String::new);
-    let current_tab = use_signal(|| Tab::Diagnostics);
+    let current_tab = use_signal(|| Tab::Connect);
 
     let services_ping_state: Signal<DiagState<Duration>> = use_signal(|| DiagState::Idle);
     let net_state: Signal<DiagState<DiagnosticsReport>> = use_signal(|| DiagState::Idle);
@@ -346,13 +348,18 @@ fn App() -> Element {
             Nav { current_tab }
             main { class: "main-content",
                 match tab {
+                    Tab::Connect => rsx! {
+                        ConnectPage {
+                            endpoint_id, conn_state, cmd_handle, peer_id_input,
+                            paths, rtt_history, event_log, ttfdb, throughput,
+                        }
+                    },
                     Tab::Diagnostics => rsx! {
                         DiagnosticsPage {
-                            endpoint_id, conn_state, cmd_handle, peer_id_input,
+                            cmd_handle,
                             telemetry,
                             services_ping_state, net_state, net_report_state, relays_state,
                             portmap_state,
-                            paths, rtt_history, event_log, ttfdb, throughput,
                         }
                     },
                     Tab::Gossip => rsx! {
@@ -368,7 +375,7 @@ fn App() -> Element {
                                 cmd_handle,
                                 endpoints: endpoints_list,
                                 on_change: move |next: Vec<endpoints::Endpoint>| save_endpoints(endpoints_list, next),
-                                on_connect: move |_| current_tab.clone().set(Tab::Diagnostics),
+                                on_connect: move |_| current_tab.clone().set(Tab::Connect),
                             }
                         }
                     },
@@ -494,6 +501,12 @@ fn Nav(current_tab: Signal<Tab>) -> Element {
     rsx! {
         nav { class: "nav",
             NavItem {
+                label: "Connect",
+                icon: "⇄",
+                is_active: active == Tab::Connect,
+                on_select: move |_| current_tab.clone().set(Tab::Connect),
+            }
+            NavItem {
                 label: "Diagnostics",
                 icon: "⌁",
                 is_active: active == Tab::Diagnostics,
@@ -533,17 +546,11 @@ fn NavItem(label: String, icon: String, is_active: bool, on_select: EventHandler
 }
 
 #[component]
-fn DiagnosticsPage(
+fn ConnectPage(
     endpoint_id: Signal<String>,
     conn_state: Signal<ConnectionState>,
     cmd_handle: Signal<Option<PeerHandle>>,
     peer_id_input: Signal<String>,
-    telemetry: Signal<TelemetryState>,
-    services_ping_state: Signal<DiagState<Duration>>,
-    net_state: Signal<DiagState<DiagnosticsReport>>,
-    net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
-    portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
     paths: Signal<Vec<PathInfo>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
@@ -552,23 +559,42 @@ fn DiagnosticsPage(
 ) -> Element {
     rsx! {
         div { class: "page",
-            h2 { class: "page-title", "Diagnostics" }
+            h2 { class: "page-title", "Connect" }
             Header { endpoint_id }
             ConnectBar { cmd_handle, peer_id_input, conn_state }
+            ConnectView {
+                conn_state,
+                paths,
+                rtt_history,
+                event_log,
+                ttfdb,
+                throughput,
+            }
+        }
+    }
+}
+
+#[component]
+fn DiagnosticsPage(
+    cmd_handle: Signal<Option<PeerHandle>>,
+    telemetry: Signal<TelemetryState>,
+    services_ping_state: Signal<DiagState<Duration>>,
+    net_state: Signal<DiagState<DiagnosticsReport>>,
+    net_report_state: Signal<DiagState<NetReportSummary>>,
+    relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
+    portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
+) -> Element {
+    rsx! {
+        div { class: "page",
+            h2 { class: "page-title", "Diagnostics" }
             DiagnosticsView {
                 cmd_handle,
-                conn_state,
                 telemetry,
                 services_state: services_ping_state,
                 net_state,
                 net_report_state,
                 relays_state,
                 portmap_state,
-                paths,
-                rtt_history,
-                event_log,
-                ttfdb,
-                throughput,
             }
         }
     }

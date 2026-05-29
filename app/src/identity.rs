@@ -9,10 +9,11 @@
 //! upgrade keeps the same endpoint id and saved API secret; the next
 //! write lands in the new directory.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use iroh::SecretKey;
+use iroh_doctor_core::identity::{persist_secret_key, read_secret_key};
 
 fn config_dir() -> Result<PathBuf> {
     let base = dirs::config_dir().context("no config dir on this platform")?;
@@ -32,22 +33,6 @@ fn secret_key_path() -> Result<PathBuf> {
 
 fn api_secret_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("api_secret.txt"))
-}
-
-/// Reads a 32-byte secret key from `path`, returning `None` unless the
-/// file exists and is exactly 32 bytes.
-fn read_secret_key(path: &Path) -> Option<SecretKey> {
-    let bytes = std::fs::read(path).ok()?;
-    let arr: [u8; 32] = bytes.try_into().ok()?;
-    Some(SecretKey::from_bytes(&arr))
-}
-
-fn persist_secret_key(path: &Path, key: &SecretKey) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    }
-    std::fs::write(path, key.to_bytes()).with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
 }
 
 pub fn load_or_create_secret_key() -> Result<SecretKey> {

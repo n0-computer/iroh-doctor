@@ -7,34 +7,34 @@ a peer runs the same latency and throughput monitor as
 
 ## Tabs
 
-- **Diagnostics**: the live state of one or more iroh connections,
-  plus every diagnostic an `iroh-doctor` user would reach for, in
-  one tab.
-  - Live RTT, an SVG sparkline of the last 30 s of samples, and the
-    set of QUIC paths (IP, relay, or custom) with their per-path RTT.
-  - Connection-event log: the last 50 state transitions with relative
-    timestamps.
+- **Connect**: dial a peer by endpoint id and monitor the live connection.
+  - Connect/disconnect is a distinct step: once connecting or connected the
+    id input gives way to a Disconnect (or Cancel) button.
+  - High-level connection state, live RTT with an SVG sparkline of the last
+    30 s, the set of QUIC paths (IP, relay, or custom) with per-path RTT,
+    time-to-first-direct-byte, periodic throughput, and a connection-event
+    log of the last 50 state transitions.
+- **Diagnostics**: the local network environment, independent of any peer.
   - Local network report: a one-shot `endpoint.net_report()` probe with
     a NAT classification (Easy / Medium / Hard / Unknown), IPv4 and IPv6
     visibility, mapping variation, captive-portal status, and the
     preferred relay.
-  - Direct port-map probe: UPnP/PCP/NAT-PMP availability via the
-    `portmapper` crate, independent of iroh-services.
+  - Direct port-map probe: UPnP/PCP/NAT-PMP availability.
   - Relay latency: per-relay TLS connect time plus a one-shot relay
     protocol ping, sorted by ping with failures at the bottom.
-  - Services diagnostics: the legacy iroh-services-backed view, kept
-    side-by-side so a disagreement with the direct probes is visible.
+  - Services diagnostics: the iroh-services-backed view, kept side-by-side
+    so a disagreement with the direct probes is visible.
   - iroh-services API key and telemetry status.
 - **Gossip**: join an iroh-gossip topic (paste a 64-hex topic id, or
   type any string and the app hashes it deterministically with
   BLAKE3 so both peers converge); see neighbors; broadcast UTF-8
   messages; watch incoming messages with neighbor-change events.
 
-Entering a peer's endpoint id and hitting Connect dials the probe
-protocol and runs the active monitor: it pings for latency, uploads
-periodically for throughput, and drives the Diagnostics graph. This is
-the same `iroh_doctor_core::probe::run_client` loop `iroh-doctor
-connect` uses, so the cli and the app report a connection identically.
+Connecting dials the probe protocol and runs the active monitor: it pings
+for latency, uploads periodically for throughput, and drives the Connect
+graph. It shares the `iroh_doctor_core::monitor::run` composition with
+`iroh-doctor connect`, so the cli and the app report a connection
+identically.
 
 ## Multi-protocol surface
 
@@ -44,7 +44,7 @@ connect` uses, so the cli and the app report a connection identically.
 accept loop dispatches per ALPN: gossip spawns `Gossip::handle_connection`
 and the probe spawns `probe::handle_connection_with`, each per connection
 so one cannot wedge the accept of another. An incoming probe is also
-surfaced through `conn_slot` so the Diagnostics view shows it like an
+surfaced through `conn_slot` so the Connect view shows it like an
 outgoing dial.
 
 ## Trust model
@@ -95,7 +95,7 @@ src/
   diagnostics_export.rs   - diagnostics zip bundle
   components/
     mod.rs                - shared helpers (short_id)
-    diagnostics.rs        - Diagnostics tab (paths, RTT, events, report)
+    diagnostics.rs        - Connect view (state, RTT, paths, events) + Diagnostics view (net report)
     gossip.rs             - Gossip tab
     endpoints.rs          - Endpoints tab
     error_dialog.rs       - global error modal

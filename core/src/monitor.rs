@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 
 use iroh::endpoint::Connection;
 use n0_future::StreamExt;
+use tokio::sync::mpsc;
+use tokio_util::task::AbortOnDropHandle;
+
+use crate::probe::{run_client, ClientConfig, ClientEnd, ClientSample};
 
 /// Transport kind for one path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +109,135 @@ pub async fn ttfdb_watch(conn: &Connection, started: Instant) -> Option<Duration
         }
     }
     None
+}
+
+/// Configuration for the composed live monitor [`run`].
+#[derive(Debug, Clone, Copy)]
+pub struct MonitorConfig {
+    /// Pacing for the active probe client (ping interval, upload cadence).
+    pub client: ClientConfig,
+    /// Also watch the connection's path stream and emit [`MonitorEvent::State`]
+    /// and [`MonitorEvent::Paths`]. Callers that already drive their own paths
+    /// view (e.g. a periodic sampler) leave this `false` to avoid a second
+    /// reader of the same stream.
+    pub watch_paths: bool,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self {
+            client: ClientConfig::default(),
+            watch_paths: true,
+        }
+    }
+}
+
+/// One update from the composed monitor [`run`].
+#[derive(Debug, Clone)]
+pub enum MonitorEvent {
+    /// The selected-path state changed. Only emitted when `watch_paths` is set.
+    State(StateKind),
+    /// A fresh path snapshot. Only emitted when `watch_paths` is set.
+    Paths(Vec<PathSnapshot>),
+    /// A ping round-trip sample from the active probe client.
+    Latency { nonce: u32, rtt: Duration },
+    /// A completed upload sample from the active probe client.
+    Throughput { bytes: u64, elapsed: Duration },
+    /// Time-to-first-direct-byte resolved.
+    Ttfdb(Duration),
+    /// The probe client loop ended; no more samples will arrive.
+    Ended(ClientEnd),
+}
+
+/// A running monitor. Read [`MonitorEvent`]s from `events` until an
+/// [`MonitorEvent::Ended`] arrives, then drop this handle to abort the
+/// background tasks.
+pub struct Monitor {
+    /// Stream of monitor updates.
+    pub events: mpsc::Receiver<MonitorEvent>,
+    /// Background tasks (ttfdb watcher, optional paths watcher, probe client
+    /// driver), aborted on drop so a finished or replaced monitor leaves
+    /// nothing running on the connection.
+    _tasks: Vec<AbortOnDropHandle<()>>,
+}
+
+/// Composes the live connection monitor: a time-to-first-direct-byte watcher,
+/// the active probe client (latency + throughput), and optionally a path
+/// watcher, all multiplexed onto one channel. `started` is the dial (or
+/// accept) instant the ttfdb measurement is relative to.
+///
+/// This is the shared assembly behind both `iroh-doctor connect` and the
+/// app's Connect view, so both report a connection the same way. Spawns onto
+/// the current Tokio runtime.
+#[must_use]
+pub fn run(conn: &Connection, config: MonitorConfig, started: Instant) -> Monitor {
+    let (tx, events) = mpsc::channel(32);
+    let mut tasks = Vec::new();
+
+    // Time-to-first-direct-byte.
+    {
+        let conn = conn.clone();
+        let tx = tx.clone();
+        tasks.push(AbortOnDropHandle::new(tokio::spawn(async move {
+            if let Some(elapsed) = ttfdb_watch(&conn, started).await {
+                let _ = tx.send(MonitorEvent::Ttfdb(elapsed)).await;
+            }
+        })));
+    }
+
+    // Optional path watcher: re-snapshot on every path-stream change.
+    if config.watch_paths {
+        let conn = conn.clone();
+        let tx = tx.clone();
+        tasks.push(AbortOnDropHandle::new(tokio::spawn(async move {
+            let mut paths = conn.paths_stream();
+            while paths.next().await.is_some() {
+                let snaps = snapshot_paths(&conn);
+                if tx
+                    .send(MonitorEvent::State(derive_state(&snaps)))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if tx.send(MonitorEvent::Paths(snaps)).await.is_err() {
+                    break;
+                }
+            }
+        })));
+    }
+
+    // Active probe client: forward each sample, then a single `Ended`.
+    {
+        let conn = conn.clone();
+        let tx = tx.clone();
+        tasks.push(AbortOnDropHandle::new(tokio::spawn(async move {
+            let (sample_tx, mut sample_rx) = mpsc::channel(16);
+            let driver =
+                tokio::spawn(async move { run_client(&conn, config.client, sample_tx).await });
+            while let Some(sample) = sample_rx.recv().await {
+                let event = match sample {
+                    ClientSample::Latency { nonce, rtt } => MonitorEvent::Latency { nonce, rtt },
+                    ClientSample::Throughput { bytes, elapsed } => {
+                        MonitorEvent::Throughput { bytes, elapsed }
+                    }
+                };
+                if tx.send(event).await.is_err() {
+                    return;
+                }
+            }
+            let end = driver.await.unwrap_or(ClientEnd {
+                phase: "monitor",
+                cause: "driver task panicked".to_string(),
+            });
+            let _ = tx.send(MonitorEvent::Ended(end)).await;
+        })));
+    }
+
+    Monitor {
+        events,
+        _tasks: tasks,
+    }
 }
 
 #[cfg(test)]

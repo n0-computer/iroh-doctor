@@ -15,7 +15,8 @@ postcard = { version = "1", features = ["experimental-derive"] }
 rand = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["io-util", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "rt", "sync", "time"] }
+tokio-util = "0.7"
 tracing = "0.1"
 
 [dev-dependencies]

@@ -5,7 +5,7 @@ mod gossip;
 
 pub use diagnostics::{
     trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
-    trigger_probe_relays, DiagState, DiagnosticsView, EventEntry,
+    trigger_probe_relays, ConnectView, DiagState, DiagnosticsView, EventEntry,
 };
 pub use endpoints::EndpointsView;
 pub use error_dialog::{AppError, ErrorDialog};
