@@ -54,7 +54,7 @@ pub enum TelemetryState {
     Error(String),
 }
 
-pub enum PeerCommand {
+pub enum NodeCommand {
     Connect {
         hex_id: String,
     },
@@ -119,7 +119,7 @@ pub enum GossipEventUi {
 }
 
 /// The services-side `net_diagnostics` summary. Lives in core so the cli and
-/// the app render the same shape; re-exported so `peer::DiagnosticsReport`
+/// the app render the same shape; re-exported so `node::DiagnosticsReport`
 /// call sites keep working.
 pub use iroh_doctor_core::services::DiagnosticsReport;
 
@@ -183,9 +183,9 @@ pub struct ThroughputSnapshot {
 }
 
 /// Callbacks the peer task invokes to push state into the UI. Bundling them
-/// keeps `run_peer`'s signature compact and gives future commits an obvious
+/// keeps `run_node`'s signature compact and gives future commits an obvious
 /// place to add new event channels.
-pub struct PeerCallbacks {
+pub struct NodeCallbacks {
     pub on_endpoint_id: Box<dyn Fn(String) + Send + Sync>,
     pub on_state: Box<dyn Fn(ConnectionState) + Send + Sync>,
     pub on_telemetry: Box<dyn Fn(TelemetryState) + Send + Sync>,
@@ -200,7 +200,7 @@ pub struct PeerCallbacks {
     pub on_throughput: Box<dyn Fn(ThroughputSnapshot) + Send + Sync>,
 }
 
-/// How often `run_peer` samples the live connection's QUIC paths for the
+/// How often `run_node` samples the live connection's QUIC paths for the
 /// Diagnostics view. Short enough to feel live, long enough to keep overhead
 /// in the noise floor.
 const PATHS_SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
@@ -231,11 +231,11 @@ pub struct PathInfo {
     pub rtt_ms: f64,
 }
 
-pub async fn run_peer(
+pub async fn run_node(
     secret_key: SecretKey,
     initial_api_secret_override: String,
-    mut commands: mpsc::Receiver<PeerCommand>,
-    callbacks: PeerCallbacks,
+    mut commands: mpsc::Receiver<NodeCommand>,
+    callbacks: NodeCallbacks,
 ) -> Result<()> {
     let on_endpoint_id: IdCb = Arc::from(callbacks.on_endpoint_id);
     let on_state: StateCb = Arc::from(callbacks.on_state);
@@ -271,7 +271,7 @@ pub async fn run_peer(
     let conn_slot: Arc<Mutex<Option<endpoint::Connection>>> = Arc::new(Mutex::new(None));
 
     // Long-running tasks (accept loop, paths sampler) live on a JoinSet
-    // owned by run_peer so they shut down cleanly when the command pump
+    // owned by run_node so they shut down cleanly when the command pump
     // exits. Short-lived per-command spawns stay as bare `tokio::spawn`;
     // they complete and clean up on their own.
     let mut long_lived: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
@@ -337,7 +337,7 @@ pub async fn run_peer(
     // JoinSet at the cost of periodic drain to bound memory.
     while let Some(cmd) = commands.recv().await {
         match cmd {
-            PeerCommand::Connect { hex_id } => {
+            NodeCommand::Connect { hex_id } => {
                 on_state(ConnectionState::Connecting);
                 let trimmed = hex_id.trim().to_string();
                 let parsed = match EndpointId::from_str(&trimmed) {
@@ -368,7 +368,7 @@ pub async fn run_peer(
                     run_monitor(endpoint, addr, conn_slot, on_state, on_throughput, on_ttfdb).await;
                 }));
             }
-            PeerCommand::Disconnect => {
+            NodeCommand::Disconnect => {
                 // Abort the monitor task. Its own cleanup does not run on
                 // abort, so we clear conn_slot and close the connection here.
                 {
@@ -384,13 +384,13 @@ pub async fn run_peer(
                 on_ttfdb(None);
                 on_state(ConnectionState::Ready);
             }
-            PeerCommand::SaveApiSecret { secret } => {
+            NodeCommand::SaveApiSecret { secret } => {
                 api_secret_override = secret.trim().to_string();
                 services.take(); // drop the old client so its background tasks stop
                 services =
                     start_services_client(&endpoint, &api_secret_override, &on_telemetry).await;
             }
-            PeerCommand::PingServices { reply } => {
+            NodeCommand::PingServices { reply } => {
                 // A network round-trip to the services endpoint; spawn so it
                 // does not block the command pump for its duration.
                 let client = services.clone();
@@ -404,7 +404,7 @@ pub async fn run_peer(
                     let _ = reply.send(result);
                 });
             }
-            PeerCommand::RunNetDiagnostics { reply } => {
+            NodeCommand::RunNetDiagnostics { reply } => {
                 // net_diagnostics probes external services and can take
                 // seconds; spawn so the command pump stays responsive.
                 let client = services.clone();
@@ -418,7 +418,7 @@ pub async fn run_peer(
                     let _ = reply.send(result);
                 });
             }
-            PeerCommand::ProbeNetReport { reply } => {
+            NodeCommand::ProbeNetReport { reply } => {
                 // Probe via iroh's own NetReport so the result is independent
                 // of the iroh-services API state. The endpoint reporter
                 // streams a fresh report as conditions change; we await the
@@ -448,14 +448,14 @@ pub async fn run_peer(
                     let _ = reply.send(result);
                 });
             }
-            PeerCommand::ProbeRelayLatencies { reply } => {
+            NodeCommand::ProbeRelayLatencies { reply } => {
                 // Probe every relay in the same map iroh's default relay
                 // mode resolves to. The bound endpoint is built with
                 // `presets::N0` which uses `default_relay_mode()`, so
                 // the two agree by construction. If `bind_endpoint`
                 // ever switches to a custom relay map this code will
                 // probe the wrong set silently; a future change should
-                // plumb the bound RelayMap through `run_peer` instead.
+                // plumb the bound RelayMap through `run_node` instead.
                 let relay_map = iroh::endpoint::default_relay_mode().relay_map();
                 tokio::spawn(async move {
                     let rows = crate::relay_probe::probe(relay_map).await;
@@ -466,7 +466,7 @@ pub async fn run_peer(
                     }
                 });
             }
-            PeerCommand::ProbePortMap { reply } => {
+            NodeCommand::ProbePortMap { reply } => {
                 // Direct port-mapping probe. The portmapper crate spawns
                 // background gateway calls; we bound the whole thing with
                 // a timeout inside `probe()`.
@@ -475,7 +475,7 @@ pub async fn run_peer(
                     let _ = reply.send(Ok(result));
                 });
             }
-            PeerCommand::JoinGossip {
+            NodeCommand::JoinGossip {
                 topic_input,
                 bootstrap,
                 events_tx,
@@ -497,7 +497,7 @@ pub async fn run_peer(
                     let _ = reply.send(result);
                 });
             }
-            PeerCommand::GossipBroadcast { msg, reply } => {
+            NodeCommand::GossipBroadcast { msg, reply } => {
                 let sender_slot = gossip_sender_slot.clone();
                 tokio::spawn(async move {
                     let sender = sender_slot.lock().await.clone();

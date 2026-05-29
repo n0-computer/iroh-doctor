@@ -7,10 +7,10 @@ use std::time::Duration;
 use dioxus::prelude::*;
 
 use crate::identity;
-use crate::peer::{DiagnosticsReport, NetReportSummary, PeerCommand, TelemetryState};
+use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand, TelemetryState};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
-use crate::PeerHandle;
+use crate::NodeHandle;
 
 use super::diag_state::{
     trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
@@ -24,7 +24,7 @@ use super::diag_state::{
 /// when disconnected (the same picture `iroh-doctor diagnostics` prints).
 #[component]
 pub fn DiagnosticsView(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     telemetry: Signal<TelemetryState>,
     services_state: Signal<DiagState<Duration>>,
     net_state: Signal<DiagState<DiagnosticsReport>>,
@@ -97,7 +97,7 @@ fn RelayLatencyPanel(relays_state: Signal<DiagState<Vec<RelayProbeResult>>>) -> 
 
 #[component]
 fn IrohServicesSection(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     telemetry: Signal<TelemetryState>,
 ) -> Element {
     let initial = identity::load_api_secret_override();
@@ -142,7 +142,7 @@ fn IrohServicesSection(
                             saved_override.clone().set(trimmed.clone());
                         }
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(PeerCommand::SaveApiSecret {
+                            let _ = handle.tx.try_send(NodeCommand::SaveApiSecret {
                                 secret: trimmed,
                             });
                         }
@@ -157,7 +157,7 @@ fn IrohServicesSection(
                         let _ = identity::save_api_secret_override("");
                         saved_override.clone().set(String::new());
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(PeerCommand::SaveApiSecret {
+                            let _ = handle.tx.try_send(NodeCommand::SaveApiSecret {
                                 secret: String::new(),
                             });
                         }

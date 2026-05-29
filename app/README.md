@@ -38,7 +38,7 @@ identically.
 
 ## Multi-protocol surface
 
-`peer.rs` binds one `iroh::Endpoint` that advertises two ALPNs:
+`node/` binds one `iroh::Endpoint` that advertises two ALPNs:
 `iroh-gossip::ALPN` (`/iroh-gossip/1`) and the probe ALPN
 (`iroh-pong-probe/0`) so `iroh-doctor connect` works against this app. The
 accept loop dispatches per ALPN: gossip spawns `Gossip::handle_connection`
@@ -87,7 +87,7 @@ with the same fallback filter when `RUST_LOG` is unset.)
 ```
 src/
   main.rs                 - Dioxus app and tab routing
-  peer/
+  node/
     mod.rs                - iroh endpoint, command pump, services telemetry
     accept.rs             - accept loop (per-ALPN dispatch)
     monitor.rs            - active connection monitor + path snapshots

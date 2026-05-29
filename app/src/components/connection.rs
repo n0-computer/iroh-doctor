@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 
-use crate::peer::{ConnectionState, PathInfo, PathKind, ThroughputSnapshot};
+use crate::node::{ConnectionState, PathInfo, PathKind, ThroughputSnapshot};
 
 /// One row in the connection-event log shown on the Diagnostics tab. `elapsed` is
 /// measured from session start; the UI formats it as `+MM:SS`.

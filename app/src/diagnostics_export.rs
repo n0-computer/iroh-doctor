@@ -20,7 +20,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::components::{DiagState, EventEntry};
 use crate::endpoints::Endpoint;
-use crate::peer::{NetReportSummary, PathInfo, ThroughputSnapshot};
+use crate::node::{NetReportSummary, PathInfo, ThroughputSnapshot};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
 

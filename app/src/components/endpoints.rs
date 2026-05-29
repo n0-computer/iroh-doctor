@@ -10,12 +10,12 @@ use dioxus::prelude::*;
 
 use super::short_id;
 use crate::endpoints::Endpoint;
-use crate::peer::PeerCommand;
-use crate::PeerHandle;
+use crate::node::NodeCommand;
+use crate::NodeHandle;
 
 #[component]
 pub fn EndpointsView(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     endpoints: Signal<Vec<Endpoint>>,
     on_change: EventHandler<Vec<Endpoint>>,
     on_connect: EventHandler<()>,
@@ -51,7 +51,7 @@ pub fn EndpointsView(
 #[component]
 fn EndpointRow(
     endpoint: Endpoint,
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     mut endpoints: Signal<Vec<Endpoint>>,
     on_change: EventHandler<Vec<Endpoint>>,
     on_connect: EventHandler<()>,
@@ -94,7 +94,7 @@ fn EndpointRow(
                         class: "btn btn-primary",
                         onclick: move |_| {
                             if let Some(handle) = cmd_handle.read().clone() {
-                                let _ = handle.tx.try_send(PeerCommand::Connect {
+                                let _ = handle.tx.try_send(NodeCommand::Connect {
                                     hex_id: id_for_connect.clone(),
                                 });
                                 on_connect.call(());

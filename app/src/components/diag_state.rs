@@ -1,5 +1,5 @@
 //! Shared diagnostics plumbing: the [`DiagState`] of each probe and the
-//! `trigger_*` dispatchers that fire a [`PeerCommand`] and fold the reply
+//! `trigger_*` dispatchers that fire a [`NodeCommand`] and fold the reply
 //! into a state, used by the Diagnostics tab.
 
 use std::time::Duration;
@@ -7,10 +7,10 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use tokio::sync::oneshot;
 
-use crate::peer::{DiagnosticsReport, NetReportSummary, PeerCommand};
+use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
-use crate::PeerHandle;
+use crate::NodeHandle;
 
 #[derive(Clone)]
 pub enum DiagState<T: Clone + 'static> {
@@ -21,7 +21,7 @@ pub enum DiagState<T: Clone + 'static> {
 }
 
 pub fn trigger_pings(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     mut services_state: Signal<DiagState<Duration>>,
 ) {
     services_state.set(DiagState::Running);
@@ -33,7 +33,7 @@ pub fn trigger_pings(
 }
 
 pub fn trigger_net_diagnostics(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     mut net_state: Signal<DiagState<DiagnosticsReport>>,
 ) {
     net_state.set(DiagState::Running);
@@ -45,7 +45,7 @@ pub fn trigger_net_diagnostics(
 }
 
 pub fn trigger_probe_net_report(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     mut net_report_state: Signal<DiagState<NetReportSummary>>,
 ) {
     net_report_state.set(DiagState::Running);
@@ -57,7 +57,7 @@ pub fn trigger_probe_net_report(
 }
 
 pub fn trigger_probe_relays(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     mut relays_state: Signal<DiagState<Vec<RelayProbeResult>>>,
 ) {
     relays_state.set(DiagState::Running);
@@ -69,7 +69,7 @@ pub fn trigger_probe_relays(
 }
 
 pub fn trigger_probe_portmap(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     mut portmap_state: Signal<DiagState<PortMapProbeResult>>,
 ) {
     portmap_state.set(DiagState::Running);
@@ -87,13 +87,13 @@ fn into_state<T: Clone + 'static>(r: Result<T, String>) -> DiagState<T> {
     }
 }
 
-async fn run_ping_services(handle: Option<PeerHandle>) -> Result<Duration, String> {
+async fn run_ping_services(handle: Option<NodeHandle>) -> Result<Duration, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
     if h.tx
-        .try_send(PeerCommand::PingServices { reply: tx })
+        .try_send(NodeCommand::PingServices { reply: tx })
         .is_err()
     {
         return Err("queue full".into());
@@ -101,13 +101,13 @@ async fn run_ping_services(handle: Option<PeerHandle>) -> Result<Duration, Strin
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
 }
 
-async fn run_net(handle: Option<PeerHandle>) -> Result<DiagnosticsReport, String> {
+async fn run_net(handle: Option<NodeHandle>) -> Result<DiagnosticsReport, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
     if h.tx
-        .try_send(PeerCommand::RunNetDiagnostics { reply: tx })
+        .try_send(NodeCommand::RunNetDiagnostics { reply: tx })
         .is_err()
     {
         return Err("queue full".into());
@@ -115,13 +115,13 @@ async fn run_net(handle: Option<PeerHandle>) -> Result<DiagnosticsReport, String
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
 }
 
-async fn run_probe_net_report(handle: Option<PeerHandle>) -> Result<NetReportSummary, String> {
+async fn run_probe_net_report(handle: Option<NodeHandle>) -> Result<NetReportSummary, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
     if h.tx
-        .try_send(PeerCommand::ProbeNetReport { reply: tx })
+        .try_send(NodeCommand::ProbeNetReport { reply: tx })
         .is_err()
     {
         return Err("queue full".into());
@@ -129,13 +129,13 @@ async fn run_probe_net_report(handle: Option<PeerHandle>) -> Result<NetReportSum
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
 }
 
-async fn run_probe_relays(handle: Option<PeerHandle>) -> Result<Vec<RelayProbeResult>, String> {
+async fn run_probe_relays(handle: Option<NodeHandle>) -> Result<Vec<RelayProbeResult>, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
     if h.tx
-        .try_send(PeerCommand::ProbeRelayLatencies { reply: tx })
+        .try_send(NodeCommand::ProbeRelayLatencies { reply: tx })
         .is_err()
     {
         return Err("queue full".into());
@@ -143,13 +143,13 @@ async fn run_probe_relays(handle: Option<PeerHandle>) -> Result<Vec<RelayProbeRe
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
 }
 
-async fn run_probe_portmap(handle: Option<PeerHandle>) -> Result<PortMapProbeResult, String> {
+async fn run_probe_portmap(handle: Option<NodeHandle>) -> Result<PortMapProbeResult, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
     if h.tx
-        .try_send(PeerCommand::ProbePortMap { reply: tx })
+        .try_send(NodeCommand::ProbePortMap { reply: tx })
         .is_err()
     {
         return Err("queue full".into());

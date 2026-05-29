@@ -8,7 +8,7 @@ mod components;
 mod diagnostics_export;
 mod endpoints;
 mod identity;
-mod peer;
+mod node;
 mod portmap_probe;
 mod relay_probe;
 
@@ -18,8 +18,8 @@ use components::{
     AppError, ConnectView, DiagState, DiagnosticsView, EndpointsView, ErrorDialog, EventEntry,
     GossipView,
 };
-use peer::{
-    ConnectionState, DiagnosticsReport, NetReportSummary, PathInfo, PeerCallbacks, PeerCommand,
+use node::{
+    ConnectionState, DiagnosticsReport, NetReportSummary, NodeCallbacks, NodeCommand, PathInfo,
     TelemetryState,
 };
 
@@ -112,8 +112,8 @@ fn init_logging(
 }
 
 #[derive(Clone)]
-pub struct PeerHandle {
-    pub tx: mpsc::Sender<PeerCommand>,
+pub struct NodeHandle {
+    pub tx: mpsc::Sender<NodeCommand>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,7 +129,7 @@ fn App() -> Element {
     let endpoint_id = use_signal(String::new);
     let conn_state = use_signal(|| ConnectionState::Idle);
     let telemetry = use_signal(|| TelemetryState::Off);
-    let cmd_handle: Signal<Option<PeerHandle>> = use_signal(|| None);
+    let cmd_handle: Signal<Option<NodeHandle>> = use_signal(|| None);
     let peer_id_input = use_signal(String::new);
     let current_tab = use_signal(|| Tab::Connect);
 
@@ -142,7 +142,7 @@ fn App() -> Element {
         use_signal(|| DiagState::Idle);
     let paths: Signal<Vec<PathInfo>> = use_signal(Vec::new);
     let ttfdb: Signal<Option<Duration>> = use_signal(|| None);
-    let throughput: Signal<Option<peer::ThroughputSnapshot>> = use_signal(|| None);
+    let throughput: Signal<Option<node::ThroughputSnapshot>> = use_signal(|| None);
     let rtt_history: Signal<VecDeque<f64>> =
         use_signal(|| VecDeque::with_capacity(RTT_HISTORY_LEN));
     let event_log: Signal<VecDeque<EventEntry>> =
@@ -173,18 +173,18 @@ fn App() -> Element {
         };
         let api_override = identity::load_api_secret_override();
 
-        let (cmd_tx_inner, cmd_rx) = mpsc::channel::<PeerCommand>(64);
+        let (cmd_tx_inner, cmd_rx) = mpsc::channel::<NodeCommand>(64);
         let (id_tx, mut id_rx) = watch::channel::<String>(String::new());
         let (state_tx, mut state_rx) = watch::channel(ConnectionState::Idle);
         let (telemetry_tx, mut telemetry_rx) = watch::channel(TelemetryState::Off);
         let (paths_tx, mut paths_rx) = watch::channel(Vec::<PathInfo>::new());
         let (ttfdb_tx, mut ttfdb_rx) = watch::channel::<Option<Duration>>(None);
         let (throughput_tx, mut throughput_rx) =
-            watch::channel::<Option<peer::ThroughputSnapshot>>(None);
+            watch::channel::<Option<node::ThroughputSnapshot>>(None);
 
         cmd_handle
             .clone()
-            .set(Some(PeerHandle { tx: cmd_tx_inner }));
+            .set(Some(NodeHandle { tx: cmd_tx_inner }));
 
         let id_tx = Arc::new(id_tx);
         let state_tx = Arc::new(state_tx);
@@ -201,11 +201,11 @@ fn App() -> Element {
             let ttfdb_tx = ttfdb_tx.clone();
             let throughput_tx = throughput_tx.clone();
             tokio::spawn(async move {
-                let _ = peer::run_peer(
+                let _ = node::run_node(
                     secret_key,
                     api_override,
                     cmd_rx,
-                    PeerCallbacks {
+                    NodeCallbacks {
                         on_endpoint_id: Box::new(move |s| {
                             let _ = id_tx.send(s);
                         }),
@@ -415,14 +415,14 @@ fn handle_send_diagnostics(
     err: AppError,
     endpoint_id: Signal<String>,
     conn_state: Signal<ConnectionState>,
-    paths: Signal<Vec<peer::PathInfo>>,
+    paths: Signal<Vec<node::PathInfo>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
     portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
     relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
     ttfdb: Signal<Option<Duration>>,
-    throughput: Signal<Option<peer::ThroughputSnapshot>>,
+    throughput: Signal<Option<node::ThroughputSnapshot>>,
     endpoints_list: Signal<Vec<endpoints::Endpoint>>,
 ) {
     let (net_report, _) = diagnostics_export::Snapshot::extract_diag_state(&net_report_state());
@@ -549,13 +549,13 @@ fn NavItem(label: String, icon: String, is_active: bool, on_select: EventHandler
 fn ConnectPage(
     endpoint_id: Signal<String>,
     conn_state: Signal<ConnectionState>,
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     peer_id_input: Signal<String>,
     paths: Signal<Vec<PathInfo>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     ttfdb: Signal<Option<Duration>>,
-    throughput: Signal<Option<peer::ThroughputSnapshot>>,
+    throughput: Signal<Option<node::ThroughputSnapshot>>,
 ) -> Element {
     rsx! {
         div { class: "page",
@@ -576,7 +576,7 @@ fn ConnectPage(
 
 #[component]
 fn DiagnosticsPage(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     telemetry: Signal<TelemetryState>,
     services_ping_state: Signal<DiagState<Duration>>,
     net_state: Signal<DiagState<DiagnosticsReport>>,
@@ -631,7 +631,7 @@ fn Header(endpoint_id: Signal<String>) -> Element {
 
 #[component]
 fn ConnectBar(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     peer_id_input: Signal<String>,
     conn_state: Signal<ConnectionState>,
 ) -> Element {
@@ -651,7 +651,7 @@ fn ConnectBar(
                     class: "btn btn-danger",
                     onclick: move |_| {
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(PeerCommand::Disconnect);
+                            let _ = handle.tx.try_send(NodeCommand::Disconnect);
                         }
                     },
                     "{label}"
@@ -661,7 +661,7 @@ fn ConnectBar(
     }
 
     let input_value = peer_id_input();
-    let connect_disabled = !peer::looks_like_endpoint_id(&input_value);
+    let connect_disabled = !node::looks_like_endpoint_id(&input_value);
 
     rsx! {
         div { class: "connect-bar",
@@ -681,7 +681,7 @@ fn ConnectBar(
                 onclick: move |_| {
                     let id = peer_id_input();
                     if let Some(handle) = cmd_handle.read().clone() {
-                        let _ = handle.tx.try_send(PeerCommand::Connect { hex_id: id });
+                        let _ = handle.tx.try_send(NodeCommand::Connect { hex_id: id });
                     }
                 },
                 "Connect"

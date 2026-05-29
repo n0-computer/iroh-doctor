@@ -4,8 +4,8 @@ use dioxus::prelude::*;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{short_id, AppError};
-use crate::peer::{looks_like_endpoint_id, ConnectionState, GossipEventUi, PeerCommand};
-use crate::PeerHandle;
+use crate::node::{looks_like_endpoint_id, ConnectionState, GossipEventUi, NodeCommand};
+use crate::NodeHandle;
 
 const MESSAGE_LOG_LEN: usize = 200;
 const EVENTS_CAPACITY: usize = 256;
@@ -19,7 +19,7 @@ struct MessageEntry {
 
 #[component]
 pub fn GossipView(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     conn_state: Signal<ConnectionState>,
 ) -> Element {
     let topic_input = use_signal(String::new);
@@ -64,7 +64,7 @@ pub fn GossipView(
 
 #[component]
 fn JoinSection(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     conn_state: Signal<ConnectionState>,
     mut topic_input: Signal<String>,
     mut bootstrap_input: Signal<String>,
@@ -134,7 +134,7 @@ fn JoinSection(
                         spawn(async move {
                             let _ = send_handle
                                 .tx
-                                .send(PeerCommand::JoinGossip {
+                                .send(NodeCommand::JoinGossip {
                                     topic_input: topic_str,
                                     bootstrap,
                                     events_tx,
@@ -221,7 +221,7 @@ fn MessagesList(messages: Signal<VecDeque<MessageEntry>>) -> Element {
 
 #[component]
 fn ComposeSection(
-    cmd_handle: Signal<Option<PeerHandle>>,
+    cmd_handle: Signal<Option<NodeHandle>>,
     joined_topic: Signal<Option<String>>,
     mut compose_input: Signal<String>,
     mut sending: Signal<bool>,
@@ -258,7 +258,7 @@ fn ComposeSection(
                         spawn(async move {
                             let _ = handle
                                 .tx
-                                .send(PeerCommand::GossipBroadcast { msg, reply: tx })
+                                .send(NodeCommand::GossipBroadcast { msg, reply: tx })
                                 .await;
                             match rx.await {
                                 Ok(Ok(())) => {
