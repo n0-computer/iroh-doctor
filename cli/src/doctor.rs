@@ -11,23 +11,19 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    endpoint::{self, presets, Connection, RecvStream, SendStream},
+    endpoint::{self, presets, Connection},
     metrics::SocketMetrics,
     Endpoint, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
-use iroh_doctor_core::doctor::TestStreamRequest;
 use iroh_metrics::static_core::Core;
 use iroh_relay::RelayQuicConfig;
 use n0_future::StreamExt;
-use postcard::experimental::max_size::MaxSize;
-use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
     commands,
     config::{iroh_data_root, NodeConfig},
     metrics::{IrohMetricsRegistry, MetricsRegistry},
-    progress::ProgressWriter,
 };
 
 /// Options for the secret key usage.
@@ -59,44 +55,29 @@ impl std::str::FromStr for SecretKeyOption {
 /// Subcommands for the iroh doctor.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Report on the current network environment, using either an explicitly provided stun host
-    /// or the settings from the config file.
+    /// Report on the current network environment.
     ///
-    /// When no protocol flags are explicitly set, will run a report with all available probe
-    /// protocols
+    /// Paints the whole picture in one command: iroh's `NetReport` with a NAT
+    /// classification, which port-mapping protocols (UPnP/PCP/NAT-PMP) the
+    /// local gateway offers, and one round of per-relay connect plus ping
+    /// latency. Prints a set of tables by default, or `--json` for tooling.
     Report {
-        /// Run a report including a QUIC Address Discovery probe over Ipv6
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
+        /// Skip the UPnP/PCP/NAT-PMP port-mapping probe.
         #[clap(long, default_value_t = false)]
-        quic_ipv4: bool,
-        /// Run a report including a QUIC Address Discovery probe over Ipv6
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
+        no_port_map: bool,
+        /// Skip the per-relay connect and ping latency sweep.
         #[clap(long, default_value_t = false)]
-        quic_ipv6: bool,
-        /// Run a report including an HTTPS probe
-        ///
-        /// When all protocol flags are false, will
-        /// run a report with all available protocols
+        no_relays: bool,
+        /// Emit the report as JSON to stdout instead of tables.
         #[clap(long, default_value_t = false)]
-        https: bool,
+        json: bool,
     },
-    /// Wait for incoming requests from iroh doctor connect.
+    /// Wait for incoming connections and monitor each one live (latency,
+    /// paths, throughput), the accepting side of `iroh-doctor connect`.
     Accept {
         /// Our own secret key, in hex. If not specified, the locally configured key will be used.
         #[clap(long, default_value_t = SecretKeyOption::Local)]
         secret_key: SecretKeyOption,
-
-        /// Number of bytes to send to the remote for each test.
-        #[clap(long, default_value_t = 1024 * 1024 * 16)]
-        size: u64,
-
-        /// Number of iterations to run the test for. If not specified, the test will run forever.
-        #[clap(long)]
-        iterations: Option<u64>,
 
         /// Use a local relay.
         #[clap(long)]
@@ -118,8 +99,7 @@ pub enum Commands {
         socket_addr: Option<SocketAddr>,
     },
     /// Connect to a peer and monitor the connection live: state, paths,
-    /// latency over time, and throughput. Use `--test` to instead run the
-    /// doctor throughput test as the passive side of an `accept` node.
+    /// latency over time, and throughput.
     Connect {
         /// Hexadecimal node id of the node to connect to.
         dial: EndpointId,
@@ -164,22 +144,6 @@ pub enum Commands {
         /// Default is `None`, which means the endpoint will bind to a random port.
         #[clap(long)]
         socket_addr: Option<SocketAddr>,
-
-        /// Run the doctor throughput test as the passive side (pairs with `iroh-doctor accept`) instead of the live monitor.
-        #[clap(long, default_value_t = false)]
-        test: bool,
-    },
-    /// Probe the port mapping protocols.
-    PortMapProbe {
-        /// Whether to enable UPnP.
-        #[clap(long)]
-        enable_upnp: bool,
-        /// Whether to enable PCP.
-        #[clap(long)]
-        enable_pcp: bool,
-        /// Whether to enable NAT-PMP.
-        #[clap(long)]
-        enable_nat_pmp: bool,
     },
     /// Attempt to get a port mapping to the given local port.
     PortMap {
@@ -200,128 +164,15 @@ pub enum Commands {
         #[clap(long, default_value_t = 5)]
         count: usize,
     },
-    /// Run the full diagnostic probe and print a combined summary.
-    ///
-    /// Combines a single net_report with a NAT classification, a direct
-    /// UPnP/PCP/NAT-PMP probe, and one round of per-relay connect plus
-    /// ping latency. Designed for "what does this network look like?"
-    /// in one command.
-    Probe {
-        /// Skip the UPnP/PCP/NAT-PMP probe.
-        #[clap(long, default_value_t = false)]
-        no_port_map: bool,
-        /// Skip the per-relay latency probe.
-        #[clap(long, default_value_t = false)]
-        no_relays: bool,
-        /// Emit the combined report as JSON to stdout.
-        #[clap(long, default_value_t = false)]
-        json: bool,
-    },
 }
 
-/// Configuration for testing.
-#[derive(Debug, Clone, Copy)]
-pub struct TestConfig {
-    pub size: u64,
-    pub iterations: Option<u64>,
-}
-
-/// Updates the progress bar.
-fn update_pb(
-    task: &'static str,
-    pb: Option<ProgressBar>,
-    total_bytes: u64,
-    mut updates: sync::mpsc::Receiver<u64>,
-) -> tokio::task::JoinHandle<()> {
-    if let Some(pb) = pb {
-        pb.set_message(task);
-        pb.set_position(0);
-        pb.set_length(total_bytes);
-        tokio::spawn(async move {
-            while let Some(position) = updates.recv().await {
-                pb.set_position(position);
-            }
-        })
-    } else {
-        tokio::spawn(std::future::ready(()))
-    }
-}
-
-/// Handles a test stream request.
-async fn handle_test_request(
-    mut send: SendStream,
-    mut recv: RecvStream,
-    gui: &Gui,
-) -> anyhow::Result<()> {
-    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-    recv.read_exact(&mut buf).await?;
-    let request: TestStreamRequest = postcard::from_bytes(&buf)?;
-    let pb = Some(gui.pb.clone());
-    match request {
-        TestStreamRequest::Echo { bytes } => {
-            // copy the stream back
-            let (mut send, updates) = ProgressWriter::new(&mut send);
-            let t0 = Instant::now();
-            let progress = update_pb("echo", pb, bytes, updates);
-            tokio::io::copy(&mut recv, &mut send).await?;
-            let elapsed = t0.elapsed();
-            drop(send);
-            progress.await?;
-            gui.set_echo(bytes, elapsed);
-        }
-        TestStreamRequest::Drain { bytes } => {
-            // drain the stream
-            let (mut send, updates) = ProgressWriter::new(tokio::io::sink());
-            let progress = update_pb("recv", pb, bytes, updates);
-            let t0 = Instant::now();
-            tokio::io::copy(&mut recv, &mut send).await?;
-            let elapsed = t0.elapsed();
-            drop(send);
-            progress.await?;
-            gui.set_recv(bytes, elapsed);
-        }
-        TestStreamRequest::Send { bytes, block_size } => {
-            // send the requested number of bytes, in blocks of the requested size
-            let (mut send, updates) = ProgressWriter::new(&mut send);
-            let progress = update_pb("send", pb, bytes, updates);
-            let t0 = Instant::now();
-            send_blocks(&mut send, bytes, block_size).await?;
-            drop(send);
-            let elapsed = t0.elapsed();
-            progress.await?;
-            gui.set_send(bytes, elapsed);
-        }
-    }
-    send.finish()?;
-    Ok(())
-}
-
-/// Sends the requested number of bytes, in blocks of the requested size.
-async fn send_blocks(
-    mut send: impl tokio::io::AsyncWrite + Unpin,
-    total_bytes: u64,
-    block_size: u32,
-) -> anyhow::Result<()> {
-    let buf = vec![0u8; block_size as usize];
-    let mut remaining = total_bytes;
-    while remaining > 0 {
-        let n = remaining.min(block_size as u64);
-        send.write_all(&buf[..n as usize]).await?;
-        remaining -= n;
-    }
-    Ok(())
-}
-
-/// Contains all the GUI state.
+/// Holds the live header shown above the monitor dashboard: a network byte
+/// counter and the peer's relay url and direct addresses, refreshed by a
+/// background task for as long as the `Gui` is alive.
 pub struct Gui {
-    #[allow(dead_code)]
     pub mp: MultiProgress,
-    pub pb: ProgressBar,
     #[allow(dead_code)]
     pub counters: ProgressBar,
-    pub send_pb: ProgressBar,
-    pub recv_pb: ProgressBar,
-    pub echo_pb: ProgressBar,
     #[allow(dead_code)]
     pub counter_task: Option<AbortOnDropHandle<()>>,
 }
@@ -333,22 +184,11 @@ impl Gui {
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
         let remote_info = mp.add(ProgressBar::hidden());
-        let send_pb = mp.add(ProgressBar::hidden());
-        let recv_pb = mp.add(ProgressBar::hidden());
-        let echo_pb = mp.add(ProgressBar::hidden());
         let style = indicatif::ProgressStyle::default_bar()
             .template("{msg}")
             .unwrap();
-        send_pb.set_style(style.clone());
-        recv_pb.set_style(style.clone());
-        echo_pb.set_style(style.clone());
         remote_info.set_style(style.clone());
         counters.set_style(style);
-        let pb = mp.add(indicatif::ProgressBar::hidden());
-        pb.enable_steady_tick(Duration::from_millis(100));
-        pb.set_style(indicatif::ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
-            .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
         let counter_task = tokio::spawn(async move {
             loop {
@@ -359,11 +199,7 @@ impl Gui {
         });
         Self {
             mp,
-            pb,
             counters,
-            send_pb,
-            recv_pb,
-            echo_pb,
             counter_task: Some(AbortOnDropHandle::new(counter_task)),
         }
     }
@@ -414,187 +250,10 @@ Ipv6:
         }
     }
 
-    /// Sets the "send" text and the speed for the progress bar.
-    fn set_send(&self, bytes: u64, duration: Duration) {
-        Self::set_bench_speed(&self.send_pb, "send", bytes, duration);
-    }
-
-    /// Sets the "recv" text and the speed for the progress bar.
-    fn set_recv(&self, bytes: u64, duration: Duration) {
-        Self::set_bench_speed(&self.recv_pb, "recv", bytes, duration);
-    }
-
-    /// Sets the "echo" text and the speed for the progress bar.
-    fn set_echo(&self, bytes: u64, duration: Duration) {
-        Self::set_bench_speed(&self.echo_pb, "echo", bytes, duration);
-    }
-
-    /// Sets a text and the speed for the progress bar.
-    fn set_bench_speed(pb: &ProgressBar, text: &str, bytes: u64, duration: Duration) {
-        pb.set_message(format!(
-            "{}: {}/s",
-            text,
-            HumanBytes((bytes as f64 / duration.as_secs_f64()) as u64)
-        ));
-    }
-
     /// Clears the [`MultiProgress`] field.
     pub fn clear(&self) {
         self.mp.clear().ok();
     }
-}
-
-/// Sends, receives and echoes data in a connection.
-pub async fn active_side(
-    connection: &Connection,
-    config: &TestConfig,
-    gui: Option<&Gui>,
-) -> anyhow::Result<()> {
-    let n = config.iterations.unwrap_or(u64::MAX);
-    if let Some(gui) = gui {
-        let pb = Some(&gui.pb);
-        for _ in 0..n {
-            let d = send_test(connection, config, pb).await?;
-            gui.set_send(config.size, d);
-            let d = recv_test(connection, config, pb).await?;
-            gui.set_recv(config.size, d);
-            let d = echo_test(connection, config, pb).await?;
-            gui.set_echo(config.size, d);
-        }
-    } else {
-        let pb = None;
-        for _ in 0..n {
-            let _d = send_test(connection, config, pb).await?;
-            let _d = recv_test(connection, config, pb).await?;
-            let _d = echo_test(connection, config, pb).await?;
-        }
-    }
-
-    // Close the connection gracefully.
-    // We're always the ones last receiving data, because
-    // `echo_test` waits for data on the connection as the last thing.
-    connection.close(0u32.into(), b"done");
-    connection.closed().await;
-
-    Ok(())
-}
-
-/// Sends a test request in a connection.
-async fn send_test_request(
-    send: &mut SendStream,
-    request: &TestStreamRequest,
-) -> anyhow::Result<()> {
-    let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
-    postcard::to_slice(&request, &mut buf)?;
-    send.write_all(&buf).await?;
-    Ok(())
-}
-
-/// Echoes test a connection.
-async fn echo_test(
-    connection: &Connection,
-    config: &TestConfig,
-    pb: Option<&indicatif::ProgressBar>,
-) -> anyhow::Result<Duration> {
-    let size = config.size;
-    let (mut send, mut recv) = connection.open_bi().await?;
-    send_test_request(&mut send, &TestStreamRequest::Echo { bytes: size }).await?;
-    let (mut sink, updates) = ProgressWriter::new(tokio::io::sink());
-    let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-    let progress = update_pb("echo", pb.cloned(), size, updates);
-    let t0 = Instant::now();
-    send_blocks(&mut send, size, 1024 * 1024).await?;
-    send.finish()?;
-    let received = copying.await??;
-    anyhow::ensure!(received == size);
-    let duration = t0.elapsed();
-    progress.await?;
-    Ok(duration)
-}
-
-/// Sends test a connection.
-async fn send_test(
-    connection: &Connection,
-    config: &TestConfig,
-    pb: Option<&indicatif::ProgressBar>,
-) -> anyhow::Result<Duration> {
-    let size = config.size;
-    let (mut send, mut recv) = connection.open_bi().await?;
-    send_test_request(&mut send, &TestStreamRequest::Drain { bytes: size }).await?;
-    let (mut send_with_progress, updates) = ProgressWriter::new(&mut send);
-    let copying =
-        tokio::spawn(async move { tokio::io::copy(&mut recv, &mut tokio::io::sink()).await });
-    let progress = update_pb("send", pb.cloned(), size, updates);
-    let t0 = Instant::now();
-    send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
-    drop(send_with_progress);
-    send.finish()?;
-    drop(send);
-    let received = copying.await??;
-    anyhow::ensure!(received == 0);
-    let duration = t0.elapsed();
-    progress.await?;
-    Ok(duration)
-}
-
-/// Receives test a connection.
-async fn recv_test(
-    connection: &Connection,
-    config: &TestConfig,
-    pb: Option<&indicatif::ProgressBar>,
-) -> anyhow::Result<Duration> {
-    let size = config.size;
-    let (mut send, mut recv) = connection.open_bi().await?;
-    let t0 = Instant::now();
-    let (mut sink, updates) = ProgressWriter::new(tokio::io::sink());
-    send_test_request(
-        &mut send,
-        &TestStreamRequest::Send {
-            bytes: size,
-            block_size: 1024 * 1024,
-        },
-    )
-    .await?;
-    let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
-    let progress = update_pb("recv", pb.cloned(), size, updates);
-    send.finish()?;
-    let received = copying.await??;
-    anyhow::ensure!(received == size);
-    let duration = t0.elapsed();
-    progress.await?;
-    Ok(duration)
-}
-
-/// Accepts connections and answers requests (echo, drain or send) as passive side.
-pub async fn passive_side(gui: Gui, connection: &Connection) -> anyhow::Result<()> {
-    let conn = connection.clone();
-    let accept_loop = async move {
-        let result = loop {
-            match conn.accept_bi().await {
-                Ok((send, recv)) => {
-                    if let Err(cause) = handle_test_request(send, recv, &gui).await {
-                        eprintln!("Error handling test request {cause}");
-                    }
-                }
-                Err(cause) => {
-                    eprintln!("error accepting bidi stream {cause}");
-                    break Err(cause.into());
-                }
-            };
-        };
-
-        conn.close(0u32.into(), b"internal err");
-        conn.closed().await;
-        eprintln!("Connection closed.");
-
-        result
-    };
-    let conn_closed = async move {
-        connection.closed().await;
-        eprintln!("Connection closed.");
-        anyhow::Ok(())
-    };
-    n0_future::future::race(conn_closed, accept_loop).await
 }
 
 /// Configures a relay map with some default values.
@@ -624,10 +283,7 @@ async fn make_endpoint(
 
     let mut endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
-        .alpns(vec![
-            iroh_doctor_core::doctor::ALPN.to_vec(),
-            iroh_doctor_core::probe::ALPN.to_vec(),
-        ])
+        .alpns(vec![iroh_doctor_core::probe::ALPN.to_vec()])
         .transport_config(transport_config);
 
     if disable_address_lookup {
@@ -762,10 +418,10 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     };
     let cmd_res = match command {
         Commands::Report {
-            quic_ipv4,
-            quic_ipv6,
-            https,
-        } => commands::report::report(config, quic_ipv4, quic_ipv6, https).await,
+            no_port_map,
+            no_relays,
+            json,
+        } => commands::report::report(config, no_port_map, no_relays, json).await,
         Commands::Connect {
             dial,
             secret_key,
@@ -774,7 +430,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             remote_endpoint,
             disable_address_lookup,
             socket_addr,
-            test,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
@@ -796,8 +451,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             n0_future::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
                 if let Err(e) =
-                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint, test)
-                        .await
+                    commands::connect::connect(dial, remote_endpoint, relay_url, endpoint).await
                 {
                     eprintln!("connect error: {e}");
                 }
@@ -809,8 +463,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::Accept {
             secret_key,
             local_relay_server,
-            size,
-            iterations,
             disable_address_lookup,
             socket_addr,
         } => {
@@ -820,7 +472,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 config.relay_map()?
             };
             let secret_key = create_secret_key(secret_key)?;
-            let config = TestConfig { size, iterations };
 
             let endpoint = make_endpoint(
                 secret_key.clone(),
@@ -832,7 +483,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             .await?;
 
             n0_future::future::race(close_endpoint_on_ctrl_c(endpoint.clone()), async move {
-                if let Err(e) = commands::accept::accept(secret_key, config, endpoint).await {
+                if let Err(e) = commands::accept::accept(secret_key, endpoint).await {
                     eprintln!("accept error: {e}");
                 }
             })
@@ -848,26 +499,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             commands::port_map::port_map(&protocol, local_port, Duration::from_secs(timeout_secs))
                 .await
         }
-        Commands::PortMapProbe {
-            enable_upnp,
-            enable_pcp,
-            enable_nat_pmp,
-        } => {
-            let config = portmapper::Config {
-                enable_upnp,
-                enable_pcp,
-                enable_nat_pmp,
-                protocol: portmapper::Protocol::Udp,
-            };
-
-            commands::port_map::port_map_probe(config).await
-        }
         Commands::RelayUrls { count } => commands::relay_urls::relay_urls(count, config).await,
-        Commands::Probe {
-            no_port_map,
-            no_relays,
-            json,
-        } => commands::probe::probe(config, no_port_map, no_relays, json).await,
     };
     if let Some(server) = metrics_server {
         server.shutdown().await;

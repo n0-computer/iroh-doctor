@@ -6,13 +6,12 @@
 //!
 //! - [`nat`]: the NAT classification taxonomy and the function that maps an
 //!   `iroh::NetReport` onto it.
-//! - [`doctor`]: the wire types for the iroh-doctor connection test
-//!   (`n0/doctor/1`).
+//! - [`monitor`]: helpers for the live connection monitor (path snapshots,
+//!   state derivation, time-to-first-direct-byte).
 //! - [`probe`]: the peer probe protocol (`iroh-pong-probe/0`): a passive
 //!   responder plus a client that measures latency over time and upload
 //!   throughput against a peer.
 
-pub mod doctor;
 pub mod monitor;
 pub mod nat;
 pub mod probe;

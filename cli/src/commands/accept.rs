@@ -1,10 +1,10 @@
 //! Accept command implementation.
 //!
-//! `accept` prints the endpoint id and waits. The incoming ALPN decides the
-//! mode for each connection: a probe stream opens a live monitor dashboard
-//! (the same one `connect` shows); a doctor stream runs the throughput
-//! test as the active side. There is no flag - the peer's choice picks the
-//! mode automatically.
+//! `accept` prints the endpoint id and waits, then opens a live monitor
+//! dashboard for each incoming probe connection (the same one `connect`
+//! shows). The first probe owns the terminal dashboard; concurrent probes
+//! are served silently in the background so two dashboards never fight for
+//! the terminal.
 
 use std::{
     collections::VecDeque,
@@ -21,13 +21,12 @@ use iroh_doctor_core::{
     probe::{handle_connection, handle_connection_with, ProbeEvent},
 };
 use n0_future::StreamExt;
-use portable_atomic::AtomicU64;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
 use crate::{
     commands::monitor_view::{format_path_lines, MonitorView, HISTORY_LEN},
-    doctor::{active_side, log_connection_changes, Gui, TestConfig},
+    doctor::Gui,
 };
 
 /// Runs a closure on drop. Used to reset a counter or flag even if the
@@ -41,17 +40,12 @@ impl<F: FnMut()> Drop for OnDrop<F> {
     }
 }
 
-/// Accepts incoming connections. Probe connections drive a live monitor;
-/// doctor connections drive the throughput test.
-pub async fn accept(
-    secret_key: SecretKey,
-    config: TestConfig,
-    endpoint: Endpoint,
-) -> anyhow::Result<()> {
+/// Accepts incoming probe connections and drives a live monitor dashboard
+/// for the first one, serving any concurrent probes silently.
+pub async fn accept(secret_key: SecretKey, endpoint: Endpoint) -> anyhow::Result<()> {
     println!("endpoint id: {}", secret_key.public());
     println!("waiting for connections... (Ctrl-C to stop)");
 
-    let connections = Arc::new(AtomicU64::default());
     let monitor_active = Arc::new(AtomicBool::new(false));
 
     while let Some(incoming) = endpoint.accept().await {
@@ -62,7 +56,6 @@ pub async fn accept(
                 continue;
             }
         };
-        let connections = connections.clone();
         let endpoint = endpoint.clone();
         let monitor_active = monitor_active.clone();
         tokio::task::spawn(async move {
@@ -74,52 +67,26 @@ pub async fn accept(
                 }
             };
 
-            if connection.alpn() == iroh_doctor_core::probe::ALPN {
-                // First probe gets the dashboard; concurrent probes respond
-                // silently in the background so two dashboards never fight
-                // for the terminal.
-                if monitor_active
-                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-                {
-                    // Reset on drop so a panic in the monitor cannot leave
-                    // the flag stuck and silence every later dashboard.
-                    let _reset = OnDrop(|| monitor_active.store(false, Ordering::SeqCst));
-                    run_probe_monitor(endpoint, connection).await;
-                } else if let Err(cause) = handle_connection(connection).await {
-                    warn!("probe connection failed: {cause:#}");
-                }
+            // The endpoint only advertises the probe ALPN, so anything else
+            // should not negotiate; guard anyway and drop it.
+            if connection.alpn() != iroh_doctor_core::probe::ALPN {
+                warn!("ignoring connection with unexpected ALPN");
                 return;
             }
 
-            // Doctor ALPN: the throughput test. The first concurrent
-            // connection drives with a Gui, the rest run silently.
-            let n = connections.fetch_add(1, portable_atomic::Ordering::SeqCst);
-            // Decrement on drop so a panic in the test driver cannot leave
-            // the counter stuck above zero and starve future tests of a Gui.
-            let _dec = OnDrop(|| {
-                connections.sub(1, portable_atomic::Ordering::SeqCst);
-            });
-            if n == 0 {
-                let remote_peer_id = connection.remote_id();
-                println!("accepted doctor test from {remote_peer_id}");
-                let t0 = Instant::now();
-                let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                log_connection_changes(gui.mp.clone(), remote_peer_id, connection.clone());
-                let res = active_side(&connection, &config, Some(&gui)).await;
-                gui.clear();
-                let dt = t0.elapsed().as_secs_f64();
-                if let Err(cause) = res {
-                    let close_reason = connection
-                        .close_reason()
-                        .map(|e| format!(" (reason: {e})"))
-                        .unwrap_or_default();
-                    eprintln!("test finished after {dt}s: {cause:#}{close_reason}");
-                } else {
-                    eprintln!("test finished after {dt}s");
-                }
-            } else {
-                active_side(&connection, &config, None).await.ok();
+            // First probe gets the dashboard; concurrent probes respond
+            // silently in the background so two dashboards never fight for
+            // the terminal.
+            if monitor_active
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                // Reset on drop so a panic in the monitor cannot leave the
+                // flag stuck and silence every later dashboard.
+                let _reset = OnDrop(|| monitor_active.store(false, Ordering::SeqCst));
+                run_probe_monitor(endpoint, connection).await;
+            } else if let Err(cause) = handle_connection(connection).await {
+                warn!("probe connection failed: {cause:#}");
             }
         });
     }

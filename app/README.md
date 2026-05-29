@@ -46,14 +46,13 @@ connect` uses, so the cli and the app report a connection identically.
 
 ## Multi-protocol surface
 
-`peer.rs` binds one `iroh::Endpoint` that advertises five ALPNs:
+`peer.rs` binds one `iroh::Endpoint` that advertises four ALPNs:
 `iroh-blobs::ALPN` (`/iroh-bytes/4`), `iroh-gossip::ALPN`
-(`/iroh-gossip/1`), `iroh-docs::ALPN` (`/iroh-sync/1`), the probe ALPN
-(`iroh-pong-probe/0`), and the iroh-doctor protocol (`n0/doctor/1`) so
-`iroh-doctor connect` works against this app. The accept loop
-dispatches per ALPN: each spawns the matching `ProtocolHandler::accept`
-(or `Gossip::handle_connection`, `probe::handle_connection_with`, or
-`doctor::handle_connection`) per connection so any one transfer cannot
+(`/iroh-gossip/1`), `iroh-docs::ALPN` (`/iroh-sync/1`), and the probe ALPN
+(`iroh-pong-probe/0`) so `iroh-doctor connect` works against this app. The
+accept loop dispatches per ALPN: each spawns the matching
+`ProtocolHandler::accept` (or `Gossip::handle_connection` or
+`probe::handle_connection_with`) per connection so any one transfer cannot
 wedge the accept of another. An incoming probe is also surfaced through
 `conn_slot` so the Diagnostics view shows it like an outgoing dial.
 
@@ -109,8 +108,6 @@ src/
   identity.rs             - on-disk secret key + api secret override
   endpoints.rs            - saved-endpoints store (the Endpoints tab)
   nat.rs                  - NAT classifier (Easy/Medium/Hard/Unknown)
-  peer_probe.rs           - probe ALPN responder
-  doctor.rs               - iroh-doctor connect/accept responder
   portmap_probe.rs        - UPnP/PCP/NAT-PMP probe wrapper
   relay_probe.rs          - per-relay connect+ping probe
   diagnostics_export.rs   - diagnostics zip bundle

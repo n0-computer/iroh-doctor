@@ -6,7 +6,6 @@ use tokio::sync::{mpsc, watch};
 
 mod components;
 mod diagnostics_export;
-mod doctor;
 mod endpoints;
 mod identity;
 mod peer;
@@ -618,7 +617,7 @@ fn DiagnosticsPage(
         div { class: "page",
             h2 { class: "page-title", "Diagnostics" }
             Header { endpoint_id }
-            ConnectBar { cmd_handle, peer_id_input }
+            ConnectBar { cmd_handle, peer_id_input, conn_state }
             DiagnosticsView {
                 cmd_handle,
                 conn_state,
@@ -668,7 +667,36 @@ fn Header(endpoint_id: Signal<String>) -> Element {
 }
 
 #[component]
-fn ConnectBar(cmd_handle: Signal<Option<PeerHandle>>, peer_id_input: Signal<String>) -> Element {
+fn ConnectBar(
+    cmd_handle: Signal<Option<PeerHandle>>,
+    peer_id_input: Signal<String>,
+    conn_state: Signal<ConnectionState>,
+) -> Element {
+    // Connect and disconnect are distinct steps. Once a session is dialing or
+    // live, the input gives way to a single Disconnect button (Cancel while a
+    // dial is still in flight); otherwise we show the input and Connect.
+    let state = conn_state();
+    let connecting = matches!(state, ConnectionState::Connecting);
+    let active = connecting || matches!(state, ConnectionState::Connected { .. });
+
+    if active {
+        let label = if connecting { "Cancel" } else { "Disconnect" };
+        return rsx! {
+            div { class: "connect-bar",
+                span { class: "connect-status", "{status_line(&state)}" }
+                button {
+                    class: "btn btn-danger",
+                    onclick: move |_| {
+                        if let Some(handle) = cmd_handle.read().clone() {
+                            let _ = handle.tx.try_send(PeerCommand::Disconnect);
+                        }
+                    },
+                    "{label}"
+                }
+            }
+        };
+    }
+
     let input_value = peer_id_input();
     let connect_disabled = !peer::looks_like_endpoint_id(&input_value);
 

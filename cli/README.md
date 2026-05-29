@@ -41,15 +41,12 @@ Run `cargo install iroh-doctor` or build from source.
 Usage: iroh-doctor [OPTIONS] <COMMAND>
 
 Commands:
-  report          Report on the current network environment, using either an explicitly provided stun host or the settings from the config file
-  accept          Wait for incoming requests from iroh doctor connect
-  connect         Connect to an iroh doctor accept node
-  port-map-probe  Probe the port mapping protocols
-  port-map        Attempt to get a port mapping to the given local port
-  relay-urls      Get the latencies of the different relay url
-  probe           Run the full diagnostic probe and print a combined summary
-  swarm-client    Join a doctor swarm as a test node
-  help            Print this message or the help of the given subcommand(s)
+  report      Report on the current network environment: NetReport, NAT class, port-map availability, and relay latency (use --json for machine output)
+  accept      Wait for incoming requests from iroh doctor connect
+  connect     Connect to a peer and monitor the connection live
+  port-map    Attempt to get a port mapping to the given local port
+  relay-urls  Get the latencies of the different relay url
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
       --config <CONFIG>

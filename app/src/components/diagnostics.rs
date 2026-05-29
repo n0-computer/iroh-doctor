@@ -245,11 +245,20 @@ fn ConnectionStateHeader(
         ConnectionStateLabel::Custom => ("custom", "custom"),
         ConnectionStateLabel::Error => ("error", "error"),
     };
+    // Throughput only makes sense against a live peer, so it rides with the
+    // rest of the live connection detail (latency, paths) and is removed in
+    // every disconnected state.
+    let connected = matches!(
+        state,
+        ConnectionStateLabel::Relay | ConnectionStateLabel::Direct | ConnectionStateLabel::Custom
+    );
     rsx! {
         section { class: "connection-state-header",
             div { class: "connection-state-label connection-state-{kind_class}", "{label}" }
             {render_ttfdb(ttfdb)}
-            {render_throughput(throughput.as_ref())}
+            if connected {
+                {render_throughput(throughput.as_ref())}
+            }
         }
     }
 }

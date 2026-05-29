@@ -43,13 +43,3 @@ pub async fn port_map(
         Err(_) => anyhow::bail!("Timed out waiting for a port mapping"),
     }
 }
-
-/// Probes a port map.
-pub async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
-    println!("probing port mapping protocols with {config:?}");
-    let port_mapper = portmapper::Client::new(config);
-    let probe_rx = port_mapper.probe();
-    let probe = probe_rx.await?.map_err(|e| anyhow::anyhow!(e))?;
-    println!("{probe}");
-    Ok(())
-}

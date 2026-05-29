@@ -58,6 +58,10 @@ pub enum PeerCommand {
     Connect {
         hex_id: String,
     },
+    /// Tears down the active monitor: aborts the probe loop, closes the
+    /// connection, and returns to the ready state. Also cancels a dial that
+    /// is still in `Connecting`.
+    Disconnect,
     SaveApiSecret {
         secret: String,
     },
@@ -570,6 +574,28 @@ pub async fn run_peer(
                 *slot = Some(tokio::spawn(async move {
                     run_monitor(endpoint, addr, conn_slot, on_state, on_throughput).await;
                 }));
+            }
+            PeerCommand::Disconnect => {
+                // Abort the monitor task. Its own cleanup does not run on
+                // abort, so we clear conn_slot and close the connection here.
+                {
+                    let mut slot = monitor.lock().await;
+                    if let Some(task) = slot.take() {
+                        task.abort();
+                    }
+                }
+                if let Some(conn) = conn_slot.lock().await.take() {
+                    conn.close(0u32.into(), b"disconnect");
+                }
+                // Reset the TTFDB baseline and clear the UI metric so a later
+                // reconnect starts clean.
+                {
+                    let mut state = ttfdb.lock().await;
+                    state.dial_at = None;
+                    state.published = false;
+                }
+                on_ttfdb(None);
+                on_state(ConnectionState::Ready);
             }
             PeerCommand::SaveApiSecret { secret } => {
                 api_secret_override = secret.trim().to_string();
@@ -1218,7 +1244,6 @@ async fn bind_endpoint(secret_key: SecretKey) -> Result<Endpoint> {
         iroh_gossip::ALPN.to_vec(),
         iroh_docs::ALPN.to_vec(),
         iroh_doctor_core::probe::ALPN.to_vec(),
-        crate::doctor::ALPN.to_vec(),
     ]);
     builder.bind().await.context("bind endpoint")
 }
@@ -1435,15 +1460,6 @@ async fn run_accept_loop(ctx: AcceptCtx) {
                         *slot = None;
                     }
                     on_state(ConnectionState::PeerDisconnected { peer_short_id });
-                }
-            });
-        } else if alpn_bytes == crate::doctor::ALPN {
-            // Passive side of `iroh-doctor connect`. Bounded internally by
-            // a per-connection timeout; spawned like the other protocol
-            // handlers so a slow test does not wedge the accept loop.
-            tokio::spawn(async move {
-                if let Err(e) = crate::doctor::handle_connection(conn).await {
-                    warn!(err = %e, "doctor accept failed");
                 }
             });
         }

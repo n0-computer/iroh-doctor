@@ -13,29 +13,18 @@ use n0_future::StreamExt;
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::commands::monitor_view::{format_path_lines, MonitorView, HISTORY_LEN};
-use crate::doctor::{log_connection_changes, passive_side, Gui};
+use crate::doctor::Gui;
 
-/// Connects to a [`EndpointId`].
-///
-/// By default this runs a live connection monitor against the peer's probe
-/// protocol (state, paths, latency over time, periodic throughput, ttfdb).
-/// With `test` set it runs the legacy doctor throughput test as the passive
-/// side, pairing with `iroh-doctor accept`.
+/// Connects to a [`EndpointId`] and runs a live connection monitor against
+/// the peer's probe protocol: state, paths, latency over time, periodic
+/// throughput, and time-to-first-direct-byte.
 pub async fn connect(
     endpoint_id: EndpointId,
     direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
     endpoint: Endpoint,
-    test: bool,
 ) -> anyhow::Result<()> {
-    let res = run(
-        endpoint_id,
-        direct_addresses,
-        relay_url,
-        endpoint.clone(),
-        test,
-    )
-    .await;
+    let res = run(endpoint_id, direct_addresses, relay_url, endpoint.clone()).await;
     // Close the endpoint gracefully on every exit path; otherwise iroh logs
     // "Endpoint dropped without calling `Endpoint::close`. Aborting
     // ungracefully." as the process tears down.
@@ -48,7 +37,6 @@ async fn run(
     direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
     endpoint: Endpoint,
-    test: bool,
 ) -> anyhow::Result<()> {
     tracing::info!("dialing {:?}", endpoint_id);
     let mut endpoint_addr = EndpointAddr::new(endpoint_id);
@@ -59,16 +47,10 @@ async fn run(
         endpoint_addr = endpoint_addr.with_ip_addr(ip_addr);
     }
 
-    let (alpn, alpn_label) = if test {
-        (iroh_doctor_core::doctor::ALPN, "doctor test")
-    } else {
-        (iroh_doctor_core::probe::ALPN, "monitor")
-    };
-
-    eprintln!("dialing {endpoint_id} ({alpn_label})...");
+    eprintln!("dialing {endpoint_id} (monitor)...");
     let dial = tokio::time::timeout(
         Duration::from_secs(30),
-        endpoint.connect(endpoint_addr, alpn),
+        endpoint.connect(endpoint_addr, iroh_doctor_core::probe::ALPN),
     )
     .await;
     let connection = match dial {
@@ -85,7 +67,7 @@ async fn run(
             return Ok(());
         }
     };
-    eprintln!("connected; starting {alpn_label}...");
+    eprintln!("connected; starting monitor...");
 
     let gui = Gui::new(endpoint, endpoint_id);
     let close_reason = connection
@@ -93,14 +75,7 @@ async fn run(
         .map(|e| format!(" (reason: {e})"))
         .unwrap_or_default();
 
-    if test {
-        log_connection_changes(gui.mp.clone(), endpoint_id, connection.clone());
-        if let Err(cause) = passive_side(gui, &connection).await {
-            eprintln!("error handling connection: {cause:#}{close_reason}");
-        } else {
-            eprintln!("Connection closed{close_reason}");
-        }
-    } else if let Err(cause) = monitor(&gui, endpoint_id, &connection).await {
+    if let Err(cause) = monitor(&gui, endpoint_id, &connection).await {
         eprintln!("error monitoring connection: {cause:#}{close_reason}");
     } else {
         eprintln!("Connection closed{close_reason}");
