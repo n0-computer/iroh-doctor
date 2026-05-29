@@ -19,6 +19,7 @@ use serde::Serialize;
 use iroh_doctor_core::nat::{classify_base_report, NatType};
 use iroh_doctor_core::portmap::PortMapResult;
 use iroh_doctor_core::relay_probe::RelayProbeResult;
+use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
 
 use crate::config::NodeConfig;
 
@@ -31,6 +32,17 @@ pub struct Report {
     pub nat: NatType,
     pub port_map: Option<PortMapResult>,
     pub relays: Vec<RelayProbeResult>,
+    /// iroh-services checks (ping + server-side net_diagnostics). `None` when
+    /// services are opted out via `IROH_SERVICES_API_SECRET=""`.
+    pub services: Option<ServicesBlock>,
+}
+
+/// The iroh-services-backed checks, paired with the local probes above.
+#[derive(Debug, Serialize)]
+pub struct ServicesBlock {
+    pub ping_ms: Option<f64>,
+    pub net_diagnostics: Option<ServicesDiagnostics>,
+    pub error: Option<String>,
 }
 
 /// Wall-clock ceiling for the `net_report().initialized()` wait. A network
@@ -86,11 +98,14 @@ async fn report_inner(
         iroh_doctor_core::relay_probe::probe_relays(relay_map).await
     };
 
+    let services = run_services(endpoint).await;
+
     let report = Report {
         net_report: Some(net_report),
         nat,
         port_map,
         relays,
+        services,
     };
 
     if json {
@@ -103,8 +118,41 @@ async fn report_inner(
     Ok(())
 }
 
+/// Runs the iroh-services checks (a ping plus the server-side
+/// net_diagnostics) using the resolved API secret. Returns `None` when
+/// services are opted out via `IROH_SERVICES_API_SECRET=""`.
+async fn run_services(endpoint: &Endpoint) -> Option<ServicesBlock> {
+    let secret = iroh_doctor_core::services::resolve_api_secret(None)?;
+    let name = iroh_doctor_core::services::device_name(&endpoint.id().to_string());
+    let client = match iroh_doctor_core::services::build_client(endpoint, &secret, &name).await {
+        Ok(c) => c,
+        Err(e) => {
+            return Some(ServicesBlock {
+                ping_ms: None,
+                net_diagnostics: None,
+                error: Some(format!("{e:#}")),
+            })
+        }
+    };
+    let ping_ms = iroh_doctor_core::services::ping(&client)
+        .await
+        .ok()
+        .map(|d| d.as_secs_f64() * 1000.0);
+    let (net_diagnostics, error) = match iroh_doctor_core::services::net_diagnostics(&client).await
+    {
+        Ok(report) => (Some(report), None),
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
+    Some(ServicesBlock {
+        ping_ms,
+        net_diagnostics,
+        error,
+    })
+}
+
 /// Prints the report as a stack of markdown tables: a network summary, the
-/// port-mapping availability, and the relay latencies.
+/// port-mapping availability, the relay latencies, and the iroh-services
+/// checks.
 fn print_tables(r: &Report) {
     let nr = r.net_report.as_ref();
     let summary = vec![
@@ -163,6 +211,24 @@ fn print_tables(r: &Report) {
             "{}",
             markdown_table(&["Relay", "Connect", "Ping", "Note"], &rows)
         );
+    }
+
+    if let Some(s) = &r.services {
+        println!();
+        println!("Services");
+        let mut rows = vec![kv("ping", fmt_opt_ms(s.ping_ms))];
+        if let Some(n) = &s.net_diagnostics {
+            rows.push(kv("iroh version", n.iroh_version.clone()));
+            rows.push(kv("services version", n.iroh_services_version.clone()));
+            rows.push(kv("direct addrs", n.direct_addrs.len().to_string()));
+            rows.push(kv("UPnP", tribool_text(n.upnp)));
+            rows.push(kv("PCP", tribool_text(n.pcp)));
+            rows.push(kv("NAT-PMP", tribool_text(n.nat_pmp)));
+        }
+        print!("{}", markdown_table(&["Property", "Value"], &rows));
+        if let Some(err) = &s.error {
+            println!("warning: {err}");
+        }
     }
 }
 

@@ -14,6 +14,8 @@
 //!   throughput against a peer.
 //! - [`relay_probe`]: per-relay TLS connect plus relay-protocol ping latency.
 //! - [`portmap`]: a one-shot UPnP/PCP/NAT-PMP gateway probe.
+//! - [`services`]: iroh-services client setup, API-secret resolution, and the
+//!   ping + net_diagnostics queries.
 
 pub mod identity;
 pub mod monitor;
@@ -21,3 +23,4 @@ pub mod nat;
 pub mod portmap;
 pub mod probe;
 pub mod relay_probe;
+pub mod services;

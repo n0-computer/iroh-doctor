@@ -21,9 +21,6 @@ use tokio::task::JoinHandle;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, instrument, warn};
 
-pub const DEFAULT_API_SECRET: &str =
-    "servicesaaqg6nnf7kr3uiacviqgbxeqconvhuz4ldr5dem4gqhsp3cyat6qxexoctwjsi7m6dh2t2qvfu2yhdoaav6eibaj4aaavhonlixbohceu4aa";
-
 #[derive(Debug, Clone)]
 pub enum ConnectionState {
     Idle,
@@ -115,17 +112,10 @@ pub enum GossipEventUi {
     Lagged,
 }
 
-#[derive(Debug, Clone)]
-pub struct DiagnosticsReport {
-    pub endpoint_id: String,
-    pub direct_addrs: Vec<String>,
-    pub iroh_version: String,
-    pub iroh_services_version: String,
-    pub has_net_report: bool,
-    pub upnp: Option<bool>,
-    pub pcp: Option<bool>,
-    pub nat_pmp: Option<bool>,
-}
+/// The services-side `net_diagnostics` summary. Lives in core so the cli and
+/// the app render the same shape; re-exported so `peer::DiagnosticsReport`
+/// call sites keep working.
+pub use iroh_doctor_core::services::DiagnosticsReport;
 
 /// Direct snapshot of `iroh::NetReport`, reshaped for the Diagnostics tab.
 /// Captures the NAT classification, IPv4 and IPv6 visibility, and the
@@ -163,25 +153,6 @@ impl From<&iroh::NetReport> for NetReportSummary {
             captive_portal: r.captive_portal,
             preferred_relay: r.preferred_relay.as_ref().map(|u| u.to_string()),
             relays_seen: r.relay_latency.iter().count(),
-        }
-    }
-}
-
-impl From<iroh_services::net_diagnostics::DiagnosticsReport> for DiagnosticsReport {
-    fn from(r: iroh_services::net_diagnostics::DiagnosticsReport) -> Self {
-        let (upnp, pcp, nat_pmp) = match r.portmap_probe {
-            Some(p) => (Some(p.upnp), Some(p.pcp), Some(p.nat_pmp)),
-            None => (None, None, None),
-        };
-        Self {
-            endpoint_id: r.endpoint_id.to_string(),
-            direct_addrs: r.direct_addrs.into_iter().map(|s| s.to_string()).collect(),
-            iroh_version: r.iroh_version,
-            iroh_services_version: r.iroh_services_version,
-            has_net_report: r.net_report.is_some(),
-            upnp,
-            pcp,
-            nat_pmp,
         }
     }
 }
@@ -414,19 +385,14 @@ pub async fn run_peer(
                     start_services_client(&endpoint, &api_secret_override, &on_telemetry).await;
             }
             PeerCommand::PingServices { reply } => {
-                // services.ping() is a network round-trip to the iroh
-                // services endpoint; spawn so it does not block paddle
-                // updates or any other command for its duration.
+                // A network round-trip to the services endpoint; spawn so it
+                // does not block the command pump for its duration.
                 let client = services.clone();
                 tokio::spawn(async move {
                     let result = match client {
-                        Some(c) => {
-                            let start = std::time::Instant::now();
-                            match c.ping().await {
-                                Ok(_) => Ok(start.elapsed()),
-                                Err(e) => Err(format!("{e:#}")),
-                            }
-                        }
+                        Some(c) => iroh_doctor_core::services::ping(&c)
+                            .await
+                            .map_err(|e| format!("{e:#}")),
                         None => Err("services client not initialized".into()),
                     };
                     let _ = reply.send(result);
@@ -438,10 +404,9 @@ pub async fn run_peer(
                 let client = services.clone();
                 tokio::spawn(async move {
                     let result = match client {
-                        Some(c) => match c.net_diagnostics(false).await {
-                            Ok(report) => Ok(DiagnosticsReport::from(report)),
-                            Err(e) => Err(format!("{e:#}")),
-                        },
+                        Some(c) => iroh_doctor_core::services::net_diagnostics(&c)
+                            .await
+                            .map_err(|e| format!("{e:#}")),
                         None => Err("services client not initialized".into()),
                     };
                     let _ = reply.send(result);
@@ -673,52 +638,25 @@ async fn start_services_client(
     api_secret_override: &str,
     on_telemetry: &TelemetryCb,
 ) -> Option<ServicesClient> {
-    let secret = if api_secret_override.is_empty() {
-        DEFAULT_API_SECRET
-    } else {
-        api_secret_override
+    // `IROH_SERVICES_API_SECRET=""` opts out; otherwise core resolves the env
+    // var, then the saved override, then the bundled default.
+    let Some(secret) = iroh_doctor_core::services::resolve_api_secret(Some(api_secret_override))
+    else {
+        on_telemetry(TelemetryState::Off);
+        return None;
     };
 
     on_telemetry(TelemetryState::Starting);
-    let name = device_name(&endpoint.id().to_string());
-
-    let builder = match ServicesClient::builder(endpoint).api_secret_from_str(secret) {
-        Ok(b) => b,
-        Err(e) => {
-            on_telemetry(TelemetryState::Error(format!("api secret: {e:?}")));
-            return None;
-        }
-    };
-    let builder = match builder.name(name.clone()) {
-        Ok(b) => b,
-        Err(e) => {
-            on_telemetry(TelemetryState::Error(format!("name: {e:?}")));
-            return None;
-        }
-    };
-
-    match builder.build().await {
+    let name = iroh_doctor_core::services::device_name(&endpoint.id().to_string());
+    match iroh_doctor_core::services::build_client(endpoint, &secret, &name).await {
         Ok(client) => {
             on_telemetry(TelemetryState::Active { name });
             Some(client)
         }
         Err(e) => {
-            on_telemetry(TelemetryState::Error(format!("{e:?}")));
+            on_telemetry(TelemetryState::Error(format!("{e:#}")));
             None
         }
-    }
-}
-
-fn device_name(endpoint_id_hex: &str) -> String {
-    let short: String = endpoint_id_hex.chars().take(8).collect();
-    if cfg!(target_os = "macos") {
-        format!("macos-dx-{short}")
-    } else if cfg!(target_os = "linux") {
-        format!("linux-dx-{short}")
-    } else if cfg!(target_os = "windows") {
-        format!("win-dx-{short}")
-    } else {
-        format!("dx-{short}")
     }
 }
 

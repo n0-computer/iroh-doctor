@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 anyhow = "1"
 iroh = "=1.0.0-rc.1"
 iroh-relay = "=1.0.0-rc.1"
+iroh-services = { version = "=1.0.0-rc.1", default-features = false }
 n0-future = "0.3"
 portmapper = "0.18"
 postcard = { version = "1", features = ["experimental-derive"] }
