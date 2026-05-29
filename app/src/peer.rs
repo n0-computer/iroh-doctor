@@ -13,16 +13,13 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use iroh::endpoint::{self, presets};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
-use iroh_blobs::store::mem::MemStore;
-use iroh_blobs::BlobsProtocol;
-use iroh_docs::protocol::Docs;
 use iroh_doctor_core::probe::{ClientConfig, ClientSample};
 use iroh_gossip::net::Gossip;
 use iroh_services::Client as ServicesClient;
 use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{debug, info, instrument, warn};
+use tracing::{info, instrument, warn};
 
 pub const DEFAULT_API_SECRET: &str =
     "servicesaaqg6nnf7kr3uiacviqgbxeqconvhuz4ldr5dem4gqhsp3cyat6qxexoctwjsi7m6dh2t2qvfu2yhdoaav6eibaj4aaavhonlixbohceu4aa";
@@ -90,23 +87,6 @@ pub enum PeerCommand {
     ProbePortMap {
         reply: oneshot::Sender<Result<crate::portmap_probe::PortMapProbeResult, String>>,
     },
-    /// Generates a blob of the requested size and adds it to the local
-    /// store. The reply carries a [`BlobSummary`] with the resulting hash
-    /// and how long the add took. Sizes greater than [`MAX_BLOB_BYTES`]
-    /// are rejected at the command layer.
-    AddBlob {
-        size_bytes: u64,
-        reply: oneshot::Sender<Result<BlobSummary, String>>,
-    },
-    /// Pulls a blob by hash from the given peer into the local store.
-    /// `progress_tx` receives cumulative byte offsets while the download
-    /// runs; the reply fires once with the final summary (or an error).
-    PullBlob {
-        peer: String,
-        hash: String,
-        progress_tx: mpsc::Sender<u64>,
-        reply: oneshot::Sender<Result<BlobSummary, String>>,
-    },
     /// Joins an iroh-gossip topic. `topic_input` is parsed as 64-hex if it
     /// matches that shape, otherwise hashed with BLAKE3 so any string
     /// becomes a deterministic topic. Any previously joined topic is
@@ -122,76 +102,6 @@ pub enum PeerCommand {
         msg: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    /// Creates a new iroh-docs document, subscribes to its live events,
-    /// and installs it as the active doc. The reply carries the new
-    /// namespace id.
-    CreateDoc {
-        events_tx: mpsc::Sender<DocEventUi>,
-        reply: oneshot::Sender<Result<String, String>>,
-    },
-    /// Imports a doc from a write ticket, subscribes to events, and
-    /// installs it as the active doc. The reply carries the namespace id.
-    ImportDoc {
-        ticket: String,
-        events_tx: mpsc::Sender<DocEventUi>,
-        reply: oneshot::Sender<Result<String, String>>,
-    },
-    /// Produces a write ticket for the active doc. The reply carries the
-    /// ticket string and errors if no doc is active.
-    ShareDoc {
-        reply: oneshot::Sender<Result<String, String>>,
-    },
-    /// Writes `value` at `key` on the active doc using the default author.
-    /// The reply carries the resulting content hash hex.
-    SetDocEntry {
-        key: String,
-        value: String,
-        reply: oneshot::Sender<Result<String, String>>,
-    },
-    /// Returns a snapshot of every entry currently in the active doc.
-    /// Values are read from the local blobs store; an entry whose content
-    /// hasn't synced yet returns `value: None`.
-    ListDocEntries {
-        reply: oneshot::Sender<Result<Vec<DocEntrySummary>, String>>,
-    },
-}
-
-/// Snapshot of one doc entry shaped for the UI.
-#[derive(Debug, Clone)]
-pub struct DocEntrySummary {
-    pub key: String,
-    /// Lossy UTF-8 view of the value, truncated to `MAX_VALUE_PREVIEW_BYTES`.
-    /// `None` when the entry exists but the content hasn't synced locally.
-    pub value: Option<String>,
-    pub content_hash: String,
-    pub content_len: u64,
-}
-
-/// Subset of [`iroh_docs::engine::LiveEvent`] reshaped for the Docs tab.
-#[derive(Debug, Clone)]
-pub enum DocEventUi {
-    InsertLocal {
-        key: String,
-        value_hash: String,
-    },
-    InsertRemote {
-        key: String,
-        value_hash: String,
-        from: String,
-    },
-    ContentReady {
-        hash: String,
-    },
-    PendingContentReady,
-    NeighborUp {
-        peer: String,
-    },
-    NeighborDown {
-        peer: String,
-    },
-    SyncFinished {
-        peer: String,
-    },
 }
 
 /// Subset of [`iroh_gossip::api::Event`] reshaped for the UI. Message
@@ -203,50 +113,6 @@ pub enum GossipEventUi {
     NeighborDown { peer: String },
     Message { from: String, body: String },
     Lagged,
-}
-
-/// One blob's metadata as shown in the Blobs tab.
-#[derive(Debug, Clone)]
-pub struct BlobSummary {
-    /// Hex-encoded BLAKE3 hash.
-    pub hash: String,
-    /// Size in bytes. `u64` so we can represent multi-GiB blobs on any
-    /// target.
-    pub size_bytes: u64,
-    pub kind: BlobKind,
-    /// Wall-clock duration in milliseconds for the operation that produced
-    /// this row (add for `Generated`, download for `Pulled`).
-    pub elapsed_ms: f64,
-}
-
-/// Upper bound on the size of a single generated blob. Two GiB is far past
-/// any reasonable debug test and well below the point where the MemStore
-/// would crowd out the rest of the process on a typical laptop.
-pub const MAX_BLOB_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
-/// Validates a requested blob size against [`MAX_BLOB_BYTES`]. Returns the
-/// size as a `usize` for use with `Vec::with_capacity`, or a UI-facing
-/// error string. Extracted as a free function so the cap behaviour is
-/// covered by unit tests without a real iroh-blobs `Store`.
-fn check_blob_size(size_bytes: u64) -> Result<usize, String> {
-    if size_bytes == 0 {
-        return Err("size must be greater than zero".into());
-    }
-    if size_bytes > MAX_BLOB_BYTES {
-        return Err(format!(
-            "requested {} exceeds the {} cap",
-            crate::components::format_bytes_iec(size_bytes),
-            crate::components::format_bytes_iec(MAX_BLOB_BYTES),
-        ));
-    }
-    usize::try_from(size_bytes)
-        .map_err(|_| format!("size {size_bytes} does not fit in usize on this target"))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlobKind {
-    Generated,
-    Pulled,
 }
 
 #[derive(Debug, Clone)]
@@ -417,16 +283,10 @@ pub async fn run_peer(
     let mut services: Option<ServicesClient> =
         start_services_client(&endpoint, &api_secret_override, &on_telemetry).await;
 
-    // Owners for the additional protocols. Each is cheaply cloneable; clones
-    // share state and outlive any individual connection.
-    let blobs_store = MemStore::new();
-    let blobs = BlobsProtocol::new(&blobs_store, None);
+    // Owner for the gossip protocol. Cheaply cloneable; clones share state
+    // and outlive any individual connection.
     let gossip = Gossip::builder().spawn(endpoint.clone());
-    let docs = Docs::memory()
-        .spawn(endpoint.clone(), (*blobs_store).clone(), gossip.clone())
-        .await
-        .context("spawn iroh-docs")?;
-    info!("multi-protocol endpoint ready (probe, blobs, gossip, docs)");
+    info!("multi-protocol endpoint ready (probe, gossip)");
 
     // The active monitor for the current dial. A fresh Connect aborts the
     // previous one before installing its own, so at most one runs at a time.
@@ -452,9 +312,7 @@ pub async fn run_peer(
             on_state: on_state.clone(),
             on_throughput: on_throughput.clone(),
             on_ttfdb: on_ttfdb.clone(),
-            blobs: blobs.clone(),
             gossip: gossip.clone(),
-            docs: docs.clone(),
             probe_limit: probe_limit.clone(),
         };
         long_lived.spawn(async move { run_accept_loop(ctx).await });
@@ -466,12 +324,6 @@ pub async fn run_peer(
     let gossip_recv_handle: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let gossip_sender_slot: Arc<Mutex<Option<iroh_gossip::api::GossipSender>>> =
         Arc::new(Mutex::new(None));
-
-    // State for the docs commands: at most one document is active at a time,
-    // and the doc-events subscriber lives on `docs_events_handle` so we can
-    // abort it when switching to a different doc.
-    let docs_active: Arc<Mutex<Option<iroh_docs::api::Doc>>> = Arc::new(Mutex::new(None));
-    let docs_events_handle: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
     // Paths sampler: every PATHS_SAMPLE_INTERVAL, snapshot the active
     // connection's QUIC paths for the Diagnostics view. We only notify the UI
@@ -652,26 +504,6 @@ pub async fn run_peer(
                     let _ = reply.send(Ok(result));
                 });
             }
-            PeerCommand::AddBlob { size_bytes, reply } => {
-                let store = (*blobs_store).clone();
-                tokio::spawn(async move {
-                    let result = generate_and_store_blob(store, size_bytes).await;
-                    let _ = reply.send(result);
-                });
-            }
-            PeerCommand::PullBlob {
-                peer,
-                hash,
-                progress_tx,
-                reply,
-            } => {
-                let store = (*blobs_store).clone();
-                let endpoint = endpoint.clone();
-                tokio::spawn(async move {
-                    let result = pull_blob(store, endpoint, peer, hash, progress_tx).await;
-                    let _ = reply.send(result);
-                });
-            }
             PeerCommand::JoinGossip {
                 topic_input,
                 bootstrap,
@@ -708,63 +540,6 @@ pub async fn run_peer(
                     let _ = reply.send(result);
                 });
             }
-            PeerCommand::CreateDoc { events_tx, reply } => {
-                let docs = docs.clone();
-                let active = docs_active.clone();
-                let events_handle = docs_events_handle.clone();
-                tokio::spawn(async move {
-                    let result = create_doc(docs, active, events_handle, events_tx).await;
-                    let _ = reply.send(result);
-                });
-            }
-            PeerCommand::ImportDoc {
-                ticket,
-                events_tx,
-                reply,
-            } => {
-                let docs = docs.clone();
-                let active = docs_active.clone();
-                let events_handle = docs_events_handle.clone();
-                tokio::spawn(async move {
-                    let result = import_doc(docs, active, events_handle, ticket, events_tx).await;
-                    let _ = reply.send(result);
-                });
-            }
-            PeerCommand::ShareDoc { reply } => {
-                let active = docs_active.clone();
-                tokio::spawn(async move {
-                    let doc = active.lock().await.clone();
-                    let result = match doc {
-                        Some(d) => share_active_doc(d).await,
-                        None => Err("no active doc".into()),
-                    };
-                    let _ = reply.send(result);
-                });
-            }
-            PeerCommand::SetDocEntry { key, value, reply } => {
-                let docs = docs.clone();
-                let active = docs_active.clone();
-                tokio::spawn(async move {
-                    let doc = active.lock().await.clone();
-                    let result = match doc {
-                        Some(d) => set_doc_entry(docs, d, key, value).await,
-                        None => Err("no active doc".into()),
-                    };
-                    let _ = reply.send(result);
-                });
-            }
-            PeerCommand::ListDocEntries { reply } => {
-                let active = docs_active.clone();
-                let store = (*blobs_store).clone();
-                tokio::spawn(async move {
-                    let doc = active.lock().await.clone();
-                    let result = match doc {
-                        Some(d) => list_doc_entries(d, store).await,
-                        None => Err("no active doc".into()),
-                    };
-                    let _ = reply.send(result);
-                });
-            }
         }
     }
 
@@ -776,117 +551,6 @@ pub async fn run_peer(
     long_lived.shutdown().await;
     endpoint.close().await;
     Ok(())
-}
-
-#[instrument(skip(store), fields(size_bytes))]
-async fn generate_and_store_blob(
-    store: iroh_blobs::api::Store,
-    size_bytes: u64,
-) -> Result<BlobSummary, String> {
-    use rand::RngCore;
-
-    let size_usize = check_blob_size(size_bytes)?;
-
-    // Eight random bytes at the front make each generation produce a unique
-    // hash regardless of size. The rest is zero-filled so we can scale to
-    // GiB-sized test blobs without paying the cost of randomizing every byte.
-    let mut bytes = vec![0u8; size_usize];
-    let salt_len = size_usize.min(8);
-    rand::thread_rng().fill_bytes(&mut bytes[..salt_len]);
-
-    let start = std::time::Instant::now();
-    let tag_info = store
-        .blobs()
-        .add_bytes(bytes)
-        .await
-        .map_err(|e| format!("add_bytes: {e:#}"))?;
-    let elapsed = start.elapsed();
-    debug!(
-        hash = %tag_info.hash,
-        elapsed_ms = elapsed.as_secs_f64() * 1000.0,
-        "stored generated blob"
-    );
-
-    Ok(BlobSummary {
-        hash: tag_info.hash.to_string(),
-        size_bytes,
-        kind: BlobKind::Generated,
-        elapsed_ms: elapsed.as_secs_f64() * 1000.0,
-    })
-}
-
-#[instrument(skip(store, endpoint, progress_tx), fields(peer = %peer, hash = %hash))]
-async fn pull_blob(
-    store: iroh_blobs::api::Store,
-    endpoint: Endpoint,
-    peer: String,
-    hash: String,
-    progress_tx: mpsc::Sender<u64>,
-) -> Result<BlobSummary, String> {
-    use n0_future::StreamExt;
-
-    let parsed_peer =
-        EndpointId::from_str(peer.trim()).map_err(|e| format!("invalid peer endpoint id: {e}"))?;
-    let parsed_hash =
-        iroh_blobs::Hash::from_str(hash.trim()).map_err(|e| format!("invalid hash: {e}"))?;
-
-    let downloader = store.downloader(&endpoint);
-    let start = std::time::Instant::now();
-    let mut stream = downloader
-        .download(parsed_hash, Some(parsed_peer))
-        .stream()
-        .await
-        .map_err(|e| format!("downloader.stream: {e:#}"))?;
-
-    while let Some(item) = stream.next().await {
-        use iroh_blobs::api::downloader::DownloadProgressItem;
-        match item {
-            DownloadProgressItem::Progress(offset) => {
-                // The same cap that gates blob generation also gates pull
-                // size, since a malicious or careless peer could otherwise
-                // stream into MemStore until the process OOMs. Dropping
-                // the stream aborts the underlying request.
-                if offset > MAX_BLOB_BYTES {
-                    return Err(format!(
-                        "pull exceeded {} cap (at {})",
-                        crate::components::format_bytes_iec(MAX_BLOB_BYTES),
-                        crate::components::format_bytes_iec(offset),
-                    ));
-                }
-                let _ = progress_tx.try_send(offset);
-            }
-            DownloadProgressItem::PartComplete { .. } => {}
-            DownloadProgressItem::TryProvider { .. }
-            | DownloadProgressItem::ProviderFailed { .. } => {}
-            DownloadProgressItem::Error(e) => {
-                return Err(format!("download error: {e}"));
-            }
-            DownloadProgressItem::DownloadError => {
-                return Err("download error".into());
-            }
-        }
-    }
-
-    let elapsed = start.elapsed();
-    // Query the store for the actual stored size. The Progress events only
-    // fire periodically and may skip sub-chunk blobs entirely, which would
-    // make a Progress-derived size unreliable. `await_completion` drains
-    // the observe stream until `is_complete()` so the bitfield reflects the
-    // post-download state, not the first-emitted snapshot.
-    let size_bytes = match store.blobs().observe(parsed_hash).await_completion().await {
-        Ok(bitfield) => bitfield.size(),
-        Err(e) => {
-            warn!(err = %e, "blob observe after download failed; reporting size 0");
-            0
-        }
-    };
-
-    Ok(BlobSummary {
-        hash: parsed_hash.to_string(),
-        size_bytes,
-        kind: BlobKind::Pulled,
-        elapsed_ms: elapsed.as_secs_f64() * 1000.0,
-    })
 }
 
 #[instrument(
@@ -972,206 +636,6 @@ async fn join_gossip(
     Ok(topic_id.to_string())
 }
 
-async fn create_doc(
-    docs: Docs,
-    active: Arc<Mutex<Option<iroh_docs::api::Doc>>>,
-    events_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    events_tx: mpsc::Sender<DocEventUi>,
-) -> Result<String, String> {
-    let doc = docs
-        .create()
-        .await
-        .map_err(|e| format!("docs.create: {e:#}"))?;
-    let stream = doc
-        .subscribe()
-        .await
-        .map_err(|e| format!("doc.subscribe: {e:#}"))?;
-    install_active_doc(active, events_handle, doc, Box::pin(stream), events_tx).await
-}
-
-async fn import_doc(
-    docs: Docs,
-    active: Arc<Mutex<Option<iroh_docs::api::Doc>>>,
-    events_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    ticket_str: String,
-    events_tx: mpsc::Sender<DocEventUi>,
-) -> Result<String, String> {
-    let ticket: iroh_docs::DocTicket = ticket_str
-        .trim()
-        .parse()
-        .map_err(|e| format!("invalid doc ticket: {e}"))?;
-    // `import_and_subscribe` ensures no sync events are missed between
-    // import and subscribe; threading its stream through to
-    // `install_active_doc` avoids opening (and racing) a second
-    // subscription.
-    let (doc, stream) = docs
-        .import_and_subscribe(ticket)
-        .await
-        .map_err(|e| format!("import_and_subscribe: {e:#}"))?;
-    install_active_doc(active, events_handle, doc, Box::pin(stream), events_tx).await
-}
-
-#[instrument(skip(active, events_handle, doc, stream, events_tx))]
-async fn install_active_doc(
-    active: Arc<Mutex<Option<iroh_docs::api::Doc>>>,
-    events_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    doc: iroh_docs::api::Doc,
-    mut stream: std::pin::Pin<
-        Box<dyn n0_future::Stream<Item = anyhow::Result<iroh_docs::engine::LiveEvent>> + Send>,
-    >,
-    events_tx: mpsc::Sender<DocEventUi>,
-) -> Result<String, String> {
-    use n0_future::StreamExt;
-
-    let doc_id = doc.id().to_string();
-
-    // Spawn the events pump first. `tokio::spawn` returns the handle
-    // immediately; the closure runs concurrently and never blocks the
-    // install.
-    let handle = tokio::spawn(async move {
-        use iroh_docs::engine::LiveEvent;
-        while let Some(item) = stream.next().await {
-            let event = match item {
-                Ok(e) => e,
-                Err(err) => {
-                    warn!(?err, "doc subscribe error");
-                    break;
-                }
-            };
-            let ui = match event {
-                LiveEvent::InsertLocal { entry } => DocEventUi::InsertLocal {
-                    key: String::from_utf8_lossy(entry.key()).into_owned(),
-                    value_hash: entry.content_hash().to_string(),
-                },
-                LiveEvent::InsertRemote { from, entry, .. } => DocEventUi::InsertRemote {
-                    key: String::from_utf8_lossy(entry.key()).into_owned(),
-                    value_hash: entry.content_hash().to_string(),
-                    from: from.to_string(),
-                },
-                LiveEvent::ContentReady { hash } => DocEventUi::ContentReady {
-                    hash: hash.to_string(),
-                },
-                LiveEvent::PendingContentReady => DocEventUi::PendingContentReady,
-                LiveEvent::NeighborUp(peer) => DocEventUi::NeighborUp {
-                    peer: peer.to_string(),
-                },
-                LiveEvent::NeighborDown(peer) => DocEventUi::NeighborDown {
-                    peer: peer.to_string(),
-                },
-                LiveEvent::SyncFinished(ev) => DocEventUi::SyncFinished {
-                    peer: ev.peer.to_string(),
-                },
-            };
-            if events_tx.try_send(ui).is_err() {
-                warn!("docs events_tx full, dropping event");
-            }
-        }
-    });
-
-    // Atomic swap: take both locks (always in this order to avoid lock
-    // inversion), abort any prior events task, install the new doc and
-    // its handle together. A concurrent install racing this one
-    // serializes on `events_handle.lock()` and either runs before or
-    // after, never interleaved.
-    let mut h = events_handle.lock().await;
-    let mut a = active.lock().await;
-    if let Some(prev) = h.take() {
-        prev.abort();
-    }
-    *h = Some(handle);
-    *a = Some(doc);
-
-    Ok(doc_id)
-}
-
-async fn share_active_doc(doc: iroh_docs::api::Doc) -> Result<String, String> {
-    use iroh_docs::api::protocol::{AddrInfoOptions, ShareMode};
-    let ticket = doc
-        .share(ShareMode::Write, AddrInfoOptions::Id)
-        .await
-        .map_err(|e| format!("doc.share: {e:#}"))?;
-    Ok(ticket.to_string())
-}
-
-/// Hard cap on doc-entry value length. Doc entries land in the in-memory
-/// store too, so a long paste behaves the same way as a giant blob
-/// generation: it consumes RAM until the process exits. One MiB is large
-/// for any reasonable debug case.
-const MAX_DOC_VALUE_BYTES: usize = 1024 * 1024;
-
-/// Cap on the bytes we read + render per entry in the UI list. Values
-/// can be up to [`MAX_DOC_VALUE_BYTES`]; we don't want a single 1 MiB
-/// paste to drag the renderer or blow up the IPC payload.
-const MAX_VALUE_PREVIEW_BYTES: u64 = 4 * 1024;
-
-async fn list_doc_entries(
-    doc: iroh_docs::api::Doc,
-    store: iroh_blobs::api::Store,
-) -> Result<Vec<DocEntrySummary>, String> {
-    use iroh_docs::store::Query;
-    use n0_future::StreamExt;
-
-    let stream = doc
-        .get_many(Query::all())
-        .await
-        .map_err(|e| format!("get_many: {e:#}"))?;
-    let mut stream = Box::pin(stream);
-
-    let mut out = Vec::new();
-    while let Some(item) = stream.next().await {
-        let entry = item.map_err(|e| format!("entry: {e:#}"))?;
-        let key = String::from_utf8_lossy(entry.key()).into_owned();
-        let content_hash = entry.content_hash();
-        let content_len = entry.content_len();
-
-        // Only try to read content that's small enough to render and small
-        // enough to be cheap. For larger entries we still show key + hash.
-        let value = if content_len > 0 && content_len <= MAX_VALUE_PREVIEW_BYTES {
-            match store.get_bytes(content_hash).await {
-                Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
-
-        out.push(DocEntrySummary {
-            key,
-            value,
-            content_hash: content_hash.to_string(),
-            content_len,
-        });
-    }
-    Ok(out)
-}
-
-async fn set_doc_entry(
-    docs: Docs,
-    doc: iroh_docs::api::Doc,
-    key: String,
-    value: String,
-) -> Result<String, String> {
-    if key.is_empty() {
-        return Err("key must not be empty".into());
-    }
-    if value.len() > MAX_DOC_VALUE_BYTES {
-        return Err(format!(
-            "value length {} exceeds the {} cap",
-            crate::components::format_bytes_iec(value.len() as u64),
-            crate::components::format_bytes_iec(MAX_DOC_VALUE_BYTES as u64),
-        ));
-    }
-    let author = docs
-        .author_default()
-        .await
-        .map_err(|e| format!("author_default: {e:#}"))?;
-    let hash = doc
-        .set_bytes(author, key.into_bytes(), value.into_bytes())
-        .await
-        .map_err(|e| format!("set_bytes: {e:#}"))?;
-    Ok(hash.to_string())
-}
-
 fn parse_topic_id(input: &str) -> iroh_gossip::proto::TopicId {
     let trimmed = input.trim();
     if trimmed.len() == 64 {
@@ -1198,9 +662,7 @@ async fn bind_endpoint(secret_key: SecretKey) -> Result<Endpoint> {
     // builder = builder.address_lookup(iroh::address_lookup::PkarrResolver::n0_dns());
     builder = builder.secret_key(secret_key);
     builder = builder.alpns(vec![
-        iroh_blobs::ALPN.to_vec(),
         iroh_gossip::ALPN.to_vec(),
-        iroh_docs::ALPN.to_vec(),
         iroh_doctor_core::probe::ALPN.to_vec(),
     ]);
     builder.bind().await.context("bind endpoint")
@@ -1272,9 +734,7 @@ struct AcceptCtx {
     /// metric an outgoing dial publishes. The accept arm runs a `ttfdb_watch`
     /// task when it owns `conn_slot`.
     on_ttfdb: TtfdbCb,
-    blobs: BlobsProtocol,
     gossip: Gossip,
-    docs: Docs,
     /// Per-process cap on concurrent peer-probe server handlers. The
     /// peer-probe ALPN has no auth layer; without this cap a peer that
     /// learned our endpoint id could open arbitrarily many parallel
@@ -1286,8 +746,6 @@ struct AcceptCtx {
 const MAX_CONCURRENT_PROBE_SERVERS: usize = 4;
 
 async fn run_accept_loop(ctx: AcceptCtx) {
-    use iroh::protocol::ProtocolHandler;
-
     loop {
         let Some(incoming) = ctx.endpoint.accept().await else {
             break;
@@ -1306,25 +764,11 @@ async fn run_accept_loop(ctx: AcceptCtx) {
         };
 
         let alpn_bytes: &[u8] = alpn.as_ref();
-        if alpn_bytes == iroh_blobs::ALPN {
-            let handler = ctx.blobs.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handler.accept(conn).await {
-                    warn!(err = %e, "iroh-blobs accept failed");
-                }
-            });
-        } else if alpn_bytes == iroh_gossip::ALPN {
+        if alpn_bytes == iroh_gossip::ALPN {
             let handler = ctx.gossip.clone();
             tokio::spawn(async move {
                 if let Err(e) = handler.handle_connection(conn).await {
                     warn!(err = ?e, "iroh-gossip accept failed");
-                }
-            });
-        } else if alpn_bytes == iroh_docs::ALPN {
-            let handler = ctx.docs.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handler.accept(conn).await {
-                    warn!(err = %e, "iroh-docs accept failed");
                 }
             });
         } else if alpn_bytes == iroh_doctor_core::probe::ALPN {
@@ -1618,28 +1062,5 @@ mod tests {
         // And it must differ from a different input.
         let other = parse_topic_id("something-else");
         assert_ne!(from_blake, other);
-    }
-
-    #[test]
-    fn check_blob_size_rejects_zero() {
-        let err = check_blob_size(0).unwrap_err();
-        assert!(err.contains("greater than zero"), "got: {err}");
-    }
-
-    #[test]
-    fn check_blob_size_accepts_below_cap() {
-        assert_eq!(check_blob_size(1024).unwrap(), 1024);
-        assert_eq!(
-            check_blob_size(MAX_BLOB_BYTES).unwrap(),
-            MAX_BLOB_BYTES as usize
-        );
-    }
-
-    #[test]
-    fn check_blob_size_rejects_above_cap() {
-        let err = check_blob_size(MAX_BLOB_BYTES + 1).unwrap_err();
-        assert!(err.contains("exceeds"), "got: {err}");
-        // The error message uses IEC units, not raw bytes.
-        assert!(err.contains("GiB"), "got: {err}");
     }
 }

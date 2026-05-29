@@ -20,7 +20,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::components::{DiagState, EventEntry};
 use crate::endpoints::Endpoint;
-use crate::peer::{BlobSummary, NetReportSummary, PathInfo, ThroughputSnapshot};
+use crate::peer::{NetReportSummary, PathInfo, ThroughputSnapshot};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
 
@@ -40,7 +40,6 @@ pub struct Snapshot {
     pub relays_err: Option<String>,
     pub ttfdb: Option<Duration>,
     pub throughput: Option<ThroughputSnapshot>,
-    pub blobs: Vec<BlobSummary>,
     pub endpoints: Vec<Endpoint>,
     pub log_dir: Option<PathBuf>,
 }
@@ -98,9 +97,6 @@ pub fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
 
         zip.start_file("throughput.txt", opts)?;
         zip.write_all(throughput_section(snapshot).as_bytes())?;
-
-        zip.start_file("blobs.csv", opts)?;
-        zip.write_all(blobs_csv(snapshot).as_bytes())?;
 
         zip.start_file("endpoints.json", opts)?;
         zip.write_all(endpoints_json(snapshot).as_bytes())?;
@@ -269,17 +265,6 @@ fn throughput_section(s: &Snapshot) -> String {
     match t.mbps {
         Some(m) => out.push_str(&format!("mbps: {m:.3}\n")),
         None => out.push_str("mbps: (elapsed was zero)\n"),
-    }
-    out
-}
-
-fn blobs_csv(s: &Snapshot) -> String {
-    let mut out = String::from("hash,size_bytes,kind,elapsed_ms\n");
-    for b in &s.blobs {
-        out.push_str(&format!(
-            "{},{},{:?},{}\n",
-            b.hash, b.size_bytes, b.kind, b.elapsed_ms
-        ));
     }
     out
 }

@@ -325,8 +325,6 @@ html, body {
     font-size: 12px;
 }
 .diagnostics,
-.blobs-view,
-.docs-view,
 .gossip-view {
     display: flex;
     flex-direction: column;
@@ -442,50 +440,6 @@ html, body {
 .event-row[data-kind="connected"] .event-label { color: #2da44e; }
 .event-row[data-kind="ready"] .event-label { color: #0a84ff; }
 
-/* Blobs tab */
-.blobs-view {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}
-.blob-size-row {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-.blob-size-row .btn {
-    font-size: 12px;
-    padding: 4px 10px;
-}
-.blob-progress {
-    display: flex;
-    gap: 12px;
-    align-items: baseline;
-    font-size: 13px;
-}
-.blob-progress-started {
-    font-size: 11px;
-    opacity: 0.6;
-}
-.blobs-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-.blobs-table th, .blobs-table td {
-    text-align: left;
-    padding: 4px 8px;
-    border-bottom: 1px solid rgba(127, 127, 127, 0.18);
-}
-.blobs-table tr:last-child td { border-bottom: 0; }
-.blobs-table th { font-weight: 600; opacity: 0.65; }
-.blobs-hash {
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 /* Gossip tab */
 .gossip-view {
     display: flex;
@@ -542,61 +496,6 @@ html, body {
 .gossip-msg-from { color: #0a84ff; }
 .gossip-msg-time { opacity: 0.55; }
 .gossip-msg-body { word-break: break-word; }
-
-/* Docs tab */
-.docs-view {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}
-.doc-id-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-.doc-ticket-box {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 8px;
-}
-.doc-ticket-text {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: 11px;
-    word-break: break-all;
-    white-space: pre-wrap;
-}
-.doc-events {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    max-height: 280px;
-    overflow-y: auto;
-    border: 1px solid rgba(127, 127, 127, 0.18);
-    border-radius: 6px;
-    background: rgba(127, 127, 127, 0.04);
-}
-.doc-event-row {
-    display: grid;
-    grid-template-columns: 70px 1fr;
-    gap: 8px;
-    padding: 4px 10px;
-    border-bottom: 1px solid rgba(127, 127, 127, 0.10);
-    font-size: 12px;
-    align-items: baseline;
-}
-.doc-event-row:last-child { border-bottom: 0; }
-.doc-event-kind {
-    text-transform: uppercase;
-    font-size: 10px;
-    opacity: 0.65;
-    letter-spacing: 0.05em;
-}
-.doc-event-row[data-kind="local"] .doc-event-kind { color: #2da44e; opacity: 1; }
-.doc-event-row[data-kind="remote"] .doc-event-kind { color: #0a84ff; opacity: 1; }
-.doc-event-row[data-kind="sync"] .doc-event-kind { color: #b380ff; opacity: 1; }
-.doc-event-row[data-kind="neighbor"] .doc-event-kind { color: #ff9500; opacity: 1; }
-.doc-event-row[data-kind="content"] .doc-event-kind { opacity: 0.8; }
 
 /* Path / transport tables (rendered inside the Diagnostics tab) */
 .transport-active {

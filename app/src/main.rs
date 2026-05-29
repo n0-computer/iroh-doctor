@@ -15,12 +15,11 @@ mod relay_probe;
 use std::time::{Duration, Instant};
 
 use components::{
-    AppError, BlobsView, DiagState, DiagnosticsView, DocsView, EndpointsView, ErrorDialog,
-    EventEntry, GossipView,
+    AppError, DiagState, DiagnosticsView, EndpointsView, ErrorDialog, EventEntry, GossipView,
 };
 use peer::{
-    BlobSummary, ConnectionState, DiagnosticsReport, NetReportSummary, PathInfo, PeerCallbacks,
-    PeerCommand, TelemetryState,
+    ConnectionState, DiagnosticsReport, NetReportSummary, PathInfo, PeerCallbacks, PeerCommand,
+    TelemetryState,
 };
 
 /// Maximum samples kept in the RTT sparkline. At 500 ms intervals this is
@@ -119,7 +118,6 @@ pub struct PeerHandle {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Diagnostics,
-    Data,
     Gossip,
     Endpoints,
 }
@@ -148,21 +146,11 @@ fn App() -> Element {
     let event_log: Signal<VecDeque<EventEntry>> =
         use_signal(|| VecDeque::with_capacity(EVENT_LOG_LEN));
     let start_instant = use_signal(Instant::now);
-    let blobs_list: Signal<Vec<BlobSummary>> = use_signal(Vec::new);
 
     // Endpoints list lives in `App` so it survives tab switches and is
     // loaded from disk once on app start.
     let endpoints_list: Signal<Vec<endpoints::Endpoint>> = use_signal(endpoints::load);
 
-    // Docs state lives in `App` (not inside `DocsView`) so a tab switch
-    // does not unmount and discard the auto-created document.
-    let active_doc: Signal<Option<String>> = use_signal(|| None);
-    let doc_entries: Signal<Vec<peer::DocEntrySummary>> = use_signal(Vec::new);
-    let doc_events: Signal<VecDeque<components::DocEventRow>> =
-        use_signal(|| VecDeque::with_capacity(components::DOC_EVENT_LOG_CAPACITY));
-    let doc_last_error: Signal<Option<String>> = use_signal(|| None);
-    let doc_listing: Signal<bool> = use_signal(|| false);
-    let docs_auto_created: Signal<bool> = use_signal(|| false);
     let diag_auto_run: Signal<bool> = use_signal(|| false);
 
     // Global error dialog state. Setters live in App so the modal can
@@ -342,32 +330,6 @@ fn App() -> Element {
             error_sink.set(Some(AppError::new("portmap probe", msg)));
         }
     });
-    use_effect(move || {
-        if let Some(msg) = doc_last_error() {
-            error_sink.set(Some(AppError::new("docs", msg)));
-        }
-    });
-
-    // Auto-create the iroh-docs document once the peer task is ready so
-    // the document survives the first tab switch and the user does not
-    // have to click Create.
-    {
-        let mut auto_flag = docs_auto_created;
-        use_effect(move || {
-            if cmd_handle.read().is_some() && !auto_flag.peek().to_owned() {
-                auto_flag.set(true);
-                components::auto_create_doc(
-                    cmd_handle,
-                    active_doc,
-                    doc_entries,
-                    doc_events,
-                    doc_listing,
-                    doc_last_error,
-                );
-            }
-        });
-    }
-
     let tab = current_tab();
     let status = status_line(&conn_state());
     let status_kind = status_kind(&conn_state());
@@ -391,22 +353,6 @@ fn App() -> Element {
                             services_ping_state, net_state, net_report_state, relays_state,
                             portmap_state,
                             paths, rtt_history, event_log, ttfdb, throughput,
-                        }
-                    },
-                    Tab::Data => rsx! {
-                        div { class: "page",
-                            h2 { class: "page-title", "Data" }
-                            h3 { class: "page-subtitle", "Blobs" }
-                            BlobsView { cmd_handle, conn_state, blobs_list }
-                            h3 { class: "page-subtitle", "Docs" }
-                            DocsView {
-                                cmd_handle,
-                                active_doc,
-                                entries: doc_entries,
-                                events: doc_events,
-                                last_error: doc_last_error,
-                                listing: doc_listing,
-                            }
                         }
                     },
                     Tab::Gossip => rsx! {
@@ -447,7 +393,6 @@ fn App() -> Element {
                         relays_state,
                         ttfdb,
                         throughput,
-                        blobs_list,
                         endpoints_list,
                     );
                 },
@@ -471,7 +416,6 @@ fn handle_send_diagnostics(
     relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
     ttfdb: Signal<Option<Duration>>,
     throughput: Signal<Option<peer::ThroughputSnapshot>>,
-    blobs_list: Signal<Vec<peer::BlobSummary>>,
     endpoints_list: Signal<Vec<endpoints::Endpoint>>,
 ) {
     let (net_report, _) = diagnostics_export::Snapshot::extract_diag_state(&net_report_state());
@@ -492,7 +436,6 @@ fn handle_send_diagnostics(
         relays_err,
         ttfdb: ttfdb(),
         throughput: throughput(),
-        blobs: blobs_list(),
         endpoints: endpoints_list(),
         log_dir: log_dir(),
     };
@@ -555,12 +498,6 @@ fn Nav(current_tab: Signal<Tab>) -> Element {
                 icon: "⌁",
                 is_active: active == Tab::Diagnostics,
                 on_select: move |_| current_tab.clone().set(Tab::Diagnostics),
-            }
-            NavItem {
-                label: "Data",
-                icon: "◇",
-                is_active: active == Tab::Data,
-                on_select: move |_| current_tab.clone().set(Tab::Data),
             }
             NavItem {
                 label: "Gossip",

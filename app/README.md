@@ -1,9 +1,9 @@
 # iroh-doctor-app
 
 A Dioxus 0.7 desktop tool for debugging live iroh connections and
-exercising the iroh-blobs, iroh-gossip, and iroh-docs protocols
-against another peer. Connecting to a peer runs the same latency and
-throughput monitor as `iroh-doctor connect`.
+exercising the iroh-gossip protocol against another peer. Connecting to
+a peer runs the same latency and throughput monitor as
+`iroh-doctor connect`.
 
 ## Tabs
 
@@ -25,14 +25,6 @@ throughput monitor as `iroh-doctor connect`.
   - Services diagnostics: the legacy iroh-services-backed view, kept
     side-by-side so a disagreement with the direct probes is visible.
   - iroh-services API key and telemetry status.
-- **Data**: Blobs and Docs sit together on one tab.
-  - Blobs: generate a salted-zero buffer of 1 KiB to 1 GiB into an
-    in-memory blob store, copy the hash to another peer, pull blobs
-    by hash and endpoint id, see elapsed time and throughput per blob.
-  - Docs: create a new iroh-docs document or import one from a write
-    ticket, share the active doc as a write ticket, write KV entries
-    under the default author, watch local inserts, remote inserts,
-    sync-finished, and content-ready events stream in.
 - **Gossip**: join an iroh-gossip topic (paste a 64-hex topic id, or
   type any string and the app hashes it deterministically with
   BLAKE3 so both peers converge); see neighbors; broadcast UTF-8
@@ -46,30 +38,21 @@ connect` uses, so the cli and the app report a connection identically.
 
 ## Multi-protocol surface
 
-`peer.rs` binds one `iroh::Endpoint` that advertises four ALPNs:
-`iroh-blobs::ALPN` (`/iroh-bytes/4`), `iroh-gossip::ALPN`
-(`/iroh-gossip/1`), `iroh-docs::ALPN` (`/iroh-sync/1`), and the probe ALPN
+`peer.rs` binds one `iroh::Endpoint` that advertises two ALPNs:
+`iroh-gossip::ALPN` (`/iroh-gossip/1`) and the probe ALPN
 (`iroh-pong-probe/0`) so `iroh-doctor connect` works against this app. The
-accept loop dispatches per ALPN: each spawns the matching
-`ProtocolHandler::accept` (or `Gossip::handle_connection` or
-`probe::handle_connection_with`) per connection so any one transfer cannot
-wedge the accept of another. An incoming probe is also surfaced through
-`conn_slot` so the Diagnostics view shows it like an outgoing dial.
-
-`MemStore` is ephemeral and the peer task does not call
-`shutdown().await` on exit, so closing the app discards all
-generated and downloaded blobs and any in-memory doc state. That
-is intentional for a debug session.
+accept loop dispatches per ALPN: gossip spawns `Gossip::handle_connection`
+and the probe spawns `probe::handle_connection_with`, each per connection
+so one cannot wedge the accept of another. An incoming probe is also
+surfaced through `conn_slot` so the Diagnostics view shows it like an
+outgoing dial.
 
 ## Trust model
 
-iroh-doctor-app serves blobs, gossip, and docs to any peer that can dial
-our endpoint id. Endpoint ids are not secret, but the content
-addressing means a remote needs the 32-byte hash to pull anything
-from the blobs store, and the doc protocol still rejects writes
-without the right capability. Treat this app as a peer-to-peer
-debug tool to hand to a known collaborator over a side channel,
-not as a service to leave exposed.
+iroh-doctor-app serves the gossip and probe protocols to any peer that
+can dial our endpoint id. Endpoint ids are not secret. Treat this app as
+a peer-to-peer debug tool to hand to a known collaborator over a side
+channel, not as a service to leave exposed.
 
 ## Build and run
 
@@ -113,9 +96,7 @@ src/
   components/
     mod.rs                - shared helpers (short_id)
     diagnostics.rs        - Diagnostics tab (paths, RTT, events, report)
-    blobs.rs              - Blobs section
     gossip.rs             - Gossip tab
-    docs.rs               - Docs section
     endpoints.rs          - Endpoints tab
     error_dialog.rs       - global error modal
 assets/
@@ -127,13 +108,9 @@ assets/
 
 ```toml
 iroh           = "=1.0.0-rc.1"
-iroh-base      = "=1.0.0-rc.1"
-iroh-relay     = "=1.0.0-rc.1"
 iroh-services  = "=1.0.0-rc.1"
 iroh-blobs     = "=0.102.0"
 iroh-gossip    = "=0.100.0"
-iroh-docs      = "=0.100.0"
-portmapper     = "0.18"
 ```
 
 The `=` pins are deliberate: this branch validates against a
