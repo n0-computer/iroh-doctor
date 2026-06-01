@@ -202,8 +202,10 @@ Android:
 
 ### Phase 4 — Legal
 
-- [ ] Write a **privacy policy** (required by both stores even with no
+- [~] Write a **privacy policy** (required by both stores even with no
       collection): local logs, telemetry-off-by-default, opt-in iroh-services.
+      DRAFTED: `plans/app-store-privacy-policy-draft.md` — needs legal review +
+      a couple of confirmed details (telemetry fields, contact, retention).
 - [ ] **Host** it under `https://www.iroh.computer/legal` (confirmed location).
       *(Blocker — Rae / web team: publish the page at that URL.)*
 - [ ] Optional **terms of use**.
