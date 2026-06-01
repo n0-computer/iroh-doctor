@@ -1,13 +1,46 @@
 # Plan: release iroh-doctor-app on the App Store and Google Play
 
-- [ ] write plan (this doc)
-- [ ] user review of this plan
-- [ ] execute Phase 0–4 + as much of 5–6 as possible without paid accounts / Android hardware
+- [x] write plan (this doc)
+- [x] user approved plan ("just go yes") + go-as-far-as-possible execution
+- [x] Phase 0: unify bundle id, set marketing name, dx mobile spike (see below)
+- [x] Phase 3 (iOS, partial): local-network + export-compliance plist keys, verified
+- [ ] remaining Phase 0–4 + as much of 5–6 as possible without paid accounts / Android hardware
 
 Status: design approved (Approach A). Distribution posture: **public, positioned
 as a developer / network-diagnostics utility**, both stores. Deliverable: this
 plan, then execute as far as possible, flagging each credential / account /
 device blocker.
+
+## Spike results (verified 2026-06-01, dx 0.7.9)
+
+The dx 0.7 mobile pipeline is real and works for this app:
+
+- **`dx build --ios` succeeds end-to-end (exit 0).** The whole iroh stack
+  compiles for `aarch64-apple-ios` (683 crates) and dx emits a working
+  `IrohDoctorApp.app` with an `Info.plist`. First build ~30 s; re-bundling after
+  a Dioxus.toml-only change is ~2 s (no recompile).
+- **Config injection points (from the dx-generated templates):**
+  - `[ios.plist]` — key→value map merged into `Info.plist` (bool → `<false/>`,
+    string → `<string>`); `[ios.raw.info_plist]` for raw XML.
+  - `[android.permissions]` and `[android.raw.manifest]` — Android manifest.
+  - `[permissions]` — cross-platform high-level toggles (camera, microphone,
+    notifications, photos, bluetooth, background) that expand to both iOS usage
+    strings and Android permissions. No `local_network` high-level key, so the
+    iOS local-network string is set directly via `[ios.plist]`.
+  - `[ios]` also exposes `ios_info_plist`, `macos_entitlements`,
+    `android_main_activity`, `android_min_sdk_version`, widget extensions.
+- **Verified injection**: `[ios.plist]` `NSLocalNetworkUsageDescription` +
+  `ITSAppUsesNonExemptEncryption = false` now appear in the generated Info.plist
+  with correct types; `CFBundleIdentifier = com.number0.irohdoctor`;
+  `plutil -lint` → OK.
+- **Icon is NOT auto-wired** — the iOS `.app` ships only `favicon.ico` copied as
+  a plain asset, no `AppIcon`/asset catalog. Wiring the app icon is real Phase-2
+  work (mechanism TBD: likely `[bundle] icon` + `[ios.raw.info_plist]`
+  `CFBundleIcons`, or dropping an asset catalog the dx project references).
+- **Display name is auto-derived**: dx PascalCases the package name to
+  `IrohDoctorApp` for `CFBundleDisplayName`; `[bundle] name` did not override it.
+  Setting the public display name needs a confirmed key (small follow-up — try
+  `[ios.raw.info_plist]` `CFBundleDisplayName`, or rename the package).
 
 ## Goal
 
@@ -50,11 +83,13 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 1. **Android applicationId is invalid today.** `com.number0.iroh-doctor-app`
    contains hyphens; Android package segments cannot. Need a unified id, e.g.
    `com.number0.irohdoctor`, and align iOS to match.
-2. **iOS local-network permission is mandatory for a P2P/iroh app.** iroh uses
-   local-network sockets + mDNS discovery. iOS 14+ requires
-   `NSLocalNetworkUsageDescription` and `NSBonjourServices` (the exact Bonjour
-   service type iroh registers must be confirmed) or discovery silently fails and
-   review rejects.
+2. **iOS local-network permission is mandatory; Bonjour is not.** Verified that
+   `bind_endpoint` uses `presets::N0` = DNS/pkarr lookup + relay, with **no mDNS**
+   (and the app adds none). So `NSLocalNetworkUsageDescription` IS required —
+   iroh's direct LAN hole-punching triggers the iOS 14+ local-network prompt, and
+   without the string iOS silently blocks local connections (relay-only fallback,
+   which guts a diagnostics tool) — but **`NSBonjourServices` is not needed**
+   unless mDNS discovery is added later. *(Done: string added via `[ios.plist]`.)*
 3. **Android multicast for mDNS** needs `CHANGE_WIFI_MULTICAST_STATE` +
    `ACCESS_WIFI_STATE` and a held `WifiManager.MulticastLock`, or local discovery
    won't work on device.
@@ -78,9 +113,10 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 
 ### Phase 0 — Decisions & accounts
 
-- [ ] Finalize **marketing name** (store display) vs **bundle name**.
-- [ ] Finalize unified **bundle id / applicationId** (e.g. `com.number0.irohdoctor`);
-      update `app/Dioxus.toml`.
+- [x] Set **marketing name** "iroh doctor" in `[bundle] name` (note: this drives
+      desktop/web, NOT the iOS `CFBundleDisplayName` — see spike follow-up).
+- [x] Unify **bundle id / applicationId** to `com.number0.irohdoctor` in
+      `app/Dioxus.toml`; verified in the generated iOS `CFBundleIdentifier`.
 - [ ] Decide **org vs personal** for both accounts. Bundle prefix implies the
       `number0` org. *(Blocker — Rae: org Apple enrollment needs a D-U-N-S
       number; allow days/weeks of lead time.)*
@@ -90,8 +126,9 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 - [ ] Decide **version/build-number strategy**: Cargo `version` → iOS
       `CFBundleShortVersionString` + monotonic `CFBundleVersion`; Android
       `versionName` + monotonic integer `versionCode`. Document the mapping.
-- [ ] **Spike**: confirm dx 0.7.9 mobile bundle mechanics (icons, plist,
-      manifest, signing knobs) — small throwaway build of each platform.
+- [x] **Spike**: dx 0.7.9 mobile bundle mechanics — done for iOS (see "Spike
+      results"). Android bundle (`dx build --android`) still needs a first run to
+      confirm NDK env + manifest generation; icon + display-name wiring open.
 
 ### Phase 1 — Mobile readiness (iPhone first)
 
@@ -125,10 +162,14 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 ### Phase 3 — Platform config & compliance
 
 iOS:
-- [ ] `Info.plist`: `NSLocalNetworkUsageDescription` (clear user-facing reason),
-      `NSBonjourServices` (confirmed iroh service type(s)).
-- [ ] `ITSAppUsesNonExemptEncryption` self-classification.
+- [x] `Info.plist`: `NSLocalNetworkUsageDescription` via `[ios.plist]` (verified).
+      `NSBonjourServices` not needed (no mDNS in `presets::N0`).
+- [x] `ITSAppUsesNonExemptEncryption = false` via `[ios.plist]` (verified;
+      standard TLS/QUIC is export-exempt).
 - [ ] Add `PrivacyInfo.xcprivacy` (required-reason APIs + data-collection types).
+- [ ] Wire the **app icon** (not auto-bundled today) and the public
+      **display name** (`CFBundleDisplayName` currently auto-derives to
+      "IrohDoctorApp").
 - [ ] Set **minimum iOS deployment target**; confirm device arch (`aarch64-apple-ios`).
 - [ ] App category, display name, bundle version wiring.
 
