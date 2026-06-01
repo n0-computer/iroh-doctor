@@ -8,6 +8,8 @@ name = "iroh doctor"
 # `com.number0.iroh-doctor-app`. Used for both iOS and Android.
 identifier = "com.number0.irohdoctor"
 publisher = "number 0"
+# Source app icon; dx generates the per-platform icon sets from this master.
+icon = ["assets/icon/icon-master.png"]
 
 # iOS Info.plist entries injected by `dx` at bundle time.
 [ios.plist]

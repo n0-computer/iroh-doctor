@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Android adaptive-icon FOREGROUND layer (transparent). The pulse motif is
+  scaled to ~62% and centered so it stays inside the adaptive-icon safe zone
+  (the central 66% the launcher may crop to a circle/squircle). Pair with the
+  solid iroh-purple background layer (icon-background color #7c7cff).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <g transform="translate(512,512) scale(0.62) translate(-512,-512)">
+    <polyline
+      points="150,575 360,575 430,575 478,360 548,720 612,452 672,575 874,575"
+      fill="none" stroke="#ffffff" stroke-width="46"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="874" cy="575" r="34" fill="#ffffff"/>
+  </g>
+</svg>

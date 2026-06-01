@@ -164,9 +164,18 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 
 ### Phase 2 — Branding & assets
 
-- [~] Design a **square app mark** (iroh.computer only has wordmarks). DRAFTED:
-      `app/assets/icon/icon-master.svg` — white ECG/pulse line on iroh-purple
-      gradient, 1024 master rendered. Awaiting Rae's sign-off / n0-brand check.
+- [x] Design a **square app mark** (iroh.computer only has wordmarks). DONE +
+      approved: `app/assets/icon/icon-master.svg` — white ECG/pulse line on
+      iroh-purple gradient.
+- [x] Generate the **iOS asset catalog** (`ios/AppIcon.appiconset` + Contents.json,
+      13 sizes) and **Android adaptive icon** (`android/mipmap-*` legacy +
+      foreground per density, `mipmap-anydpi-v26/ic_launcher.xml`, brand-purple
+      background). See `app/assets/icon/README.md`.
+- [ ] **Wire the icon into device builds** — dx 0.7.9 does NOT generate mobile
+      icons from `[bundle] icon` (verified: iOS `.app` has no AppIcon, Android
+      shows the default robot). Needs a pre-build injection step into the
+      generated native projects (iOS asset catalog / Android `res/`), or a newer
+      dx. This is the remaining icon blocker.
 - [ ] Generate the **iOS asset catalog** icon set (all required sizes) +
       Android **adaptive icon** (foreground/background layers, all densities).
 - [ ] **Splash / launch screen** consistent with the mark.
