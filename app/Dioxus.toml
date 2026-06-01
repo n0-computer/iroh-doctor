@@ -1,8 +1,12 @@
 [application]
+# Intended display name. NOTE: in dx 0.7.9 this does NOT reach the mobile
+# display name — both the iOS CFBundleDisplayName and the Android app_name still
+# derive from the PascalCased crate name ("IrohDoctorApp"). Verified by rebuild.
+# Fixing the on-device name needs the `android_manifest` / `ios_info_plist`
+# override files (or a dx upgrade); see plans/app-store-release-design.md.
+name = "iroh doctor"
 
 [bundle]
-# Marketing/display name shown under the icon on device and in the stores.
-name = "iroh doctor"
 # Unified bundle id / Android applicationId. Hyphens are illegal in an Android
 # package segment, so this is the de-hyphenated form of the old
 # `com.number0.iroh-doctor-app`. Used for both iOS and Android.

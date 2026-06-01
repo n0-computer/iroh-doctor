@@ -77,6 +77,42 @@ Rejected alternatives: **B (both platforms in lockstep)** — debugging two
 unproven pipelines at once with no Android hardware; **C (listing/branding
 first)** — risks polishing a listing for an app whose phone UX isn't proven yet.
 
+## dx 0.7.9 mobile limitations — DECISION NEEDED
+
+Hard-won from this session's spikes: `dx` 0.7.9 **regenerates the native iOS/Android
+projects from templates on every `dx build`** (verified — a hand-edited
+`strings.xml` reverted), so you cannot fix things by editing `target/`. And the
+two store-critical cosmetics have **no working config override** in 0.7.9:
+
+- **App icon**: `[bundle] icon` does not reach mobile (iOS `.app` has no AppIcon;
+  Android keeps the default green robot). No documented mobile-icon config hook.
+- **Display name**: both iOS `CFBundleDisplayName` and Android `app_name` derive
+  from the PascalCased crate name → "IrohDoctorApp". Neither `[bundle] name` nor
+  `[application] name` changes them (both verified by rebuild).
+
+What *does* work via config (injected from `Dioxus.toml` each build): the bundle
+id, `[ios.plist]`/`[ios.raw.info_plist]`, `[android.permissions]`/
+`[android.raw.manifest]`, `[permissions]`, and the documented override files
+`ios_info_plist` / `ios_entitlements` / `android_manifest` / `android_main_activity`
+(dx *merges* its required settings into a file you provide).
+
+**Decision for Rae — pick the wiring strategy for icon + display name:**
+1. **Override files** (try first): provide `android_manifest` with a literal
+   `android:label="iroh doctor"` and an `ios_info_plist` base carrying
+   `CFBundleDisplayName`. Fixes the name if dx's merge preserves our keys
+   (needs one experiment). Does **not** solve icons — no res/asset-catalog hook.
+2. **Build wrapper**: let `dx build` generate, then a script injects the icon
+   sets (`app/assets/icon/...`) into the generated `ios`/`android` projects and
+   invokes `xcodebuild` / `gradlew` directly for the final artifact. Durable but
+   bypasses part of dx; goes in the Phase 7 runbook.
+3. **Own the native projects**: eject/commit the generated iOS + Android projects
+   and stop regenerating them. Most control, most maintenance.
+4. **Upgrade dx** past 0.7.9 if a newer release adds mobile icon/name support.
+
+Recommendation: **2 (build wrapper)** for icons regardless, plus **1** for the
+name — together they cover both without ejecting. Until then, the icon assets are
+staged (`app/assets/icon/`) and the app ships with dx's default icon + name.
+
 ## Current state (verified 2026-06-01)
 
 - Dioxus 0.7.1 crate `iroh-doctor-app` v0.1.0; `dx` 0.7.9, `rustc` 1.95.
@@ -127,8 +163,9 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 
 ### Phase 0 — Decisions & accounts
 
-- [x] Set **marketing name** "iroh doctor" in `[bundle] name` (note: this drives
-      desktop/web, NOT the iOS `CFBundleDisplayName` — see spike follow-up).
+- [x] Set **marketing name** "iroh doctor" via `[application] name`. Note: in dx
+      0.7.9 this does NOT change the on-device name (iOS + Android both still show
+      "IrohDoctorApp"); fixing that needs the wiring decision above.
 - [x] Unify **bundle id / applicationId** to `com.number0.irohdoctor` in
       `app/Dioxus.toml`; verified in the generated iOS `CFBundleIdentifier`.
 - [ ] Decide **org vs personal** for both accounts. Bundle prefix implies the
@@ -219,8 +256,11 @@ Android:
       collection): local logs, telemetry-off-by-default, opt-in iroh-services.
       DRAFTED: `plans/app-store-privacy-policy-draft.md` — needs legal review +
       a couple of confirmed details (telemetry fields, contact, retention).
-- [ ] **Host** it under `https://www.iroh.computer/legal` (confirmed location).
-      *(Blocker — Rae / web team: publish the page at that URL.)*
+- [x] **Published to source** at `https://www.iroh.computer/legal` — added an
+      "iroh doctor (App) Privacy Policy" section to
+      `../iroh.computer/src/app/legal/page.jsx` (anchor `#iroh-doctor`),
+      rendered-verified via the dev server. *(Uncommitted in that repo — Rae to
+      review, commit, and deploy.)*
 - [ ] Optional **terms of use**.
 - [ ] Prepare **App Privacy "nutrition label"** (iOS) answers.
 - [ ] Prepare **Data Safety** form answers (Android).
