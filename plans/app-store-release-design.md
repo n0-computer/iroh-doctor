@@ -110,8 +110,21 @@ id, `[ios.plist]`/`[ios.raw.info_plist]`, `[android.permissions]`/
 4. **Upgrade dx** past 0.7.9 if a newer release adds mobile icon/name support.
 
 Recommendation: **2 (build wrapper)** for icons regardless, plus **1** for the
-name — together they cover both without ejecting. Until then, the icon assets are
-staged (`app/assets/icon/`) and the app ships with dx's default icon + name.
+name — together they cover both without ejecting.
+
+**DECISION TAKEN + IMPLEMENTED (build wrapper).** `app/scripts/bundle-mobile.sh`
+runs `dx build`, then injects branding into the regenerated project:
+- iOS: `actool` compiles `assets/icon/ios/Assets.xcassets` into the `.app`
+  (`Assets.car`), merges `CFBundleIcons` + sets `CFBundleDisplayName`/`CFBundleName`
+  = "iroh doctor", copies in `PrivacyInfo.xcprivacy`. Verified: `Assets.car`
+  holds the AppIcon renditions, Info.plist correct, `plutil -lint` OK.
+- Android: overwrites the launcher mipmaps + adaptive icon + `app_name` +
+  background color, then runs `gradlew`. **Verified end-to-end**: the debug APK
+  reports `application-label:'iroh doctor'`, icon = our adaptive
+  `ic_launcher.xml` (the pulse mark, not the default robot), `targetSdkVersion 35`.
+
+This is the durable wiring. The name override (option 1) is handled by the same
+wrapper, so no separate `ios_info_plist`/`android_manifest` files are needed.
 
 ## Current state (verified 2026-06-01)
 
@@ -212,11 +225,9 @@ staged (`app/assets/icon/`) and the app ships with dx's default icon + name.
       13 sizes) and **Android adaptive icon** (`android/mipmap-*` legacy +
       foreground per density, `mipmap-anydpi-v26/ic_launcher.xml`, brand-purple
       background). See `app/assets/icon/README.md`.
-- [ ] **Wire the icon into device builds** — dx 0.7.9 does NOT generate mobile
-      icons from `[bundle] icon` (verified: iOS `.app` has no AppIcon, Android
-      shows the default robot). Needs a pre-build injection step into the
-      generated native projects (iOS asset catalog / Android `res/`), or a newer
-      dx. This is the remaining icon blocker.
+- [x] **Wire the icon into device builds** — DONE via `scripts/bundle-mobile.sh`
+      (build wrapper). Verified on both platforms (iOS `Assets.car` + Android APK
+      icon). See the decision section above.
 - [ ] Generate the **iOS asset catalog** icon set (all required sizes) +
       Android **adaptive icon** (foreground/background layers, all densities).
 - [ ] **Splash / launch screen** consistent with the mark.
@@ -232,17 +243,19 @@ iOS:
       `NSBonjourServices` not needed (no mDNS in `presets::N0`).
 - [x] `ITSAppUsesNonExemptEncryption = false` via `[ios.plist]` (verified;
       standard TLS/QUIC is export-exempt).
-- [ ] Add `PrivacyInfo.xcprivacy` (required-reason APIs + data-collection types).
-- [ ] Wire the **app icon** (not auto-bundled today) and the public
-      **display name** (`CFBundleDisplayName` currently auto-derives to
-      "IrohDoctorApp").
+- [x] Add `PrivacyInfo.xcprivacy` — `app/ios/PrivacyInfo.xcprivacy` (no tracking,
+      no default collection, FileTimestamp 3B52.1); copied into the `.app` by the
+      wrapper. Re-verify required-reason APIs against the final binary.
+- [x] Wire the **app icon** + public **display name** ("iroh doctor") — done by
+      the build wrapper (verified).
 - [ ] Set **minimum iOS deployment target**; confirm device arch (`aarch64-apple-ios`).
 - [ ] App category, display name, bundle version wiring.
 
 Android:
-- [ ] Set valid `applicationId`; `targetSdkVersion` to Play's current minimum for
-      new apps *(verify the required API level at submission time — it rises
-      yearly)*; `minSdkVersion`.
+- [x] Set valid `applicationId` (done) and SDK levels via `[android]`:
+      `min_sdk=24`, `target_sdk=35`, `compile_sdk=35` — verified in the generated
+      `build.gradle.kts` and the built APK (`targetSdkVersion 35`). *(Re-check the
+      required API level at submission — it rises yearly.)*
 - [ ] Manifest permissions: `INTERNET`, `ACCESS_NETWORK_STATE`,
       `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`; acquire a
       `MulticastLock` at runtime for mDNS.
