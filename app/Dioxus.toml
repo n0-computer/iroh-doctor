@@ -1,12 +1,31 @@
 [application]
 
 [bundle]
-identifier = "com.number0.iroh-doctor-app"
+# Marketing/display name shown under the icon on device and in the stores.
+name = "iroh doctor"
+# Unified bundle id / Android applicationId. Hyphens are illegal in an Android
+# package segment, so this is the de-hyphenated form of the old
+# `com.number0.iroh-doctor-app`. Used for both iOS and Android.
+identifier = "com.number0.irohdoctor"
+publisher = "number 0"
+
+# iOS Info.plist entries injected by `dx` at bundle time.
+[ios.plist]
+# iroh makes direct connections to peers on the local subnet (hole punching).
+# iOS 14+ requires this usage string or it silently blocks local-network access
+# and the app falls back to relay-only — which would gut a diagnostics tool.
+# NSBonjourServices is intentionally omitted: presets::N0 uses DNS/pkarr + relay
+# discovery, not mDNS/Bonjour. Add it only if mDNS discovery is enabled later.
+NSLocalNetworkUsageDescription = "iroh doctor connects directly to peers on your local network to measure connection quality. Without local network access it can only test relayed connections."
+# The app uses only standard encryption (QUIC/TLS via rustls), which is exempt
+# from U.S. export-compliance documentation. Declaring this skips the prompt at
+# every TestFlight/App Store upload. Re-evaluate if non-standard crypto is added.
+ITSAppUsesNonExemptEncryption = false
 
 [web.app]
 
 # HTML title tag content
-title = "iroh-doctor-app"
+title = "iroh doctor"
 
 # include `assets` in web platform
 [web.resource]
