@@ -465,7 +465,7 @@ fn handle_send_diagnostics(
 
 /// Desktop path: open a native save dialog via rfd and write the bytes
 /// to whichever location the user picks.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) {
     let dialog = rfd::AsyncFileDialog::new()
         .set_file_name(filename)
@@ -477,14 +477,14 @@ async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) {
     }
 }
 
-/// iOS path: rfd has no backend on iOS, so write to the app's sandbox
-/// documents directory where the Files app exposes it. The user can
-/// share the file from there. Logs the resulting path so a developer
-/// inspecting the log file can find it without guessing.
-#[cfg(target_os = "ios")]
+/// Mobile path (iOS + Android): rfd has no usable backend, so write to the
+/// app's sandbox documents directory where the platform's Files browser
+/// exposes it. The user can share the file from there. Logs the resulting
+/// path so a developer inspecting the log file can find it without guessing.
+#[cfg(any(target_os = "ios", target_os = "android"))]
 async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) {
     let Some(dir) = dirs::document_dir().or_else(dirs::data_local_dir) else {
-        tracing::error!("no document directory on this iOS build");
+        tracing::error!("no document directory on this mobile build");
         return;
     };
     let path = dir.join(filename);

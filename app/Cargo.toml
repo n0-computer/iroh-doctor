@@ -26,10 +26,11 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-# rfd has no backend on iOS (no xdg-portal, no NSSavePanel, no UIDocumentPicker
-# wrapper) so the crate fails to compile for that target. On iOS we fall back
-# to writing the diagnostics zip into the app sandbox.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+# rfd has no usable backend on the mobile targets: iOS has no xdg-portal /
+# NSSavePanel / UIDocumentPicker wrapper, and on Android the xdg-portal backend
+# fails to compile entirely. On both we fall back to writing the diagnostics zip
+# into the app sandbox (see save_diagnostics_zip), so rfd is desktop-only.
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
 # On iOS a GUI app's stdout is not captured by the unified logging system and
