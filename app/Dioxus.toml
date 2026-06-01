@@ -28,6 +28,15 @@ NSLocalNetworkUsageDescription = "iroh doctor connects directly to peers on your
 # every TestFlight/App Store upload. Re-evaluate if non-standard crypto is added.
 ITSAppUsesNonExemptEncryption = false
 
+# Android SDK levels. Google Play requires new apps to target a recent API level
+# (API 35 / Android 15 as of 2026); dx defaults to 34, which Play would reject.
+# minSdk 24 (Android 7.0) covers ~98% of devices and is where adaptive icons and
+# the modern WebView the app relies on are reliably available.
+[android]
+min_sdk = 24
+target_sdk = 35
+compile_sdk = 35
+
 [web.app]
 
 # HTML title tag content
