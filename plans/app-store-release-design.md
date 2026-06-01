@@ -272,9 +272,11 @@ Android:
 - [ ] Configure **signing** in the dx-generated Xcode project / Dioxus.toml.
 - [ ] **Archive** a release build; upload to **App Store Connect**.
 - [ ] Smoke-test via **TestFlight** on the iPhone (and any teammates).
-- [ ] Fill the **App Store Connect listing**: name, subtitle, description
+- [~] Fill the **App Store Connect listing**: name, subtitle, description
       (dev-tool framing), keywords, category, support URL, privacy URL,
-      screenshots, export-compliance, age rating.
+      screenshots, export-compliance, age rating. COPY DRAFTED:
+      `plans/app-store-listing-copy.md` (App Store + Play). Needs brand pass +
+      screenshots; entry into the console is account-blocked.
 - [ ] **Submit for review**; handle rejections (local-network rationale is the
       most likely follow-up). *(Blocker — Rae: hits "Submit".)*
 
