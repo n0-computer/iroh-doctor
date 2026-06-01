@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  iroh doctor — app icon master (1024x1024, full bleed, no transparency).
+  Source of truth for the iOS App Store icon and the raster icon set.
+  Motif: an ECG/pulse line in iroh white on the iroh brand purple (#7c7cff),
+  echoing the app's live RTT sparkline — a "doctor" reading connection health.
+  Android adaptive icon uses icon-foreground.svg over the brand-purple background.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8f8fff"/>
+      <stop offset="1" stop-color="#5b5bef"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- baseline + pulse, rounded caps so it reads cleanly at small sizes -->
+  <polyline
+    points="150,575 360,575 430,575 478,360 548,720 612,452 672,575 874,575"
+    fill="none" stroke="#ffffff" stroke-width="46"
+    stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- endpoint node, a nod to the dot on the iroh 'i' wordmark -->
+  <circle cx="874" cy="575" r="34" fill="#ffffff"/>
+</svg>

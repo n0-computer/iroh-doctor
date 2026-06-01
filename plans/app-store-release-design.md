@@ -41,6 +41,20 @@ The dx 0.7 mobile pipeline is real and works for this app:
   `IrohDoctorApp` for `CFBundleDisplayName`; `[bundle] name` did not override it.
   Setting the public display name needs a confirmed key (small follow-up — try
   `[ios.raw.info_plist]` `CFBundleDisplayName`, or rename the package).
+- **`dx build --android` succeeds (exit 0) after the rfd fix.** Env needed:
+  `JAVA_HOME` = Android Studio's JBR (OpenJDK 21), `ANDROID_HOME`/`ANDROID_SDK_ROOT`
+  = `~/Library/Android/sdk`, `ANDROID_NDK_HOME` = `.../ndk/30.0.14904198`. dx
+  emits a Gradle project under `target/dx/.../android/app`; `dx bundle --platform
+  android --package-types aab` produces the Play artifact. **These env vars must
+  go in the release runbook** (Phase 7) — they are not set in the shell by default.
+- **rfd does not compile for Android.** `Cargo.toml` gated rfd out only for iOS,
+  so Android pulled the `xdg-portal` backend and failed (12 errors). Fixed by
+  gating rfd to `cfg(not(any(ios, android)))` and routing Android through the
+  same sandbox-write `save_diagnostics_zip` branch as iOS. Re-verified: Android
+  builds clean.
+- **App icon drafted**: `app/assets/icon/icon-master.svg` (+ rendered 1024 PNG) —
+  a white ECG/pulse line on the iroh-purple (#7c7cff) gradient, echoing the app's
+  RTT sparkline. Pending Rae's sign-off before generating the full size set.
 
 ## Goal
 
@@ -126,9 +140,10 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 - [ ] Decide **version/build-number strategy**: Cargo `version` → iOS
       `CFBundleShortVersionString` + monotonic `CFBundleVersion`; Android
       `versionName` + monotonic integer `versionCode`. Document the mapping.
-- [x] **Spike**: dx 0.7.9 mobile bundle mechanics — done for iOS (see "Spike
-      results"). Android bundle (`dx build --android`) still needs a first run to
-      confirm NDK env + manifest generation; icon + display-name wiring open.
+- [x] **Spike**: dx 0.7.9 mobile bundle mechanics — done for **both** iOS and
+      Android (see "Spike results"). Android required an rfd fix (below) and the
+      local SDK/NDK env; both `dx build --ios` and `dx build --android` now
+      succeed. Icon drafted; display-name wiring still open.
 
 ### Phase 1 — Mobile readiness (iPhone first)
 
@@ -149,8 +164,9 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 
 ### Phase 2 — Branding & assets
 
-- [ ] Design a **square app mark** (iroh.computer only has wordmarks). Source/brief
-      from n0 brand; export 1024×1024 master.
+- [~] Design a **square app mark** (iroh.computer only has wordmarks). DRAFTED:
+      `app/assets/icon/icon-master.svg` — white ECG/pulse line on iroh-purple
+      gradient, 1024 master rendered. Awaiting Rae's sign-off / n0-brand check.
 - [ ] Generate the **iOS asset catalog** icon set (all required sizes) +
       Android **adaptive icon** (foreground/background layers, all densities).
 - [ ] **Splash / launch screen** consistent with the mark.
@@ -188,8 +204,8 @@ Android:
 
 - [ ] Write a **privacy policy** (required by both stores even with no
       collection): local logs, telemetry-off-by-default, opt-in iroh-services.
-- [ ] **Host** it at a stable URL (e.g. `iroh.computer/legal/iroh-doctor`).
-      *(Blocker — Rae / web team: publish the page.)*
+- [ ] **Host** it under `https://www.iroh.computer/legal` (confirmed location).
+      *(Blocker — Rae / web team: publish the page at that URL.)*
 - [ ] Optional **terms of use**.
 - [ ] Prepare **App Privacy "nutrition label"** (iOS) answers.
 - [ ] Prepare **Data Safety** form answers (Android).
