@@ -149,9 +149,13 @@ first)** — risks polishing a listing for an app whose phone UX isn't proven ye
 
 - [ ] Build + run on the **physical iPhone** via `dx serve --platform ios`
       (device, not just Simulator); confirm it launches and an endpoint comes up.
-- [ ] Fix **mobile layout**: tab UI, safe-area insets (notch/home indicator),
-      scroll, touch-target sizes, input fields (paste endpoint id), no desktop
-      window-chrome assumptions.
+      *(Blocker — Rae: needs the device + a dev signing identity.)*
+- [x] **Mobile-layout static review done — the app is already largely
+      mobile-ready.** main.css sets `viewport-fit=cover` (main.rs:340) + safe-area
+      insets, a bottom tab-bar `@media (max-width:768px)` layout, 16px inputs
+      (anti iOS-zoom), and long-id/URL overflow wrapping. **Fixed**: added 44px/48dp
+      touch-target minimums for `.btn`, inputs, and `.nav-item` (mobile-only;
+      desktop density untouched). Remaining layout checks need on-device eyes.
 - [ ] Verify the **local-network permission prompt** appears and discovery works
       once granted.
 - [ ] Reconcile the **trust-model framing** for public users (in-app copy /
