@@ -56,6 +56,12 @@ pub(crate) fn init_terminal_and_file_logging(
                 // prefer the directory set in the config file over the default
                 let logs_path = dir.clone().unwrap_or_else(|| logs_dir.join("logs"));
 
+                // The appender prunes old files before its first write, and on
+                // a fresh install the directory does not exist yet, so pruning
+                // prints "Error reading the log directory/files" to stderr.
+                // Create it up front.
+                std::fs::create_dir_all(&logs_path)?;
+
                 let file_appender = rolling::Builder::new()
                     .rotation(rotation)
                     .max_log_files(*max_files)
