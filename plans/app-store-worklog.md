@@ -89,3 +89,15 @@ Done this session:
 Open blockers (Rae-only): deploy privacy policy (uncommitted in
 ../iroh.computer), merge n0-computer/svc#887, ASC app record + distribution
 cert + profile + upload, Play verification wait, merge rae/doctor-app.
+
+## 2026-06-10 (later) — iOS build 1 uploaded to App Store Connect
+
+ASC API key + App Store profile in place (see runbook "Credentials" section).
+altool validation exposed four dx 0.7.9 store-compliance defects, all fixed
+(wrapper now pins --target aarch64-apple-ios; package-ios-ipa.sh stamps DT*
+keys, CFBundlePackageType=APPL, single-value CFBundleSupportedPlatforms;
+MinimumOSVersion aligned to the binary's real 17.0). VERIFY SUCCEEDED, then
+upload succeeded: build 1 (0.1.0), delivery 52ee7635-a13e-4305-8b41-ad05e9df89fc.
+Next: TestFlight smoke test on the iPhone once processing finishes, listing
+entry (copy in plans/app-store-listing-copy.md), privacy nutrition label
+(answers in plans/app-store-data-safety-forms.md), submit.

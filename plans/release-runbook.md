@@ -149,7 +149,7 @@ new one).
 
 | # | Date | Version | Platforms | Notes |
 |---|------|---------|-----------|-------|
-| 1 | 2026-06-10 | 0.1.0 | ios+android | first artifacts, not yet uploaded |
+| 1 | 2026-06-10 | 0.1.0 | ios+android | iOS: uploaded to ASC (delivery 52ee7635). Android AAB built, awaiting Play verification |
 
 Next upload: `BUILD_NUMBER=2` (never reuse, never decrease; shared counter
 across both stores).
