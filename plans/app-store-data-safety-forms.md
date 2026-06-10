@@ -17,11 +17,11 @@ the push immediately by dropping the client.
 
 This is scenario C below. The privacy-policy draft and listing copy were updated
 in the same change to describe on-by-default collection with an opt-out, so they
-now match the code. The opt-out makes the collection user-controllable, which is
-how the Play form's "optional" flag is justified. The cli keeps its
-out-of-the-box bundled default; it is a foreground dev tool and not a store
-deliverable. Re-verify the fresh-install behavior on a device before entering
-the answers.
+now match the code. On the Play form the two types are marked Required, not
+optional: collection is on for every fresh install before the user reaches the
+toggle, so it is not opt-in. The cli keeps its out-of-the-box bundled default;
+it is a foreground dev tool and not a store deliverable. Re-verify the
+fresh-install behavior on a device before entering the answers.
 
 ## Ship configurations and their outcomes
 
@@ -35,16 +35,19 @@ the answers.
 - **C. Bundled default, on at startup, with an in-app opt-out (IMPLEMENTED).**
   Declare collection on both stores. The privacy policy and listing copy
   describe on-by-default collection with an opt-out, so they match. On Play the
-  collection is still "optional" because the user can turn it off; Apple has no
-  optional flag, so the two types are simply collected. Reasoning below.
+  two types are marked Required, not optional: collection is on for every fresh
+  install before the user reaches the toggle. Apple has no optional flag, so the
+  two types are simply collected. Reasoning below.
 
 Why scenario C is not "Data Not Collected": Apple requires declaring all data
 the app collects, and here it collects on every fresh install. The
 optional-disclosure carve-out (data the user actively submits through a form
 each time) does not apply, because the telemetry pushes continuously in the
-background. Google Play likewise requires declaring the collection; its per-type
-"optional" toggle fits because the in-app off switch makes the collection
-user-controllable.
+background. Google Play likewise requires declaring the collection. The Play
+"optional" flag would mean the user chooses whether collection happens at all;
+because it is on by default before the user can opt out, the types are marked
+Required instead. The in-app off switch is disclosed in the policy and listing,
+not modeled as Play "optional".
 
 ## Apple App Privacy (App Store Connect), scenario C
 
@@ -82,8 +85,9 @@ Under scenario A, every row is "Not collected" and the overall label is
 ## Edge cases and conclusions (both stores)
 
 - **On-by-default telemetry.** Conclusion: must be declared, since it collects
-  on every fresh install. Apple has no "optional" flag; Play does, and the
-  in-app off switch justifies marking it optional there. The only way to a clean
+  on every fresh install. Apple has no "optional" flag; on Play the types are
+  marked Required, since collection is on by default rather than opt-in. The
+  only way to a clean
   "Data Not Collected" label is to compile the path out (scenario A).
 - **Diagnostics export.** Conclusion: not collection. The bundle is built
   on device and saved to a user-chosen location (desktop file dialog) or
@@ -120,8 +124,8 @@ Data types declared:
 
 | Play data type | Collected | Shared | Ephemeral | Required or optional | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Device or other IDs | Yes | No | No | Optional (user can turn telemetry off in the app) | App functionality, Analytics |
-| App info and performance > Diagnostics | Yes | No | No | Optional (same opt-out) | App functionality, Analytics |
+| Device or other IDs | Yes | No | No | Required (on by default; the in-app off switch is an opt-out, not opt-in) | App functionality, Analytics |
+| App info and performance > Diagnostics | Yes | No | No | Required (same reason) | App functionality, Analytics |
 
 Every other Play data type (Location, Personal info, Financial info, Health,
 Messages, Photos and videos, Audio, Files and docs, Calendar, Contacts, App

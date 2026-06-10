@@ -10,9 +10,10 @@
   log rotation read mtimes of files inside the app container; reason 3B52.1 =
   timestamps of files inside the app's own container).
 
-  The telemetry is on by default but the user can turn it off in Diagnostics, so
-  it is collected yet optional. Apple's manifest has no per-type optional flag;
-  the opt-out is reflected on the Play Data Safety form instead.
+  The telemetry is on by default; the user can turn it off in Diagnostics, but
+  because it collects on every fresh install before that opt-out, both stores
+  treat it as collected (and the Play Data Safety form marks it Required, not
+  optional).
 
   VERIFY before submission: confirm no linked library uses other required-reason
   APIs (UserDefaults CA92.1, system boot time 35F9.1, disk space E174.1). If the
