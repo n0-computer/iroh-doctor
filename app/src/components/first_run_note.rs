@@ -19,7 +19,7 @@ pub fn FirstRunNote() -> Element {
     }
     rsx! {
         section { class: "settings-section first-run-note",
-            label { class: "label", "Before you share your id" }
+            label { class: "label", "PRIVACY NOTE" }
             p { class: "hint-text",
                 "While this app is open it listens for incoming probes. "
                 "Anyone with your endpoint id can connect and measure the "
@@ -27,8 +27,8 @@ pub fn FirstRunNote() -> Element {
                 "people you trust. Close the app to stop listening."
             }
             p { class: "hint-text",
-                "iroh doctor also sends anonymous connection diagnostics to "
-                "help improve iroh. You can turn this off in Diagnostics."
+                "This Iroh Doctor app also sends anonymous connection diagnostics to "
+                "help improve iroh. You can turn this off in Diagnostics > Telemetry."
             }
             div { class: "settings-actions",
                 button {
