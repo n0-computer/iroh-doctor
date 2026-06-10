@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  iroh doctor - launch-screen mark (white pulse on transparent).
+  Same geometry as ../icon/icon-master.svg, with the viewBox cropped to the
+  stroke bounds plus a small margin (824x460). Rendered to the LaunchIcon
+  imageset in ../icon/ios/Assets.xcassets; see ../icon/README.md.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="104 314 824 460" width="824" height="460">
+  <polyline
+    points="150,575 360,575 430,575 478,360 548,720 612,452 672,575 874,575"
+    fill="none" stroke="#ffffff" stroke-width="46"
+    stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="874" cy="575" r="34" fill="#ffffff"/>
+</svg>

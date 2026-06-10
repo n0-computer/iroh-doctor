@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  iroh doctor - Android 12+ (API 31) splash screen.
+  Overrides the dx-generated AppTheme for v31+ with the brand-purple splash
+  background. The splash icon itself defaults to the launcher icon, which
+  scripts/bundle-mobile.sh already injects (white pulse on purple), so the
+  whole splash reads as one solid purple screen with the centered mark.
+-->
+<resources>
+    <style name="AppTheme" parent="@style/Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowSplashScreenBackground">#7C7CFF</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#7C7CFF</item>
+    </style>
+</resources>

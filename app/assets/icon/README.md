@@ -48,3 +48,51 @@ To ship the real icon, inject these into the dx-generated native projects (under
 Because the generated projects live under `target/` and are regenerated, the
 durable fix is a small pre-build step (or a newer dx with mobile-icon support).
 Tracked in `plans/app-store-release-design.md` (Phase 2/3).
+
+## Splash / launch screen
+
+dx 0.7.9 has no splash config. Its iOS Info.plist template hardcodes
+`UILaunchStoryboardName` = `LaunchScreen` but generates no storyboard, so the
+launch screen is blank unless we compile one in. `scripts/bundle-mobile.sh`
+handles both platforms:
+
+- **iOS**: `../splash/ios/LaunchScreen.storyboard` (brand-purple background,
+  centered white pulse) is compiled with `xcrun ibtool` into
+  `LaunchScreen.storyboardc` inside the `.app`. The mark it references is the
+  `LaunchIcon.imageset` in `ios/Assets.xcassets`, compiled by the existing
+  actool step. Needs a machine with Xcode; unverified on a device so far.
+- **Android 12+**: the script copies `../splash/android/values-v31/styles.xml`
+  into the generated `res/`, overriding `AppTheme` with
+  `windowSplashScreenBackground` in brand purple. The splash icon is the
+  launcher adaptive icon the script already injects. Pre-31 Android has no
+  system splash; we accept the default window background there.
+
+The `LaunchIcon` PNGs render from `../splash/splash-mark.svg` (the pulse with
+a tight viewBox) at 240/480/720 px wide:
+
+```sh
+cd app/assets
+for w in 240 480 720; do
+  suffix=""; [ $w = 480 ] && suffix=@2x; [ $w = 720 ] && suffix=@3x
+  rsvg-convert -w $w -o "icon/ios/Assets.xcassets/LaunchIcon.imageset/LaunchIcon$suffix.png" splash/splash-mark.svg
+done
+```
+
+## Store assets and favicon
+
+`../store/feature-graphic.svg` is the 1024x500 Google Play feature graphic
+(gradient + pulse from `icon-master.svg`, wordmark in the system Avenir Next
+stack). `../favicon.ico` holds 16/32/48 px renderings of the master icon and
+is what `app/src/main.rs` serves as the in-app favicon. Both render with
+`rsvg-convert` (librsvg, installed via homebrew), which reproduces the
+gradient and rounded strokes faithfully here; the ImageMagick warning above
+applies only to ImageMagick's own SVG decoder. qlmanage still works for the
+square icons but crops non-square canvases, so use `rsvg-convert` for the
+feature graphic:
+
+```sh
+cd app/assets
+rsvg-convert -w 1024 -h 500 -o store/feature-graphic.png store/feature-graphic.svg
+for s in 16 32 48; do rsvg-convert -w $s -h $s -o /tmp/fav-$s.png icon/icon-master.svg; done
+magick /tmp/fav-16.png /tmp/fav-32.png /tmp/fav-48.png favicon.ico
+```

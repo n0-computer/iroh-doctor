@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  iroh doctor - Google Play feature graphic master (1024x500).
+  Same gradient + pulse motif as ../icon/icon-master.svg, with the wordmark
+  set in the system geometric sans. Rendered with qlmanage (WebKit), so the
+  font stack resolves against macOS system fonts; see ../icon/README.md.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 500" width="1024" height="500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8f8fff"/>
+      <stop offset="1" stop-color="#5b5bef"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="500" fill="url(#bg)"/>
+  <!-- pulse mark from icon-master.svg, scaled and centered above the wordmark -->
+  <g transform="translate(230.4,-111) scale(0.55)">
+    <polyline
+      points="150,575 360,575 430,575 478,360 548,720 612,452 672,575 874,575"
+      fill="none" stroke="#ffffff" stroke-width="46"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="874" cy="575" r="34" fill="#ffffff"/>
+  </g>
+  <!-- wordmark -->
+  <text x="512" y="400" text-anchor="middle" fill="#ffffff"
+        font-family="Avenir Next, Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="104" font-weight="600" letter-spacing="2">iroh doctor</text>
+</svg>

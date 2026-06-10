@@ -11,11 +11,13 @@
 #   scripts/bundle-mobile.sh ios     [--release]
 #   scripts/bundle-mobile.sh android [--release]
 #
-# iOS  : compiles assets/icon/ios/Assets.xcassets with actool into the .app,
+# iOS  : compiles assets/icon/ios/Assets.xcassets (app icon + launch mark) with
+#        actool into the .app, compiles the launch storyboard with ibtool,
 #        merges the icon keys + display name into Info.plist, and copies in the
 #        privacy manifest. The .app is then ready to sign/archive.
 # Android: overwrites the launcher mipmaps + adaptive icon + app_name in the
-#        generated project, then runs Gradle directly so the APK carries them.
+#        generated project, adds the Android 12+ splash theme, then runs Gradle
+#        directly so the APK carries them.
 #
 # Android env (auto-defaulted to a standard macOS Android Studio install; export
 # to override): JAVA_HOME, ANDROID_HOME, ANDROID_NDK_HOME.
@@ -32,6 +34,7 @@ if [[ "$PROFILE_FLAG" == "--release" ]]; then PROFILE="release"; DX_RELEASE="--r
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$APP_DIR/.." && pwd)"
 ICON_DIR="$APP_DIR/assets/icon"
+SPLASH_DIR="$APP_DIR/assets/splash"
 OUT="$WORKSPACE/target/dx/iroh-doctor-app/$PROFILE/$PLATFORM"
 DISPLAY_NAME="iroh doctor"
 
@@ -68,6 +71,16 @@ if [[ "$PLATFORM" == "ios" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$APP_BUNDLE/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName $DISPLAY_NAME" "$APP_BUNDLE/Info.plist"
 
+  echo ">> ibtool: compiling launch screen storyboard"
+  # dx 0.7.9's Info.plist template sets UILaunchStoryboardName=LaunchScreen but
+  # generates no storyboard, so without this the launch screen is blank.
+  xcrun ibtool "$SPLASH_DIR/ios/LaunchScreen.storyboard" \
+    --compile "$APP_BUNDLE/LaunchScreen.storyboardc" \
+    --errors --warnings >/dev/null
+  # Defensive: make sure the plist points at the storyboard we just compiled.
+  /usr/libexec/PlistBuddy -c "Set :UILaunchStoryboardName LaunchScreen" "$APP_BUNDLE/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :UILaunchStoryboardName string LaunchScreen" "$APP_BUNDLE/Info.plist"
+
   echo ">> copying privacy manifest"
   cp "$APP_DIR/ios/PrivacyInfo.xcprivacy" "$APP_BUNDLE/PrivacyInfo.xcprivacy"
 
@@ -94,6 +107,11 @@ echo ">> setting adaptive-icon background color + app name"
 # colors.xml has no ic_launcher_background, so there is no conflict to merge).
 cp "$ICON_DIR/android/values/colors.xml" "$RES/values/ic_launcher_background.xml"
 printf '<resources>\n    <string name="app_name">%s</string>\n</resources>\n' "$DISPLAY_NAME" > "$RES/values/strings.xml"
+
+echo ">> adding Android 12+ splash theme (brand background; icon comes from the launcher icon)"
+# The generated res/ has no values-v31/, so this override is conflict-free.
+mkdir -p "$RES/values-v31"
+cp "$SPLASH_DIR/android/values-v31/styles.xml" "$RES/values-v31/styles.xml"
 
 GRADLE_TASK="assembleDebug"
 [[ "$PROFILE" == "release" ]] && GRADLE_TASK="assembleRelease"
