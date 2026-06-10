@@ -277,9 +277,12 @@ Android:
       `../iroh.computer/src/app/legal/page.jsx` (anchor `#iroh-doctor`),
       rendered-verified via the dev server. *(Uncommitted in that repo — Rae to
       review, commit, and deploy.)*
-- [ ] Optional **terms of use**.
-- [ ] Prepare **App Privacy "nutrition label"** (iOS) answers.
-- [ ] Prepare **Data Safety** form answers (Android).
+- [x] Optional **terms of use**: drafted at `plans/app-store-terms-draft.md`
+      (needs legal review and the governing-law placeholder filled).
+- [x] Prepare **App Privacy "nutrition label"** (iOS) answers: drafted at
+      `plans/app-store-data-safety-forms.md`. Premise: opt-in telemetry
+      (enforced in code 2026-06-10).
+- [x] Prepare **Data Safety** form answers (Android): same file.
 
 ### Phase 5 — iOS submission
 
