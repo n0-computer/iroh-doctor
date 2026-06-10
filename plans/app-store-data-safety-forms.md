@@ -4,7 +4,7 @@
 > Google Play Data Safety form. Written against the code on `rae/doctor-app`
 > as of 2026-06-09, updated after the opt-in telemetry fix below.
 
-## Premise: app telemetry is opt-in (fixed 2026-06-10)
+## Premise: app telemetry is opt-in (fixed in the 2026-06-09 session)
 
 Until the overnight 2026-06-09 session the code contradicted the "telemetry
 off by default" promise in the privacy-policy draft, the listing copy, and

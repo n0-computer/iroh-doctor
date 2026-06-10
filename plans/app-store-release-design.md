@@ -135,7 +135,7 @@ wrapper, so no separate `ios_info_plist`/`android_manifest` files are needed.
 - Bundle id today: `com.number0.iroh-doctor-app` (`app/Dioxus.toml`).
 - Assets: only `assets/favicon.ico` and `assets/styling/main.css`. No app icon,
   splash, screenshots, or store metadata.
-- Telemetry: genuinely opt-in since 2026-06-10. Before that the app silently
+- Telemetry: genuinely opt-in since the 2026-06-09 session. Before that the app silently
   fell back to the bundled services key and pushed endpoint metrics every 60 s
   from first launch; `resolve_api_secret` now keeps the app off until the user
   saves a key (the cli keeps the out-of-the-box default).
@@ -202,9 +202,9 @@ The strategy:
   `version` in `app/Cargo.toml`. Nothing else to touch; dx propagates it.
 - **Build number** (`CFBundleVersion` / `versionCode`): one shared monotonic
   integer, starting at 1, +1 for **every** store upload, including re-uploads
-  of the same marketing version. It never resets. The wrapper takes it as
-  `BUILD_NUMBER` (env or flag, wiring lands with the A7 release-artifact
-  work) and applies it after `dx build`:
+  of the same marketing version. It never resets. The wrapper reads it from
+  the `BUILD_NUMBER` env var (implemented in `scripts/bundle-mobile.sh`,
+  validated as a positive integer) and applies it after `dx build`:
   - iOS, next to the existing `CFBundleDisplayName` PlistBuddy calls:
     `/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_BUNDLE/Info.plist"`
   - Android, before invoking gradlew:
@@ -223,8 +223,7 @@ Mechanical steps for a release bump:
 3. Build with the wrapper: `BUILD_NUMBER=<n> scripts/bundle-mobile.sh ios
    --release` and `BUILD_NUMBER=<n> scripts/bundle-mobile.sh android
    --release` (same number for both stores; gaps are fine, regressions are
-   not). Until the `BUILD_NUMBER` wiring lands in the wrapper, run the
-   PlistBuddy/sed commands above by hand after `dx build`.
+   not). The Android run also emits the Play AAB via `bundleRelease`.
 4. Verify before upload: iOS
    `plutil -p .../IrohDoctorApp.app/Info.plist | grep -E 'CFBundleVersion|CFBundleShortVersionString'`;
    Android `aapt dump badging <apk/aab> | grep versionCode`.
@@ -367,7 +366,7 @@ Android:
       (needs legal review and the governing-law placeholder filled).
 - [x] Prepare **App Privacy "nutrition label"** (iOS) answers: drafted at
       `plans/app-store-data-safety-forms.md`. Premise: opt-in telemetry
-      (enforced in code 2026-06-10).
+      (enforced in code in the 2026-06-09 session).
 - [x] Prepare **Data Safety** form answers (Android): same file.
 
 ### Phase 5 — iOS submission

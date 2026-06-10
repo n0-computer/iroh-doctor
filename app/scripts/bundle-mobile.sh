@@ -13,14 +13,18 @@
 #
 # iOS  : compiles assets/icon/ios/Assets.xcassets (app icon + launch mark) with
 #        actool into the .app, compiles the launch storyboard with ibtool,
-#        merges the icon keys + display name into Info.plist, and copies in the
-#        privacy manifest. The .app is then ready to sign/archive.
+#        merges the icon keys + display name into Info.plist, sets the build
+#        number when BUILD_NUMBER is set, and copies in the privacy manifest.
+#        The .app is then ready to sign/archive.
 # Android: overwrites the launcher mipmaps + adaptive icon + app_name in the
-#        generated project, adds the Android 12+ splash theme, then runs Gradle
-#        directly so the APK carries them.
+#        generated project, adds the Android 12+ splash theme, sets versionCode
+#        when BUILD_NUMBER is set, then runs Gradle: assemble* always, and
+#        bundleRelease (the Play AAB) on a release build.
 #
-# Android env (auto-defaulted to a standard macOS Android Studio install; export
-# to override): JAVA_HOME, ANDROID_HOME, ANDROID_NDK_HOME.
+# Env (auto-defaulted; export to override): for Android, JAVA_HOME,
+# ANDROID_HOME, ANDROID_NDK_HOME. BUILD_NUMBER (a positive integer) sets the
+# store build number on both platforms; see the version strategy in
+# plans/app-store-release-design.md.
 set -euo pipefail
 
 PLATFORM="${1:-}"
@@ -37,6 +41,17 @@ ICON_DIR="$APP_DIR/assets/icon"
 SPLASH_DIR="$APP_DIR/assets/splash"
 OUT="$WORKSPACE/target/dx/iroh-doctor-app/$PROFILE/$PLATFORM"
 DISPLAY_NAME="iroh doctor"
+# Store build number (CFBundleVersion / versionCode). dx stamps the crate
+# version into the marketing fields but hardcodes versionCode=1 and reuses
+# the crate version as CFBundleVersion, both of which the stores reject on
+# re-upload. Set BUILD_NUMBER to the next monotonic integer for every store
+# upload (see plans/app-store-release-design.md, version strategy). Unset =
+# leave dx's defaults, fine for local debug builds.
+BUILD_NUMBER="${BUILD_NUMBER:-}"
+if [[ -n "$BUILD_NUMBER" && ! "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+  echo "BUILD_NUMBER must be a positive integer, got '$BUILD_NUMBER'" >&2
+  exit 2
+fi
 
 # Android toolchain env (needed by `dx build --android` too, so set it first).
 # Auto-defaulted to a standard macOS Android Studio install; export to override.
@@ -70,6 +85,10 @@ if [[ "$PLATFORM" == "ios" ]]; then
   /usr/libexec/PlistBuddy -c "Merge $TMP/icon-info.plist" "$APP_BUNDLE/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$APP_BUNDLE/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName $DISPLAY_NAME" "$APP_BUNDLE/Info.plist"
+  if [[ -n "$BUILD_NUMBER" ]]; then
+    echo ">> setting CFBundleVersion = $BUILD_NUMBER"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_BUNDLE/Info.plist"
+  fi
 
   echo ">> ibtool: compiling launch screen storyboard"
   # dx 0.7.9's Info.plist template sets UILaunchStoryboardName=LaunchScreen but
@@ -113,10 +132,24 @@ echo ">> adding Android 12+ splash theme (brand background; icon comes from the 
 mkdir -p "$RES/values-v31"
 cp "$SPLASH_DIR/android/values-v31/styles.xml" "$RES/values-v31/styles.xml"
 
+if [[ -n "$BUILD_NUMBER" ]]; then
+  echo ">> setting versionCode = $BUILD_NUMBER"
+  # dx 0.7.9 hardcodes versionCode = 1 in its template; rewrite the
+  # generated (and regenerated-every-build) gradle file.
+  sed -i '' "s/versionCode = 1/versionCode = $BUILD_NUMBER/" "$PROJ/app/build.gradle.kts"
+  grep -q "versionCode = $BUILD_NUMBER" "$PROJ/app/build.gradle.kts" \
+    || { echo "versionCode rewrite failed; dx template changed?" >&2; exit 1; }
+fi
+
 GRADLE_TASK="assembleDebug"
 [[ "$PROFILE" == "release" ]] && GRADLE_TASK="assembleRelease"
 echo ">> gradle $GRADLE_TASK (branded APK)"
 ( cd "$PROJ" && ./gradlew "$GRADLE_TASK" )
 
-echo ">> branded Android APK(s):"
-find "$PROJ/app/build/outputs/apk" -name "*.apk" 2>/dev/null || true
+if [[ "$PROFILE" == "release" ]]; then
+  echo ">> gradle bundleRelease (Play AAB, unsigned until Play App Signing is set up)"
+  ( cd "$PROJ" && ./gradlew bundleRelease )
+fi
+
+echo ">> branded Android artifacts:"
+find "$PROJ/app/build/outputs" \( -name "*.apk" -o -name "*.aab" \) 2>/dev/null || true
