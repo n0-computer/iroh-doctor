@@ -12,8 +12,11 @@ use iroh::Endpoint;
 use iroh_services::Client;
 use serde::Serialize;
 
-/// Bundled API secret used when nothing overrides it, so both binaries talk
-/// to iroh-services out of the box.
+/// Bundled API secret used by the cli when nothing overrides it, so the
+/// foreground dev tool talks to iroh-services out of the box. The app never
+/// falls back to it: a GUI app that registers a device and pushes metrics on
+/// a timer must not do so without the user opting in (see
+/// [`resolve_api_secret`]).
 pub const DEFAULT_API_SECRET: &str =
     "servicesaaqg6nnf7kr3uiacviqgbxeqconvhuz4ldr5dem4gqhsp3cyat6qxexoctwjsi7m6dh2t2qvfu2yhdoaav6eibaj4aaavhonlixbohceu4aa";
 
@@ -24,9 +27,16 @@ pub const API_SECRET_ENV: &str = "IROH_SERVICES_API_SECRET";
 /// Resolves which API secret to use, or `None` to disable iroh-services.
 ///
 /// `IROH_SERVICES_API_SECRET` wins when set: a non-empty value is used as-is,
-/// an empty value opts out (returns `None`). Otherwise `override_secret` (if
-/// non-empty) is used, falling back to [`DEFAULT_API_SECRET`]. The app passes
-/// its saved override here; the cli passes `None`.
+/// an empty value opts out (returns `None`). Otherwise the caller's stance
+/// decides:
+///
+/// - The app passes `Some(saved_override)`. A non-empty saved key is used;
+///   an empty one means the user never opted in, so iroh-services stays off.
+///   The app must not fall back to the bundled key: that would register the
+///   device and push metrics every minute without consent, which the privacy
+///   policy and the store listings promise it does not do.
+/// - The cli passes `None` and falls back to [`DEFAULT_API_SECRET`], keeping
+///   the foreground dev tool working out of the box.
 #[must_use]
 pub fn resolve_api_secret(override_secret: Option<&str>) -> Option<String> {
     if let Ok(env) = std::env::var(API_SECRET_ENV) {
@@ -35,7 +45,8 @@ pub fn resolve_api_secret(override_secret: Option<&str>) -> Option<String> {
     }
     match override_secret.map(str::trim) {
         Some(s) if !s.is_empty() => Some(s.to_string()),
-        _ => Some(DEFAULT_API_SECRET.to_string()),
+        Some(_) => None,
+        None => Some(DEFAULT_API_SECRET.to_string()),
     }
 }
 
@@ -151,10 +162,10 @@ mod tests {
             resolve_api_secret(Some("custom")).as_deref(),
             Some("custom")
         );
-        assert_eq!(
-            resolve_api_secret(Some("  ")).as_deref(),
-            Some(DEFAULT_API_SECRET)
-        );
+        // An app-side override that is empty means the user never opted in:
+        // iroh-services stays off rather than falling back to the bundled key.
+        assert_eq!(resolve_api_secret(Some("  ")), None);
+        assert_eq!(resolve_api_secret(Some("")), None);
 
         std::env::set_var(API_SECRET_ENV, "from-env");
         assert_eq!(

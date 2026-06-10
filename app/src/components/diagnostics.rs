@@ -105,12 +105,11 @@ fn IrohServicesSection(
     let saved_override = use_signal(|| initial);
 
     let telemetry_text = telemetry_line(&telemetry());
-    let using_default = saved_override().is_empty();
 
-    let footer = if using_default {
-        "Using the bundled default key. Paste a secret from services.iroh.computer to override it; stored locally on this device only."
+    let footer = if saved_override().is_empty() {
+        "Telemetry is off. Paste a secret from services.iroh.computer to enable it; the key is stored locally on this device only."
     } else {
-        "Using a custom key. Tap Clear to revert to the bundled default."
+        "Using your key. Tap Clear to turn telemetry off."
     };
 
     let input_value = api_secret_input();

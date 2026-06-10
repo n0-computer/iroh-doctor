@@ -548,8 +548,10 @@ async fn start_services_client(
     api_secret_override: &str,
     on_telemetry: &TelemetryCb,
 ) -> Option<ServicesClient> {
-    // `IROH_SERVICES_API_SECRET=""` opts out; otherwise core resolves the env
-    // var, then the saved override, then the bundled default.
+    // `IROH_SERVICES_API_SECRET` wins when set (empty value opts out).
+    // Otherwise telemetry runs only when the user saved a key: with no saved
+    // override this resolves to `None` and iroh-services stays off, which is
+    // what the privacy policy and the store listings promise.
     let Some(secret) = iroh_doctor_core::services::resolve_api_secret(Some(api_secret_override))
     else {
         on_telemetry(TelemetryState::Off);

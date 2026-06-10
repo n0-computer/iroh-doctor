@@ -135,7 +135,10 @@ wrapper, so no separate `ios_info_plist`/`android_manifest` files are needed.
 - Bundle id today: `com.number0.iroh-doctor-app` (`app/Dioxus.toml`).
 - Assets: only `assets/favicon.ico` and `assets/styling/main.css`. No app icon,
   splash, screenshots, or store metadata.
-- Telemetry: `TelemetryState` defaults `Off`; opt-in iroh-services API key path.
+- Telemetry: genuinely opt-in since 2026-06-10. Before that the app silently
+  fell back to the bundled services key and pushed endpoint metrics every 60 s
+  from first launch; `resolve_api_secret` now keeps the app off until the user
+  saves a key (the cli keeps the out-of-the-box default).
   Logs are written locally (rolling file + oslog on iOS).
 - Branding source `../iroh.computer`: has **wordmark** SVGs
   (`public/img/logo/iroh-wordmark-*.svg`) and an iOS-starter screenshot set, but

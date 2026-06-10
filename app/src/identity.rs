@@ -2,7 +2,7 @@
 //!
 //! Stored under `dirs::config_dir()/iroh-doctor-app/`:
 //! - `secret_key.bin` - 32 bytes, generated on first run.
-//! - `api_secret.txt` - optional override for the services key; missing = use bundled default.
+//! - `api_secret.txt` - optional iroh-services key; missing or empty = telemetry off.
 //!
 //! The app was previously named iroh-pong and stored these under
 //! `iroh-pong/`. Both readers fall back to that legacy directory so an
