@@ -1,25 +1,32 @@
 # Plan: overnight 2026-06-09, all unblocked work
 
 - [x] write plan
-- [ ] T0 toolchain: dx 0.7.9 + Android SDK 35 / build-tools 35 / NDK 28 installed and working
-- [ ] B5 untrack cli/log.txt
-- [ ] B4 e2e verify the live monitor (cli accept <-> cli connect)
-- [ ] B2 align the app's live latency onto the probe ping loop
-- [ ] B3 collect per-destination-port variation so NAT can return Easy
-- [ ] B1 app CI job (dx-based, per-platform)
-- [ ] A1 trust-model framing: in-app first-run copy
-- [ ] A2 harden error + empty states for a stranger's first launch
-- [ ] A3 background behavior: decide + document foreground-only
-- [ ] A4 Android manifest permissions + MulticastLock
-- [ ] A5 iOS minimum deployment target + version/build-number wiring
-- [ ] A6 document the version/build-number strategy (Phase 0 item)
-- [ ] A7 Android release artifacts: branded release APK + AAB on this machine
-- [ ] A8 splash / launch screen
-- [ ] A9 Play feature graphic (1024x500) + replace favicon.ico with the mark
-- [ ] A10 App Privacy nutrition-label answers (iOS) + Data Safety answers (Android)
-- [ ] A11 draft terms of use
-- [ ] stretch: Android emulator screenshots
-- [ ] final review (staff reviews round 1 + 2, closing checklist)
+- [x] T0 toolchain: dx 0.7.9 + Android SDK 35 / build-tools 35 / NDK r28c installed and working
+- [x] B5 untrack cli/log.txt (6856505)
+- [x] B4 e2e verify the live monitor (cli accept <-> cli connect): direct path, live latency, throughput, ttfdb all rendered
+- [x] B2 align the app's live latency onto the probe ping loop (8c6be8b)
+- [x] B3 collect per-destination-port variation so NAT can return Easy (4950c36 + 2e78de4 validation fix)
+- [x] B1 app CI job: macOS app job, clippy + tests (ca1b6a1)
+- [x] A1 trust-model framing: in-app first-run copy (a90eb11)
+- [x] A2 harden error + empty states for a stranger's first launch (a90eb11)
+- [x] A3 background behavior: foreground-only decided + documented (dc89c2f)
+- [x] A4 Android permissions: INTERNET only, multicast/wifi-state omitted with evidence (dc89c2f)
+- [x] A5 iOS minimum deployment target 13.0 + build-number wiring (dc89c2f, 6dc4653)
+- [x] A6 document the version/build-number strategy (dc89c2f)
+- [x] A7 Android release artifacts: branded release APK + AAB, verified twice (6dc4653, 2a945e5)
+- [x] A8 splash / launch screen: iOS storyboard + Android 12 splash theme (a1cf12e)
+- [x] A9 Play feature graphic (1024x500) + favicon replaced with the mark (a1cf12e)
+- [x] A10 App Privacy nutrition-label + Data Safety answers (fe3c77b)
+- [x] A11 draft terms of use (fe3c77b)
+- [~] stretch: Android emulator screenshots - DROPPED. Disk-bound on this
+      Mac mini (SDK + target dir fill the disk); explicitly a stretch and
+      not required by the closing checklist. See worklog.
+- [x] final review: staff reviews round 1 (4 reviewers) + round 2 (2
+      reviewers, safe to keep), review-of-reviews, closing checklist all
+      in plans/worklog-2026-06-09.md
+
+All items complete. Goal met. See plans/worklog-2026-06-09.md for the
+closing checklist with evidence and the morning summary.
 
 ## Goal
 
