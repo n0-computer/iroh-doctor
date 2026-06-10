@@ -10,7 +10,7 @@
 
 **iroh doctor — Privacy Policy**
 
-_Last updated: [DATE]_
+_Last updated: 2026-06-10_
 
 iroh doctor is a peer-to-peer network-diagnostics tool published by number 0,
 Inc. ("number 0", "we", "us"). It helps you measure the quality of a direct
@@ -65,11 +65,20 @@ profiles.
 
 iroh doctor sends anonymous connection diagnostics to iroh-services, a service
 operated by number 0, to help us analyze connectivity and improve iroh. This is
-on by default. The data is an app-generated device name derived from your public
-node id and connection performance metrics; it is not linked to your identity
-and is not used for tracking. You can turn it off at any time from the
-Diagnostics tab, which stops it immediately. [Confirm exact telemetry fields and
-link to the iroh-services privacy terms before publishing.]
+on by default. The data sent is:
+
+- a short device name the app generates from your public node id: a platform tag
+  plus the first eight hexadecimal characters of the id (for example
+  `dx-1a2b3c4d`); and
+- aggregate connection performance metrics from the iroh networking layer:
+  socket and transport counters, net-report connectivity results, and
+  port-mapping (UPnP, PCP, NAT-PMP) counters, sent about once a minute.
+
+These are numeric counters and gauges. We do not send the contents of your
+connections, message or file data, your contacts, or your location, and the
+metrics are not linked to your identity or used for tracking. You can turn this
+off at any time from the Diagnostics tab. See the iroh-services privacy terms at
+https://services.iroh.computer/legal/privacy.
 
 Advanced users can point this at their own iroh-services account by supplying an
 API key in the same place; the key is stored only on your device.
@@ -90,7 +99,8 @@ iroh doctor is a developer/network tool and is not directed to children under
 
 Data stored on your device remains until you delete it or uninstall the app.
 We do not maintain user accounts, so there is no server-side profile to delete.
-[State retention for any telemetry collected via iroh-services when enabled.]
+Telemetry sent to iroh-services is retained for 90 days, then deleted or
+aggregated into non-identifying statistics.
 
 ### Changes
 
@@ -99,4 +109,4 @@ updated "Last updated" date.
 
 ### Contact
 
-[support email / URL — e.g. the iroh.computer contact or a dedicated address].
+Questions about this policy can be sent to support@iroh.computer.
