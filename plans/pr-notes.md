@@ -60,17 +60,22 @@ a follow-up.
 
 ## Known follow-ups
 
-1. App CI: a `dx`-based, per-platform job (the app is excluded from the
-   current headless matrix).
-2. iOS build + provisioning for the new `com.number0.iroh-doctor-app`
-   bundle id, verified on-device.
-3. Consider untracking `cli/log.txt` (a pre-existing 101 KB diagnostic
-   dump the move carried along).
-4. The cli `connect` monitor's latency-over-time uses the probe ping loop,
-   while the app's live latency uses QUIC path RTT. Aligning the app onto
-   the probe ping loop would make the two numerically identical.
-5. The shared NAT classifier can return `Easy` once per-destination-port
-   variation is actually collected; nothing collects it yet.
-6. Verify the live monitor against a real peer (the app, or another cli
-   `accept`): `iroh-doctor connect <peer>`. It is unit-tested (probe over
-   an in-memory duplex) but not exercised end-to-end here.
+All but one closed in the 2026-06-09 overnight session (see
+plans/worklog-2026-06-09.md):
+
+1. ~~App CI~~ - done: a macOS `app` job (clippy + tests, default desktop
+   feature) in ci.yaml. Per-platform dx bundles remain future work.
+2. iOS build + provisioning for the `com.number0.irohdoctor` bundle id,
+   verified on-device. *(Still open: needs the iPhone, a signing
+   identity, and a machine with Xcode.)*
+3. ~~Untrack `cli/log.txt`~~ - done, plus a `.gitignore` entry.
+4. ~~Align the app's live latency onto the probe ping loop~~ - done: a
+   dial plots probe ping round-trips (matching `connect`), an incoming
+   probe keeps path RTT (matching `accept`).
+5. ~~NAT classifier `Easy`~~ - done: `core::port_variation` (QAD helper
+   server + same-socket probe), `iroh-doctor nat-helper`, and
+   `diagnostics --nat-probe host:p1,host:p2`. The app does not collect
+   it yet; helper-address UX is a product decision.
+6. ~~Verify the live monitor end to end~~ - done against a real peer on
+   the real network: direct path selected, live latency series,
+   throughput, ttfdb all rendered (evidence in the worklog).
