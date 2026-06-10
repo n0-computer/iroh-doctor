@@ -25,7 +25,7 @@ pub(crate) fn config_dir() -> Result<PathBuf> {
 
 /// Pre-rename config directory (`iroh-pong`). Read as a fallback so an
 /// upgrade preserves the existing identity and settings.
-fn legacy_config_dir() -> Result<PathBuf> {
+pub(crate) fn legacy_config_dir() -> Result<PathBuf> {
     let base = dirs::config_dir().context("no config dir on this platform")?;
     Ok(base.join("iroh-pong"))
 }

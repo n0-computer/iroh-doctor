@@ -157,15 +157,15 @@ if [[ -n "$BUILD_NUMBER" ]]; then
     || { echo "versionCode rewrite failed; dx template changed?" >&2; exit 1; }
 fi
 
-GRADLE_TASK="assembleDebug"
-[[ "$PROFILE" == "release" ]] && GRADLE_TASK="assembleRelease"
-echo ">> gradle $GRADLE_TASK (branded APK)"
-( cd "$PROJ" && ./gradlew "$GRADLE_TASK" )
-
+# One gradle invocation: the tasks share the configuration phase and the
+# compiled outputs, so a release build does not pay gradle startup twice.
+GRADLE_TASKS=(assembleDebug)
 if [[ "$PROFILE" == "release" ]]; then
-  echo ">> gradle bundleRelease (Play AAB, unsigned until Play App Signing is set up)"
-  ( cd "$PROJ" && ./gradlew bundleRelease )
+  # bundleRelease emits the Play AAB (unsigned until Play App Signing is set up).
+  GRADLE_TASKS=(assembleRelease bundleRelease)
 fi
+echo ">> gradle ${GRADLE_TASKS[*]} (branded APK)"
+( cd "$PROJ" && ./gradlew "${GRADLE_TASKS[@]}" )
 
 echo ">> branded Android artifacts:"
 find "$PROJ/app/build/outputs" \( -name "*.apk" -o -name "*.aab" \) 2>/dev/null || true

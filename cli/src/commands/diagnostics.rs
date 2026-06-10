@@ -11,17 +11,18 @@
 //! orchestrates them and renders the tables.
 
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use anyhow::Context;
 use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher};
 use serde::Serialize;
 
+use iroh_doctor_core::fmt::{opt_bool, tribool_text};
 use iroh_doctor_core::nat::{classify_nat_type, ExtendedNetworkReport, NatType};
 use iroh_doctor_core::port_variation::{ExpectedExternal, PortVariationReport};
 use iroh_doctor_core::portmap::PortMapResult;
 use iroh_doctor_core::relay_probe::RelayProbeResult;
 use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
+use iroh_doctor_core::NET_REPORT_TIMEOUT;
 
 use crate::config::NodeConfig;
 
@@ -49,11 +50,6 @@ pub struct ServicesBlock {
     pub net_diagnostics: Option<ServicesDiagnostics>,
     pub error: Option<String>,
 }
-
-/// Wall-clock ceiling for the `net_report().initialized()` wait. A network
-/// with no DNS or no reachable STUN endpoints would otherwise hang the
-/// command indefinitely.
-const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Runs every probe and prints the combined report.
 pub async fn diagnostics(
@@ -127,19 +123,26 @@ async fn report_inner(
     }
     let nat = classify_nat_type(&extended);
 
-    let port_map = if no_port_map {
-        None
-    } else {
-        Some(iroh_doctor_core::portmap::probe().await)
-    };
-
-    let relays = if no_relays {
-        Vec::new()
-    } else {
-        iroh_doctor_core::relay_probe::probe_relays(relay_map).await
-    };
-
-    let services = run_services(endpoint).await;
+    // The gateway probe, the relay sweep, and the services checks are
+    // independent; run them concurrently so a degraded network costs the
+    // slowest stage's timeout rather than the sum of all three.
+    let (port_map, relays, services) = tokio::join!(
+        async {
+            if no_port_map {
+                None
+            } else {
+                Some(iroh_doctor_core::portmap::probe().await)
+            }
+        },
+        async {
+            if no_relays {
+                Vec::new()
+            } else {
+                iroh_doctor_core::relay_probe::probe_relays(relay_map).await
+            }
+        },
+        run_services(endpoint),
+    );
 
     let report = Report {
         net_report: Some(net_report),
@@ -420,27 +423,6 @@ fn markdown_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     out
 }
 
-/// "yes"/"no" for a known boolean, "unknown" when the report did not
-/// determine it (or there was no report).
-fn opt_bool(b: Option<bool>) -> &'static str {
-    match b {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "unknown",
-    }
-}
-
-/// "yes"/"no" for a known boolean, "(not probed)" when the protocol was not
-/// probed. Used for the port-mapping block, where `None` is a deliberate skip
-/// rather than an unknown.
-fn tribool_text(b: Option<bool>) -> &'static str {
-    match b {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "(not probed)",
-    }
-}
-
 /// Renders an optional address (or any `Display`) as itself, or "-" when absent.
 fn opt_addr<A: std::fmt::Display>(addr: Option<A>) -> String {
     addr.map_or_else(|| "-".to_string(), |a| a.to_string())
@@ -513,20 +495,6 @@ mod tests {
         assert_eq!(split_host_port(":3478"), None);
         assert_eq!(split_host_port("2001:db8::1:3478"), None);
         assert_eq!(split_host_port("host:notaport"), None);
-    }
-
-    #[test]
-    fn opt_bool_covers_all_states() {
-        assert_eq!(opt_bool(Some(true)), "yes");
-        assert_eq!(opt_bool(Some(false)), "no");
-        assert_eq!(opt_bool(None), "unknown");
-    }
-
-    #[test]
-    fn tribool_text_covers_all_states() {
-        assert_eq!(tribool_text(Some(true)), "yes");
-        assert_eq!(tribool_text(Some(false)), "no");
-        assert_eq!(tribool_text(None), "(not probed)");
     }
 
     #[test]

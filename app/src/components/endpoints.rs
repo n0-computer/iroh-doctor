@@ -4,8 +4,6 @@
 //! State lives in `App` so it survives tab switches; this view reads
 //! the `endpoints` signal and writes back through helper closures.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use dioxus::prelude::*;
 
 use super::short_id;
@@ -178,10 +176,7 @@ pub fn format_relative(unix_seconds: u64) -> String {
     if unix_seconds == 0 {
         return "just now".to_string();
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(unix_seconds);
+    let now = crate::endpoints::now_secs();
     if unix_seconds >= now {
         return "just now".to_string();
     }
@@ -208,20 +203,13 @@ mod tests {
 
     #[test]
     fn format_relative_future_is_just_now() {
-        let future = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap()
-            + 1000;
+        let future = crate::endpoints::now_secs() + 1000;
         assert_eq!(format_relative(future), "just now");
     }
 
     #[test]
     fn format_relative_picks_unit_by_magnitude() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap();
+        let now = crate::endpoints::now_secs();
         assert!(format_relative(now.saturating_sub(30)).ends_with("s ago"));
         assert!(format_relative(now.saturating_sub(300)).ends_with("m ago"));
         assert!(format_relative(now.saturating_sub(3 * 3600)).ends_with("h ago"));

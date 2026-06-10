@@ -1,94 +1,38 @@
 //! Relay URLs command implementation
 
-use std::{collections::HashMap, time::Duration};
-
-use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
-use iroh_doctor_core::relay_probe::ping_relay;
-use iroh_relay::tls::{default_provider, CaRootsConfig};
+use iroh_doctor_core::relay_probe::{RelayProbeResult, RelayProber};
 
 use crate::config::NodeConfig;
 
 /// Checks a certain amount (`count`) of the nodes given by the [`NodeConfig`].
 pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()> {
-    let key = SecretKey::generate();
     if config.relay_nodes.is_empty() {
         println!("No relay nodes specified in the config file.");
     }
 
-    let dns_resolver = DnsResolver::new();
-    // iroh-relay 1.0.0-rc.1 requires an explicit TLS config on each
-    // builder. Build one and reuse it across every relay.
-    let tls = CaRootsConfig::embedded()
-        .client_config(default_provider())
-        .map_err(|e| anyhow::anyhow!("build relay TLS config: {e}"))?;
-    let mut client_builders = HashMap::new();
-    for node in &config.relay_nodes {
-        let secret_key = key.clone();
-        let client_builder = iroh_relay::client::ClientBuilder::new(
-            node.url.clone(),
-            secret_key,
-            dns_resolver.clone(),
-        )
-        .tls_client_config(tls.clone());
-
-        client_builders.insert(node.url.clone(), client_builder);
-    }
+    let prober = RelayProber::new().map_err(|e| anyhow::anyhow!("build relay prober: {e}"))?;
 
     let mut success = Vec::new();
     let mut fail = Vec::new();
 
     for i in 0..count {
         println!("Round {}/{count}", i + 1);
-        let relay_nodes = config.relay_nodes.clone();
-        for node in relay_nodes.into_iter() {
-            let mut node_details = NodeDetails {
-                connect: None,
-                latency: None,
-                error: None,
-                host: node.url.clone(),
-            };
-
-            let client_builder = client_builders.get(&node.url).cloned().unwrap();
-
-            let start = std::time::Instant::now();
-            match tokio::time::timeout(Duration::from_secs(2), client_builder.connect()).await {
-                Err(e) => {
-                    tracing::warn!("connect timeout");
-                    node_details.error = Some(e.to_string());
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("connect error");
-                    node_details.error = Some(e.to_string());
-                }
-                Ok(Ok(client)) => {
-                    node_details.connect = Some(start.elapsed());
-                    match ping_relay(client).await {
-                        Ok(latency) => {
-                            node_details.latency = Some(latency);
-                        }
-                        Err(e) => {
-                            tracing::warn!("ping error: {e}");
-                            node_details.error = Some(e);
-                        }
-                    }
-                }
-            }
-
-            if node_details.error.is_none() {
-                success.push(node_details);
+        for node in &config.relay_nodes {
+            let result = prober.probe(&node.url).await;
+            if result.error.is_none() {
+                success.push(result);
             } else {
-                fail.push(node_details);
+                fail.push(result);
             }
         }
     }
 
-    // success.sort_by_key(|d| d.latency);
     if !success.is_empty() {
         println!("Relay Node Latencies:");
         println!();
     }
     for node in success {
-        println!("{node}");
+        print_result(&node);
         println!();
     }
     if !fail.is_empty() {
@@ -96,36 +40,25 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
         println!();
     }
     for node in fail {
-        println!("{node}");
+        print_result(&node);
         println!();
     }
 
     Ok(())
 }
 
-/// Information about a node and its connection.
-struct NodeDetails {
-    connect: Option<Duration>,
-    latency: Option<Duration>,
-    host: RelayUrl,
-    error: Option<String>,
+fn print_result(r: &RelayProbeResult) {
+    match &r.error {
+        None => println!(
+            "Node {}\nConnect: {}\nLatency: {}",
+            r.url,
+            fmt_ms(r.connect_ms),
+            fmt_ms(r.ping_ms)
+        ),
+        Some(err) => println!("Node {}\nConnection Error: {err:?}", r.url),
+    }
 }
 
-impl std::fmt::Display for NodeDetails {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.error {
-            None => {
-                write!(
-                    f,
-                    "Node {}\nConnect: {:?}\nLatency: {:?}",
-                    self.host,
-                    self.connect.unwrap_or_default(),
-                    self.latency.unwrap_or_default(),
-                )
-            }
-            Some(ref err) => {
-                write!(f, "Node {}\nConnection Error: {:?}", self.host, err,)
-            }
-        }
-    }
+fn fmt_ms(ms: Option<f64>) -> String {
+    ms.map_or_else(|| "-".to_string(), |v| format!("{v:.1}ms"))
 }

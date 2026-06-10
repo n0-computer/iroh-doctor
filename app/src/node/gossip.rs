@@ -104,7 +104,7 @@ fn parse_topic_id(input: &str) -> iroh_gossip::proto::TopicId {
     }
     // Hash the user-supplied string with BLAKE3 so any friendly name maps
     // deterministically to a topic both peers can compute.
-    let hash = iroh_blobs::Hash::new(trimmed.as_bytes());
+    let hash = blake3::hash(trimmed.as_bytes());
     iroh_gossip::proto::TopicId::from_bytes(*hash.as_bytes())
 }
 

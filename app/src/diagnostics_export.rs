@@ -15,11 +15,12 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use iroh_doctor_core::fmt::opt_bool;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::components::{DiagState, EventEntry};
-use crate::endpoints::Endpoint;
+use crate::endpoints::{self, Endpoint};
 use crate::node::{NetReportSummary, PathInfo, ThroughputSnapshot};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
@@ -112,9 +113,11 @@ pub fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
 
 fn readme(_s: &Snapshot) -> String {
     let mut out = String::from("iroh-doctor-app diagnostics bundle\n\n");
-    out.push_str(&format!("generated_unix_seconds: {}\n", now_secs()));
+    out.push_str(&format!(
+        "generated_unix_seconds: {}\n",
+        endpoints::now_secs()
+    ));
     out.push_str(&format!("app_version: {}\n", env!("CARGO_PKG_VERSION")));
-    out.push_str(&format!("iroh_pin: {IROH_PIN}\n"));
     out.push_str(&format!("os: {}\n", std::env::consts::OS));
     out.push_str(&format!("arch: {}\n", std::env::consts::ARCH));
     out.push('\n');
@@ -270,19 +273,7 @@ fn throughput_section(s: &Snapshot) -> String {
 }
 
 fn endpoints_json(s: &Snapshot) -> String {
-    let mut out = String::from("[\n");
-    for (i, d) in s.endpoints.iter().enumerate() {
-        out.push_str(&format!(
-            "  {{\"id\":{:?},\"name\":{:?},\"first_seen\":{},\"last_seen\":{}}}",
-            d.id, d.name, d.first_seen, d.last_seen
-        ));
-        if i + 1 != s.endpoints.len() {
-            out.push(',');
-        }
-        out.push('\n');
-    }
-    out.push(']');
-    out
+    endpoints::serialize(&s.endpoints)
 }
 
 fn attach_log_files<W: Write + std::io::Seek>(
@@ -320,21 +311,6 @@ fn attach_log_files<W: Write + std::io::Seek>(
     Ok(())
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn opt_bool(b: Option<bool>) -> &'static str {
-    match b {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "unknown",
-    }
-}
-
 fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') {
         let escaped = s.replace('"', "\"\"");
@@ -343,8 +319,3 @@ fn csv_escape(s: &str) -> String {
         s.to_string()
     }
 }
-
-/// Crate pin shown in the README. We hard-code rather than read
-/// Cargo.toml at runtime because the support team only cares which
-/// release of iroh-doctor-app this is, not the lock graph.
-const IROH_PIN: &str = "1.0.0-rc.1";

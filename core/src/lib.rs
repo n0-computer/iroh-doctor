@@ -4,6 +4,8 @@
 //! hand-synchronized copies of the same logic. This crate holds the pieces
 //! that genuinely belong to both:
 //!
+//! - [`fmt`]: tiny text renderings (yes/no/unknown) shared by the cli tables
+//!   and the app UI.
 //! - [`identity`]: read-or-create persistence for a raw 32-byte secret key.
 //! - [`nat`]: the NAT classification taxonomy and the function that maps an
 //!   `iroh::NetReport` onto it.
@@ -19,7 +21,15 @@
 //! - [`services`]: iroh-services client setup, API-secret resolution, and the
 //!   ping + net_diagnostics queries.
 
+pub mod fmt;
 pub mod identity;
+
+/// Wall-clock ceiling both binaries apply to the
+/// `endpoint.net_report().initialized()` wait. The reporter streams updates
+/// indefinitely; on a network with no DNS or no reachable STUN endpoints the
+/// wait would otherwise hang forever.
+pub const NET_REPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 pub mod monitor;
 pub mod nat;
 pub mod port_variation;

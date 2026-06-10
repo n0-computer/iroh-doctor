@@ -14,24 +14,31 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 
 /// An endpoint the user has connected to at least once.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Unknown JSON fields are ignored and every field except `id` defaults when
+/// absent, so a future schema bump that adds fields can still be opened by an
+/// older binary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Endpoint {
     /// 64-hex iroh endpoint id.
     pub id: String,
     /// User-chosen label. Empty string means "unnamed"; the UI shows the
     /// short id in that case.
+    #[serde(default)]
     pub name: String,
     /// Unix seconds when we first saved this endpoint.
+    #[serde(default)]
     pub first_seen: u64,
     /// Unix seconds of the most recent successful connect.
+    #[serde(default)]
     pub last_seen: u64,
 }
 
 fn endpoints_path() -> Result<PathBuf> {
-    let base = dirs::config_dir().context("no config dir on this platform")?;
-    Ok(base.join("iroh-doctor-app").join("endpoints.json"))
+    Ok(crate::identity::config_dir()?.join("endpoints.json"))
 }
 
 /// Pre-rename storage locations, newest first, read by [`load`] when the
@@ -40,14 +47,14 @@ fn endpoints_path() -> Result<PathBuf> {
 /// `endpoints.json` from before the app rename, and `devices.json` from
 /// before the devices -> endpoints rename.
 fn legacy_paths() -> Vec<PathBuf> {
-    let Some(base) = dirs::config_dir() else {
+    let Ok(old) = crate::identity::legacy_config_dir() else {
         return Vec::new();
     };
-    let old = base.join("iroh-pong");
     vec![old.join("endpoints.json"), old.join("devices.json")]
 }
 
-fn now_secs() -> u64 {
+/// Current time as Unix seconds, saturating to 0 on a pre-epoch clock.
+pub(crate) fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -127,281 +134,14 @@ pub fn remove(mut endpoints: Vec<Endpoint>, id: &str) -> Vec<Endpoint> {
     endpoints
 }
 
-/// Writes the in-memory list as JSON. Hand-rolled so we avoid pulling in
-/// `serde_json` as a direct dep for this one file; the schema is tiny
-/// and stable.
-fn serialize(endpoints: &[Endpoint]) -> String {
-    let mut out = String::from("[\n");
-    for (i, d) in endpoints.iter().enumerate() {
-        out.push_str("  {");
-        out.push_str(&format!("\"id\":{},", json_string(&d.id)));
-        out.push_str(&format!("\"name\":{},", json_string(&d.name)));
-        out.push_str(&format!("\"first_seen\":{},", d.first_seen));
-        out.push_str(&format!("\"last_seen\":{}", d.last_seen));
-        out.push('}');
-        if i + 1 != endpoints.len() {
-            out.push(',');
-        }
-        out.push('\n');
-    }
-    out.push(']');
-    out
+/// Writes the in-memory list as pretty-printed JSON.
+pub(crate) fn serialize(endpoints: &[Endpoint]) -> String {
+    // An array of plain structs cannot fail to encode.
+    serde_json::to_string_pretty(endpoints).expect("endpoints encode as JSON")
 }
 
-fn json_string(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-/// Minimal JSON parser for the array-of-objects schema we write.
-/// Tolerates extra fields (ignores them) so a future schema bump that
-/// adds fields can be opened by an older binary.
 fn parse(text: &str) -> Result<Vec<Endpoint>> {
-    let mut p = Parser::new(text);
-    p.skip_ws();
-    p.expect('[')?;
-    let mut out = Vec::new();
-    loop {
-        p.skip_ws();
-        if p.peek() == Some(']') {
-            p.bump();
-            break;
-        }
-        let endpoint = p.parse_endpoint()?;
-        out.push(endpoint);
-        p.skip_ws();
-        if p.peek() == Some(',') {
-            p.bump();
-        } else if p.peek() == Some(']') {
-            p.bump();
-            break;
-        } else {
-            anyhow::bail!("expected ',' or ']' at offset {}", p.pos);
-        }
-    }
-    Ok(out)
-}
-
-struct Parser<'a> {
-    src: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Parser<'a> {
-    fn new(text: &'a str) -> Self {
-        Self {
-            src: text.as_bytes(),
-            pos: 0,
-        }
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.src.get(self.pos).map(|&b| b as char)
-    }
-
-    fn bump(&mut self) {
-        self.pos += 1;
-    }
-
-    fn skip_ws(&mut self) {
-        while let Some(c) = self.peek() {
-            if c.is_ascii_whitespace() {
-                self.bump();
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn expect(&mut self, want: char) -> Result<()> {
-        match self.peek() {
-            Some(c) if c == want => {
-                self.bump();
-                Ok(())
-            }
-            other => anyhow::bail!("expected {want:?} at offset {}, got {other:?}", self.pos),
-        }
-    }
-
-    fn parse_endpoint(&mut self) -> Result<Endpoint> {
-        self.skip_ws();
-        self.expect('{')?;
-        let mut id = String::new();
-        let mut name = String::new();
-        let mut first_seen: u64 = 0;
-        let mut last_seen: u64 = 0;
-        loop {
-            self.skip_ws();
-            if self.peek() == Some('}') {
-                self.bump();
-                break;
-            }
-            let key = self.parse_string()?;
-            self.skip_ws();
-            self.expect(':')?;
-            self.skip_ws();
-            match key.as_str() {
-                "id" => id = self.parse_string()?,
-                "name" => name = self.parse_string()?,
-                "first_seen" => first_seen = self.parse_u64()?,
-                "last_seen" => last_seen = self.parse_u64()?,
-                _ => self.skip_value()?,
-            }
-            self.skip_ws();
-            if self.peek() == Some(',') {
-                self.bump();
-            } else if self.peek() == Some('}') {
-                self.bump();
-                break;
-            } else {
-                anyhow::bail!("expected ',' or '}}' at offset {}", self.pos);
-            }
-        }
-        if id.is_empty() {
-            anyhow::bail!("endpoint entry missing id");
-        }
-        Ok(Endpoint {
-            id,
-            name,
-            first_seen,
-            last_seen,
-        })
-    }
-
-    fn parse_string(&mut self) -> Result<String> {
-        self.expect('"')?;
-        let mut out = String::new();
-        loop {
-            match self.peek() {
-                None => anyhow::bail!("unterminated string at offset {}", self.pos),
-                Some('"') => {
-                    self.bump();
-                    return Ok(out);
-                }
-                Some('\\') => {
-                    self.bump();
-                    match self.peek() {
-                        Some('"') => out.push('"'),
-                        Some('\\') => out.push('\\'),
-                        Some('/') => out.push('/'),
-                        Some('n') => out.push('\n'),
-                        Some('r') => out.push('\r'),
-                        Some('t') => out.push('\t'),
-                        Some('u') => {
-                            self.bump();
-                            let mut code: u32 = 0;
-                            for _ in 0..4 {
-                                let c = self
-                                    .peek()
-                                    .context("truncated \\u escape")?
-                                    .to_digit(16)
-                                    .context("non-hex in \\u escape")?;
-                                code = code * 16 + c;
-                                self.bump();
-                            }
-                            if let Some(ch) = char::from_u32(code) {
-                                out.push(ch);
-                            }
-                            continue;
-                        }
-                        other => anyhow::bail!("unknown escape {other:?} at offset {}", self.pos),
-                    }
-                    self.bump();
-                }
-                Some(c) => {
-                    out.push(c);
-                    self.bump();
-                }
-            }
-        }
-    }
-
-    fn parse_u64(&mut self) -> Result<u64> {
-        let start = self.pos;
-        while let Some(c) = self.peek() {
-            if c.is_ascii_digit() {
-                self.bump();
-            } else {
-                break;
-            }
-        }
-        if start == self.pos {
-            anyhow::bail!("expected digit at offset {}", self.pos);
-        }
-        let slice = std::str::from_utf8(&self.src[start..self.pos]).context("non-utf8 number")?;
-        slice.parse().context("number out of range")
-    }
-
-    fn skip_value(&mut self) -> Result<()> {
-        self.skip_ws();
-        match self.peek() {
-            Some('"') => {
-                let _ = self.parse_string()?;
-                Ok(())
-            }
-            Some('{') => {
-                let mut depth = 0;
-                while let Some(c) = self.peek() {
-                    if c == '{' {
-                        depth += 1;
-                    } else if c == '}' {
-                        depth -= 1;
-                        self.bump();
-                        if depth == 0 {
-                            return Ok(());
-                        }
-                        continue;
-                    } else if c == '"' {
-                        let _ = self.parse_string()?;
-                        continue;
-                    }
-                    self.bump();
-                }
-                anyhow::bail!("unterminated object");
-            }
-            Some('[') => {
-                let mut depth = 0;
-                while let Some(c) = self.peek() {
-                    if c == '[' {
-                        depth += 1;
-                    } else if c == ']' {
-                        depth -= 1;
-                        self.bump();
-                        if depth == 0 {
-                            return Ok(());
-                        }
-                        continue;
-                    } else if c == '"' {
-                        let _ = self.parse_string()?;
-                        continue;
-                    }
-                    self.bump();
-                }
-                anyhow::bail!("unterminated array");
-            }
-            _ => {
-                while let Some(c) = self.peek() {
-                    if matches!(c, ',' | '}' | ']') {
-                        return Ok(());
-                    }
-                    self.bump();
-                }
-                Ok(())
-            }
-        }
-    }
+    serde_json::from_str(text).context("parsing endpoints JSON")
 }
 
 #[cfg(test)]
