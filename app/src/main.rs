@@ -23,8 +23,9 @@ use node::{
     TelemetryState,
 };
 
-/// Maximum samples kept in the RTT sparkline. At 500 ms intervals this is
-/// 30 s of history.
+/// Maximum samples kept in the RTT sparkline. An outgoing dial samples at
+/// the probe ping interval (1 s, so 60 s of history); an incoming probe
+/// samples at the 500 ms paths cadence (30 s of history).
 const RTT_HISTORY_LEN: usize = 60;
 /// Maximum number of connection events retained for the Diagnostics tab.
 const EVENT_LOG_LEN: usize = 50;
@@ -181,6 +182,7 @@ fn App() -> Element {
         let (ttfdb_tx, mut ttfdb_rx) = watch::channel::<Option<Duration>>(None);
         let (throughput_tx, mut throughput_rx) =
             watch::channel::<Option<node::ThroughputSnapshot>>(None);
+        let (latency_tx, mut latency_rx) = watch::channel::<Option<Duration>>(None);
 
         cmd_handle
             .clone()
@@ -192,6 +194,7 @@ fn App() -> Element {
         let paths_tx = Arc::new(paths_tx);
         let ttfdb_tx = Arc::new(ttfdb_tx);
         let throughput_tx = Arc::new(throughput_tx);
+        let latency_tx = Arc::new(latency_tx);
 
         {
             let id_tx = id_tx.clone();
@@ -200,6 +203,7 @@ fn App() -> Element {
             let paths_tx = paths_tx.clone();
             let ttfdb_tx = ttfdb_tx.clone();
             let throughput_tx = throughput_tx.clone();
+            let latency_tx = latency_tx.clone();
             tokio::spawn(async move {
                 let _ = node::run_node(
                     secret_key,
@@ -224,6 +228,9 @@ fn App() -> Element {
                         on_throughput: Box::new(move |t| {
                             let _ = throughput_tx.send(Some(t));
                         }),
+                        on_latency: Box::new(move |d| {
+                            let _ = latency_tx.send(Some(d));
+                        }),
                     },
                 )
                 .await;
@@ -237,6 +244,7 @@ fn App() -> Element {
             paths_tx,
             ttfdb_tx,
             throughput_tx,
+            latency_tx,
         );
 
         loop {
@@ -253,10 +261,12 @@ fn App() -> Element {
                 Ok(()) = telemetry_rx.changed() => telemetry.clone().set(telemetry_rx.borrow().clone()),
                 Ok(()) = paths_rx.changed() => {
                     let snapshot = paths_rx.borrow().clone();
-                    if let Some(selected) = snapshot.iter().find(|p| p.selected) {
-                        push_rtt_sample(rtt_history, selected.rtt_ms);
-                    }
                     paths.clone().set(snapshot);
+                }
+                Ok(()) = latency_rx.changed() => {
+                    if let Some(sample) = *latency_rx.borrow() {
+                        push_rtt_sample(rtt_history, sample.as_secs_f64() * 1000.0);
+                    }
                 }
                 Ok(()) = ttfdb_rx.changed() => {
                     ttfdb.clone().set(*ttfdb_rx.borrow());

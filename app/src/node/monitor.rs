@@ -35,13 +35,14 @@ pub(crate) fn snapshot_paths(conn: &endpoint::Connection) -> Vec<PathInfo> {
 /// against the peer until the connection ends.
 ///
 /// On a successful dial the connection is published into `conn_slot` so the
-/// long-lived paths sampler drives the latency graph and path table. The
-/// shared [`iroh_doctor_core::monitor::run`] composition then reports
+/// long-lived paths sampler drives the path table. The shared
+/// [`iroh_doctor_core::monitor::run`] composition then reports
 /// time-to-first-direct-byte and drives the probe client; its throughput
-/// samples are surfaced via `on_throughput`. We leave `watch_paths` off
-/// because the app's periodic sampler already feeds the paths view, and the
-/// graph's latency comes from QUIC's smoothed RTT (matching
-/// `iroh-doctor accept`), so the client-side latency samples are ignored.
+/// samples are surfaced via `on_throughput` and its ping round-trips via
+/// `on_latency`, so the latency graph plots the same series as
+/// `iroh-doctor connect`. We leave `watch_paths` off because the app's
+/// periodic sampler already feeds the paths view (and that sampler holds
+/// its path-RTT latency samples back while this monitor runs).
 pub(crate) async fn run_monitor(
     endpoint: Endpoint,
     addr: EndpointAddr,
@@ -49,6 +50,7 @@ pub(crate) async fn run_monitor(
     on_state: StateCb,
     on_throughput: ThroughputCb,
     on_ttfdb: TtfdbCb,
+    on_latency: LatencyCb,
 ) {
     let started = std::time::Instant::now();
     let conn = match endpoint.connect(addr, iroh_doctor_core::probe::ALPN).await {
@@ -85,9 +87,10 @@ pub(crate) async fn run_monitor(
                     mbps: iroh_doctor_core::probe::throughput_mbps(bytes, elapsed),
                 });
             }
+            MonitorEvent::Latency { rtt, .. } => on_latency(rtt),
             MonitorEvent::Ttfdb(elapsed) => on_ttfdb(Some(elapsed)),
             MonitorEvent::Ended(_) => break,
-            // Latency/State/Paths: the app's periodic sampler feeds those.
+            // State/Paths: the app's periodic sampler feeds those.
             _ => {}
         }
     }

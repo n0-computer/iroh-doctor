@@ -169,6 +169,7 @@ type IdCb = Arc<dyn Fn(String) + Send + Sync>;
 type PathsCb = Arc<dyn Fn(Vec<PathInfo>) + Send + Sync>;
 type TtfdbCb = Arc<dyn Fn(Option<Duration>) + Send + Sync>;
 type ThroughputCb = Arc<dyn Fn(ThroughputSnapshot) + Send + Sync>;
+type LatencyCb = Arc<dyn Fn(Duration) + Send + Sync>;
 
 /// Snapshot of one completed upload from the peer probe (`iroh-doctor connect`
 /// monitor). `bytes` and `elapsed` come straight from the responder's
@@ -198,6 +199,12 @@ pub struct NodeCallbacks {
     /// completes an upload. Carries the byte count, the drain time, and a
     /// pre-formatted Mbps value.
     pub on_throughput: Box<dyn Fn(ThroughputSnapshot) + Send + Sync>,
+    /// Fires with one sample per point on the live latency graph. On an
+    /// outgoing dial the samples are probe ping round-trips, the same
+    /// series `iroh-doctor connect` plots; for an incoming probe they are
+    /// the selected path's smoothed QUIC RTT, matching `iroh-doctor
+    /// accept` (the passive side has no ping loop of its own).
+    pub on_latency: Box<dyn Fn(Duration) + Send + Sync>,
 }
 
 /// How often `run_node` samples the live connection's QUIC paths for the
@@ -243,6 +250,7 @@ pub async fn run_node(
     let on_paths: PathsCb = Arc::from(callbacks.on_paths);
     let on_ttfdb: TtfdbCb = Arc::from(callbacks.on_ttfdb);
     let on_throughput: ThroughputCb = Arc::from(callbacks.on_throughput);
+    let on_latency: LatencyCb = Arc::from(callbacks.on_latency);
 
     on_state(ConnectionState::Binding);
 
@@ -309,9 +317,16 @@ pub async fn run_node(
     // twice a second. Time-to-first-direct-byte is handled separately by a
     // per-connection `ttfdb_watch` task (see `run_monitor` and the probe
     // accept arm).
+    //
+    // The sampler also feeds the latency graph from the selected path's
+    // smoothed QUIC RTT, but only while no dial monitor is running: an
+    // outgoing dial plots probe ping round-trips instead (see `run_monitor`),
+    // and mixing the two sources would corrupt the series.
     {
         let conn_slot = conn_slot.clone();
         let on_paths = on_paths.clone();
+        let on_latency = on_latency.clone();
+        let monitor = monitor.clone();
         long_lived.spawn(async move {
             let mut ticker = tokio::time::interval(PATHS_SAMPLE_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -322,6 +337,16 @@ pub async fn run_node(
                     let slot = conn_slot.lock().await;
                     slot.as_ref().map(snapshot_paths).unwrap_or_default()
                 };
+                let dialing = monitor
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(|task| !task.is_finished());
+                if !dialing {
+                    if let Some(selected) = snapshot.iter().find(|p| p.selected) {
+                        on_latency(Duration::from_secs_f64(selected.rtt_ms / 1000.0));
+                    }
+                }
                 if snapshot != last {
                     on_paths(snapshot.clone());
                     last = snapshot.clone();
@@ -360,12 +385,22 @@ pub async fn run_node(
                 let on_state = on_state.clone();
                 let on_throughput = on_throughput.clone();
                 let on_ttfdb = on_ttfdb.clone();
+                let on_latency = on_latency.clone();
                 let mut slot = monitor.lock().await;
                 if let Some(prev) = slot.take() {
                     prev.abort();
                 }
                 *slot = Some(tokio::spawn(async move {
-                    run_monitor(endpoint, addr, conn_slot, on_state, on_throughput, on_ttfdb).await;
+                    run_monitor(
+                        endpoint,
+                        addr,
+                        conn_slot,
+                        on_state,
+                        on_throughput,
+                        on_ttfdb,
+                        on_latency,
+                    )
+                    .await;
                 }));
             }
             NodeCommand::Disconnect => {
