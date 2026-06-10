@@ -68,9 +68,33 @@ pub enum Commands {
         /// Skip the per-relay connect and ping latency sweep.
         #[clap(long, default_value_t = false)]
         no_relays: bool,
+        /// Probe these QAD helpers (host:port, comma separated) to measure
+        /// whether the NAT mapping varies by destination port.
+        ///
+        /// Two entries on the same host with different ports unlock the
+        /// `Easy` NAT classification. Run `iroh-doctor nat-helper` on a
+        /// reachable machine to get them.
+        #[clap(long, value_delimiter = ',')]
+        nat_probe: Vec<String>,
         /// Emit the report as JSON to stdout instead of tables.
         #[clap(long, default_value_t = false)]
         json: bool,
+    },
+    /// Serve two QUIC address discovery endpoints for `diagnostics
+    /// --nat-probe`.
+    ///
+    /// A NAT's mapping behavior across destination *ports* can only be
+    /// measured against one host listening on two ports, which the public
+    /// iroh relays do not offer. Run this on a machine the diagnosing side
+    /// can reach directly, then probe it from over there.
+    NatHelper {
+        /// Address to bind both helpers to.
+        #[clap(long, default_value = "0.0.0.0")]
+        bind: std::net::IpAddr,
+        /// The two UDP ports to serve on, comma separated. 0 picks a free
+        /// port.
+        #[clap(long, value_delimiter = ',', num_args = 1.., default_value = "0,0")]
+        ports: Vec<u16>,
     },
     /// Wait for incoming connections and monitor each one live (latency,
     /// paths, throughput), the accepting side of `iroh-doctor connect`.
@@ -400,8 +424,20 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::Diagnostics {
             no_port_map,
             no_relays,
+            nat_probe,
             json,
-        } => commands::diagnostics::diagnostics(config, no_port_map, no_relays, json).await,
+        } => {
+            commands::diagnostics::diagnostics(config, no_port_map, no_relays, &nat_probe, json)
+                .await
+        }
+        Commands::NatHelper { bind, ports } => {
+            anyhow::ensure!(
+                ports.len() == 2,
+                "--ports takes exactly two comma-separated ports, got {}",
+                ports.len()
+            );
+            commands::nat_helper::nat_helper(bind, (ports[0], ports[1])).await
+        }
         Commands::Connect {
             dial,
             secret_key,

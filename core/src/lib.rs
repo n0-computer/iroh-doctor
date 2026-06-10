@@ -13,6 +13,8 @@
 //!   responder plus a client that measures latency over time and upload
 //!   throughput against a peer.
 //! - [`relay_probe`]: per-relay TLS connect plus relay-protocol ping latency.
+//! - [`port_variation`]: the per-destination-port NAT probe (QAD helper
+//!   server plus client) that unlocks the `Easy` NAT classification.
 //! - [`portmap`]: a one-shot UPnP/PCP/NAT-PMP gateway probe.
 //! - [`services`]: iroh-services client setup, API-secret resolution, and the
 //!   ping + net_diagnostics queries.
@@ -20,6 +22,7 @@
 pub mod identity;
 pub mod monitor;
 pub mod nat;
+pub mod port_variation;
 pub mod portmap;
 pub mod probe;
 pub mod relay_probe;

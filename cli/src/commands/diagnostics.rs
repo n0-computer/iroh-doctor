@@ -10,13 +10,15 @@
 //! `iroh-doctor-core` so the app reports the same numbers; this module only
 //! orchestrates them and renders the tables.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::Context;
 use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher};
 use serde::Serialize;
 
-use iroh_doctor_core::nat::{classify_base_report, NatType};
+use iroh_doctor_core::nat::{classify_nat_type, ExtendedNetworkReport, NatType};
+use iroh_doctor_core::port_variation::PortVariationReport;
 use iroh_doctor_core::portmap::PortMapResult;
 use iroh_doctor_core::relay_probe::RelayProbeResult;
 use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
@@ -30,6 +32,9 @@ use crate::config::NodeConfig;
 pub struct Report {
     pub net_report: Option<NetReport>,
     pub nat: NatType,
+    /// Per-destination-port mapping probe against `--nat-probe` helpers.
+    /// `None` when no helpers were given.
+    pub port_variation: Option<PortVariationReport>,
     pub port_map: Option<PortMapResult>,
     pub relays: Vec<RelayProbeResult>,
     /// iroh-services checks (ping + server-side net_diagnostics). `None` when
@@ -55,6 +60,7 @@ pub async fn diagnostics(
     config: &NodeConfig,
     no_port_map: bool,
     no_relays: bool,
+    nat_probe: &[String],
     json: bool,
 ) -> anyhow::Result<()> {
     let relay_map = config.relay_map()?.unwrap_or_else(RelayMap::empty);
@@ -66,7 +72,15 @@ pub async fn diagnostics(
 
     // Run the actual work inside a helper so endpoint.close() always runs
     // even if one of the steps returns Err.
-    let result = report_inner(&endpoint, &relay_map, no_port_map, no_relays, json).await;
+    let result = report_inner(
+        &endpoint,
+        &relay_map,
+        no_port_map,
+        no_relays,
+        nat_probe,
+        json,
+    )
+    .await;
     endpoint.close().await;
     result
 }
@@ -76,6 +90,7 @@ async fn report_inner(
     relay_map: &RelayMap,
     no_port_map: bool,
     no_relays: bool,
+    nat_probe: &[String],
     json: bool,
 ) -> anyhow::Result<()> {
     // Wait for the first non-empty report with a hard ceiling. The reporter
@@ -84,7 +99,20 @@ async fn report_inner(
     let net_report = tokio::time::timeout(NET_REPORT_TIMEOUT, endpoint.net_report().initialized())
         .await
         .context("net_report did not initialize within timeout")?;
-    let nat = classify_base_report(&net_report);
+
+    let port_variation = if nat_probe.is_empty() {
+        None
+    } else {
+        let targets = resolve_nat_probe_targets(nat_probe).await?;
+        Some(iroh_doctor_core::port_variation::probe_port_variation(&targets).await?)
+    };
+
+    let mut extended = ExtendedNetworkReport::from_base_report(Some(net_report.clone()));
+    if let Some(pv) = &port_variation {
+        extended.mapping_varies_by_dest_port_ipv4 = pv.varies_ipv4;
+        extended.mapping_varies_by_dest_port_ipv6 = pv.varies_ipv6;
+    }
+    let nat = classify_nat_type(&extended);
 
     let port_map = if no_port_map {
         None
@@ -103,6 +131,7 @@ async fn report_inner(
     let report = Report {
         net_report: Some(net_report),
         nat,
+        port_variation,
         port_map,
         relays,
         services,
@@ -166,6 +195,14 @@ fn print_tables(r: &Report) {
             opt_bool(nr.and_then(|n| n.mapping_varies_by_dest())),
         ),
         kv(
+            "Mapping varies by port",
+            opt_bool(
+                r.port_variation
+                    .as_ref()
+                    .and_then(|pv| pv.varies_ipv4.or(pv.varies_ipv6)),
+            ),
+        ),
+        kv(
             "Captive portal",
             opt_bool(nr.and_then(|n| n.captive_portal)),
         ),
@@ -178,6 +215,32 @@ fn print_tables(r: &Report) {
     print!("{}", markdown_table(&["Property", "Value"], &summary));
     println!("{} - {}", r.nat, r.nat.description());
     println!();
+
+    if let Some(pv) = &r.port_variation {
+        let rows: Vec<Vec<String>> = pv
+            .observations
+            .iter()
+            .map(|o| {
+                vec![
+                    o.target.to_string(),
+                    opt_addr(o.observed),
+                    o.error.clone().unwrap_or_default(),
+                ]
+            })
+            .collect();
+        println!("NAT helper probes");
+        print!(
+            "{}",
+            markdown_table(&["Helper", "Observed mapping", "Note"], &rows)
+        );
+        if pv.varies_ipv4.is_none() && pv.varies_ipv6.is_none() {
+            println!(
+                "warning: no two successful probes shared a host, so the \
+                 port-variation verdict is unknown"
+            );
+        }
+        println!();
+    }
 
     if let Some(pm) = &r.port_map {
         let rows = vec![
@@ -230,6 +293,51 @@ fn print_tables(r: &Report) {
             println!("warning: {err}");
         }
     }
+}
+
+/// Resolves `--nat-probe` entries (`host:port`) to socket addresses.
+///
+/// A hostname is resolved once and its first address reused for every entry
+/// naming it, so two ports on one host stay comparable even when DNS would
+/// rotate between several addresses.
+async fn resolve_nat_probe_targets(entries: &[String]) -> anyhow::Result<Vec<SocketAddr>> {
+    use std::collections::HashMap;
+    use std::net::IpAddr;
+
+    let mut resolved_hosts: HashMap<String, IpAddr> = HashMap::new();
+    let mut targets = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if let Ok(addr) = entry.parse::<SocketAddr>() {
+            targets.push(addr);
+            continue;
+        }
+        let (host, port) = split_host_port(entry)
+            .with_context(|| format!("invalid --nat-probe entry {entry:?}, expected host:port"))?;
+        let ip = match resolved_hosts.get(host) {
+            Some(ip) => *ip,
+            None => {
+                let addr = tokio::net::lookup_host((host, port))
+                    .await
+                    .with_context(|| format!("resolving {host:?}"))?
+                    .next()
+                    .with_context(|| format!("no addresses for {host:?}"))?;
+                resolved_hosts.insert(host.to_string(), addr.ip());
+                addr.ip()
+            }
+        };
+        targets.push(SocketAddr::new(ip, port));
+    }
+    Ok(targets)
+}
+
+/// Splits a `host:port` string on the last colon. IPv6 literals must use
+/// the bracketed form, which `SocketAddr::parse` already accepts upstream.
+fn split_host_port(entry: &str) -> Option<(&str, u16)> {
+    let (host, port) = entry.rsplit_once(':')?;
+    if host.is_empty() || host.contains(':') {
+        return None;
+    }
+    Some((host, port.parse().ok()?))
 }
 
 /// Builds a two-cell key/value row for the summary table.
@@ -307,6 +415,21 @@ fn fmt_opt_ms(ms: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_host_port_handles_names_and_rejects_garbage() {
+        assert_eq!(
+            split_host_port("helper.example:3478"),
+            Some(("helper.example", 3478))
+        );
+        assert_eq!(split_host_port("localhost:1"), Some(("localhost", 1)));
+        // No port, empty host, bare IPv6 (must be bracketed, which the
+        // SocketAddr fast path upstream handles), bad port.
+        assert_eq!(split_host_port("helper.example"), None);
+        assert_eq!(split_host_port(":3478"), None);
+        assert_eq!(split_host_port("2001:db8::1:3478"), None);
+        assert_eq!(split_host_port("host:notaport"), None);
+    }
 
     #[test]
     fn opt_bool_covers_all_states() {
