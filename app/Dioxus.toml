@@ -1,9 +1,10 @@
 [application]
 # Intended display name. NOTE: in dx 0.7.9 this does NOT reach the mobile
-# display name — both the iOS CFBundleDisplayName and the Android app_name still
+# display name — both the iOS CFBundleDisplayName and the Android app_name
 # derive from the PascalCased crate name ("IrohDoctorApp"). Verified by rebuild.
-# Fixing the on-device name needs the `android_manifest` / `ios_info_plist`
-# override files (or a dx upgrade); see plans/app-store-release-design.md.
+# iOS is fixed durably via the CFBundleDisplayName/CFBundleName overrides in
+# [ios.plist] below; Android only gets the real name when built through
+# scripts/bundle-mobile.sh, which rewrites app_name in the generated project.
 name = "iroh doctor"
 
 [bundle]
@@ -27,15 +28,27 @@ deployment_target = "13.0"
 
 # iOS Info.plist entries injected by `dx` at bundle time.
 [ios.plist]
+# dx 0.7.9 templates both of these from the PascalCased crate name
+# ("IrohDoctorApp"); injecting them here overrides the template so even plain
+# `dx build --ios` carries the real name. scripts/bundle-mobile.sh sets the
+# same values defensively. Keep in sync with DISPLAY_NAME there.
+CFBundleDisplayName = "iroh doctor"
+CFBundleName = "iroh doctor"
 # dx 0.7.9's Info.plist template has no MinimumOSVersion key and no other way
 # to set it, so we inject it here. Keep in sync with deployment_target above.
 MinimumOSVersion = "13.0"
 # iroh makes direct connections to peers on the local subnet (hole punching).
-# iOS 14+ requires this usage string or it silently blocks local-network access
-# and the app falls back to relay-only — which would gut a diagnostics tool.
-# NSBonjourServices is intentionally omitted: presets::N0 uses DNS/pkarr + relay
-# discovery, not mDNS/Bonjour. Add it only if mDNS discovery is enabled later.
-NSLocalNetworkUsageDescription = "iroh doctor connects directly to peers on your local network to measure connection quality. Without local network access it can only test relayed connections."
+# Contrary to what this comment used to claim, iOS does NOT gate that QUIC
+# unicast traffic behind the local-network permission: device testing
+# (n0-computer/hello-iroh-ffi#8) showed direct LAN paths survive with no usage
+# string and even with the app's Local Network toggle switched off in Settings.
+# The key stays because iOS still lists the app under Settings > Privacy &
+# Security > Local Network, where this string is the user-facing explanation,
+# and App Store review expects a usage description for anything the system
+# flags. NSBonjourServices is intentionally omitted: presets::N0 uses DNS/pkarr
+# + relay discovery, not mDNS/Bonjour. mDNS discovery would need that key plus
+# the com.apple.developer.networking.multicast entitlement, not just this string.
+NSLocalNetworkUsageDescription = "iroh doctor connects directly to peers on your local network to measure connection quality."
 # The app uses only standard encryption (QUIC/TLS via rustls), which is exempt
 # from U.S. export-compliance documentation. Declaring this skips the prompt at
 # every TestFlight/App Store upload. Re-evaluate if non-standard crypto is added.
