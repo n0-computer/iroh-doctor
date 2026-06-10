@@ -175,6 +175,60 @@ wrapper, so no separate `ios_info_plist`/`android_manifest` files are needed.
    0.7.9 needs a short spike before relying on it (it may be Dioxus.toml config,
    or editing the generated Xcode/Gradle project).
 
+## Version and build-number strategy (decided 2026-06-09)
+
+`version` in `app/Cargo.toml` (today `0.1.0`) is the single source of truth
+for the marketing version. dx 0.7.9 reads it via `crate_version()`
+(dioxus-cli `src/build/request.rs:2672`) and stamps it into both platforms on
+every build:
+
+- iOS: **both** `CFBundleShortVersionString` and `CFBundleVersion` get the
+  crate version (`assets/ios/ios.plist.hbs`, filled at
+  `src/build/apple.rs:267`). There is no separate build-number key.
+- Android: `versionName` gets the crate version, but `versionCode` is
+  **hardcoded to `1`** in `assets/android/gen/app/build.gradle.kts.hbs`. dx
+  0.7.9 has no config hook for it (no `version_code` anywhere in the CLI
+  source).
+
+That default breaks store uploads after the first one: Play permanently
+rejects a reused `versionCode`, and App Store Connect rejects a reused
+`CFBundleVersion` within the same short version. Since dx regenerates the
+native projects every build, the fix belongs in the same place as the other
+post-`dx build` fixes: `app/scripts/bundle-mobile.sh`.
+
+The strategy:
+
+- **Marketing version** (`CFBundleShortVersionString` / `versionName`): bump
+  `version` in `app/Cargo.toml`. Nothing else to touch; dx propagates it.
+- **Build number** (`CFBundleVersion` / `versionCode`): one shared monotonic
+  integer, starting at 1, +1 for **every** store upload, including re-uploads
+  of the same marketing version. It never resets. The wrapper takes it as
+  `BUILD_NUMBER` (env or flag, wiring lands with the A7 release-artifact
+  work) and applies it after `dx build`:
+  - iOS, next to the existing `CFBundleDisplayName` PlistBuddy calls:
+    `/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_BUNDLE/Info.plist"`
+  - Android, before invoking gradlew:
+    `sed -i '' "s/versionCode = 1/versionCode = $BUILD_NUMBER/" "$PROJ/app/build.gradle.kts"`
+- **Record keeping**: the last-used build number is whatever the store
+  consoles show; note it in the Phase 7 release runbook after each upload.
+  We deliberately do not derive it from git (commit counts shift under
+  rebases) or from a checked-in counter file (stale across machines).
+
+Mechanical steps for a release bump:
+
+1. Set the new marketing version in `app/Cargo.toml` (`version = "x.y.z"`),
+   run `cargo check` so `Cargo.lock` picks it up, and commit.
+2. Pick the build number: last uploaded build number + 1 (check App Store
+   Connect / Play Console if in doubt).
+3. Build with the wrapper: `BUILD_NUMBER=<n> scripts/bundle-mobile.sh ios
+   --release` and `BUILD_NUMBER=<n> scripts/bundle-mobile.sh android
+   --release` (same number for both stores; gaps are fine, regressions are
+   not). Until the `BUILD_NUMBER` wiring lands in the wrapper, run the
+   PlistBuddy/sed commands above by hand after `dx build`.
+4. Verify before upload: iOS
+   `plutil -p .../IrohDoctorApp.app/Info.plist | grep -E 'CFBundleVersion|CFBundleShortVersionString'`;
+   Android `aapt dump badging <apk/aab> | grep versionCode`.
+
 ## Phases
 
 ### Phase 0 — Decisions & accounts
@@ -190,9 +244,9 @@ wrapper, so no separate `ios_info_plist`/`android_manifest` files are needed.
 - [ ] **Enroll Apple Developer Program** ($99/yr). *(Blocker — Rae: payment + ID.)*
 - [ ] **Create Google Play Console account** ($25 one-time). *(Blocker — Rae:
       payment + ID verification, which Google now requires up front.)*
-- [ ] Decide **version/build-number strategy**: Cargo `version` → iOS
-      `CFBundleShortVersionString` + monotonic `CFBundleVersion`; Android
-      `versionName` + monotonic integer `versionCode`. Document the mapping.
+- [x] Decide **version/build-number strategy**. DONE 2026-06-09, see the
+      "Version and build-number strategy" section below for the mapping and the
+      release-bump steps.
 - [x] **Spike**: dx 0.7.9 mobile bundle mechanics — done for **both** iOS and
       Android (see "Spike results"). Android required an rfd fix (below) and the
       local SDK/NDK env; both `dx build --ios` and `dx build --android` now
@@ -215,8 +269,16 @@ wrapper, so no separate `ios_info_plist`/`android_manifest` files are needed.
       first-run note as needed).
 - [ ] Harden **error + empty states** for a stranger's first launch (no peer,
       offline, permission denied, diagnostics export on iOS sandbox).
-- [ ] Decide **background behavior** (foreground-only is fine for a debug tool;
-      avoids background-mode entitlements).
+- [x] Decide **background behavior**. DECIDED 2026-06-09: the app is
+      **foreground-only**. It is a diagnostics tool you run while looking at
+      it, so it declares no iOS `UIBackgroundModes`, no background networking
+      entitlements, and no Android foreground service (dx 0.7.9 supports all
+      three via `[background]` / `foreground_service_type`; we use none).
+      Consequence: when the user backgrounds the app the OS suspends it and
+      live QUIC connections drop; the user re-runs the probe on return. That
+      is acceptable for a diagnostics tool, and it avoids review friction:
+      background modes invite extra App Review scrutiny and would contradict
+      the "nothing runs or collects in the background" privacy story.
 - [ ] Confirm release builds work: `dx bundle --platform ios --release`.
 
 ### Phase 2 — Branding & assets
@@ -251,17 +313,41 @@ iOS:
       wrapper. Re-verify required-reason APIs against the final binary.
 - [x] Wire the **app icon** + public **display name** ("iroh doctor") — done by
       the build wrapper (verified).
-- [ ] Set **minimum iOS deployment target**; confirm device arch (`aarch64-apple-ios`).
-- [ ] App category, display name, bundle version wiring.
+- [x] Set **minimum iOS deployment target** = 13.0 (2026-06-09). Two pieces,
+      because dx 0.7.9 only reads `[ios] deployment_target` for widget
+      extensions (dioxus-cli `src/build/apple.rs`, `compile_widget_extensions`)
+      and its Info.plist template carries no `MinimumOSVersion`: we set
+      `deployment_target = "13.0"` for forward compatibility AND inject
+      `MinimumOSVersion = "13.0"` via `[ios.plist]`. Matches the existing
+      actool `--minimum-deployment-target 13.0` in `bundle-mobile.sh`. Nothing
+      needs newer: the iOS 14+ local-network prompt simply does not appear on
+      13, where local-network access is ungated. Device arch
+      `aarch64-apple-ios` confirmed by the build spike. *(Config verified to
+      parse; the generated Info.plist cannot be checked on this machine, which
+      has no Xcode. Verify on a Mac with Xcode: `cd app && dx build --ios` then
+      `plutil -p target/dx/iroh-doctor-app/debug/ios/IrohDoctorApp.app/Info.plist | grep MinimumOSVersion`.)*
+- [ ] App category (store metadata, pick at listing time). Display name is done
+      (build wrapper); bundle-version wiring is decided, see "Version and
+      build-number strategy".
 
 Android:
 - [x] Set valid `applicationId` (done) and SDK levels via `[android]`:
       `min_sdk=24`, `target_sdk=35`, `compile_sdk=35` — verified in the generated
       `build.gradle.kts` and the built APK (`targetSdkVersion 35`). *(Re-check the
       required API level at submission — it rises yearly.)*
-- [ ] Manifest permissions: `INTERNET`, `ACCESS_NETWORK_STATE`,
-      `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`; acquire a
-      `MulticastLock` at runtime for mDNS.
+- [x] Manifest permissions: **`INTERNET` only** (2026-06-09, evidence-based;
+      this supersedes the four-permission list this plan originally carried).
+      dx 0.7.9 hardcodes `INTERNET` as a default in its AndroidManifest
+      template, and everything the app does on Android (QUIC, DNS/pkarr
+      lookup, relay HTTPS probes, the port-map probe) needs nothing else.
+      `ACCESS_WIFI_STATE`/`CHANGE_WIFI_MULTICAST_STATE` + `MulticastLock`
+      gate multicast *receive*, i.e. mDNS, and finding 2 above already
+      established `presets::N0` does no mDNS. `ACCESS_NETWORK_STATE` is also
+      unused: iroh's netwatch reads routes via `getifaddrs` +
+      `/system/bin/ip` on Android, never ConnectivityManager. Play flags
+      unused permissions, so we declare none. Full rationale and the
+      add-it-back trigger (mDNS/local discovery shipping) live in the
+      `[android]` comment in `app/Dioxus.toml`.
 - [ ] Confirm Rust ABIs built: `arm64-v8a` (required), optional `x86_64` for
       emulator; NDK version pinned.
 - [ ] Output **AAB** (App Bundle), not APK.

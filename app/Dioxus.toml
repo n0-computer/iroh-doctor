@@ -15,8 +15,21 @@ publisher = "number 0"
 # Source app icon; dx generates the per-platform icon sets from this master.
 icon = ["assets/icon/icon-master.png"]
 
+[ios]
+# Minimum iOS version. In dx 0.7.9 this key is only read for widget extensions
+# (dioxus-cli src/build/apple.rs uses it solely in compile_widget_extensions);
+# it does NOT reach the main app's Info.plist or the rustc link step. We set it
+# anyway for forward compatibility and declare the store-facing minimum via
+# MinimumOSVersion in [ios.plist] below. 13.0 matches the actool
+# --minimum-deployment-target in scripts/bundle-mobile.sh; nothing in the app
+# needs newer (the iOS 14+ local-network prompt degrades gracefully on 13).
+deployment_target = "13.0"
+
 # iOS Info.plist entries injected by `dx` at bundle time.
 [ios.plist]
+# dx 0.7.9's Info.plist template has no MinimumOSVersion key and no other way
+# to set it, so we inject it here. Keep in sync with deployment_target above.
+MinimumOSVersion = "13.0"
 # iroh makes direct connections to peers on the local subnet (hole punching).
 # iOS 14+ requires this usage string or it silently blocks local-network access
 # and the app falls back to relay-only — which would gut a diagnostics tool.
@@ -36,6 +49,24 @@ ITSAppUsesNonExemptEncryption = false
 min_sdk = 24
 target_sdk = 35
 compile_sdk = 35
+
+# No [android.permissions] entries: the app needs only INTERNET, and dx 0.7.9's
+# AndroidManifest.xml template hardcodes that as a default (dioxus-cli
+# assets/android/gen/app/src/main/AndroidManifest.xml.hbs). Everything the app
+# does on Android - QUIC to peers/relays, DNS/pkarr address lookup, relay HTTPS
+# probes, the UPnP/NAT-PMP port-map probe (responses arrive unicast) - is
+# covered by INTERNET.
+#
+# Deliberately omitted, do not cargo-cult them back in (Play flags unused
+# permissions):
+# - ACCESS_WIFI_STATE + CHANGE_WIFI_MULTICAST_STATE + a MulticastLock: only
+#   needed to RECEIVE multicast, i.e. mDNS discovery. The endpoint is built
+#   with iroh presets::N0 (app/src/node/mod.rs bind_endpoint), which does
+#   DNS/pkarr + relay discovery and no mDNS. Add these, plus a runtime
+#   MulticastLock, only if mDNS/local discovery ships later.
+# - ACCESS_NETWORK_STATE: iroh's netwatch reads routes via getifaddrs and
+#   /system/bin/ip on Android, not ConnectivityManager, so nothing calls an
+#   API that requires it.
 
 [web.app]
 
