@@ -420,6 +420,11 @@ pub async fn run_node(
                         on_latency,
                     )
                     .await;
+                    // Natural end of the dial. If a re-dial's store(true) (after
+                    // its abort of this task) interleaves with this store, the
+                    // flag can be transiently stale by at most one sampler tick;
+                    // an aborted task never reaches this line, so a re-dial that
+                    // aborts us cannot be clobbered.
                     dial_active.store(false, Ordering::Release);
                 }));
             }

@@ -273,8 +273,9 @@ mod tests {
     }
 
     #[test]
-    fn ipv4_wins_over_ipv6_when_both_present() {
-        // First-present-wins semantics: ipv4 stable, ipv6 variable -> Medium.
+    fn easier_family_wins_when_both_present() {
+        // v4 stable (no port data -> Medium), v6 address-dependent (Hard).
+        // The optimistic combine picks the easier family: Medium.
         let mut base = iroh::NetReport {
             udp_v4: true,
             global_v4: Some(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 1), 12345)),

@@ -253,11 +253,15 @@ fn compute_port_variation(
     family: Family,
     expected: ExpectedExternal,
 ) -> Option<bool> {
-    let expected_ip = expected.ip(family)?;
+    // Canonicalize the expected IP the same way observations are (see
+    // observe_one), so a v4-mapped-v6 form on either side still compares equal.
+    let expected_ip = expected.ip(family)?.to_canonical();
     let confirmed: Vec<&PortObservation> = observations
         .iter()
         .filter(|o| {
-            Family::of(o.target) == family && o.observed.is_some_and(|a| a.ip() == expected_ip)
+            Family::of(o.target) == family
+                && o.observed
+                    .is_some_and(|a| a.ip().to_canonical() == expected_ip)
         })
         .collect();
 

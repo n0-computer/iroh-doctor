@@ -63,6 +63,22 @@ if [[ "$PLATFORM" == "android" ]]; then
   export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
+# Make the wrapper idempotent across re-runs. dx regenerates its own
+# `ic_launcher.webp` on every build but does not remove the `ic_launcher.png`
+# this wrapper injected on a previous run, so a second build would have both
+# and dx's apk assembly fails with "Duplicate resources". Remove our prior
+# PNG injections before `dx build` so dx assembles against only its `.webp`;
+# the wrapper re-injects the PNGs (and removes the `.webp`) afterwards.
+if [[ "$PLATFORM" == "android" ]]; then
+  PREV_RES="$OUT/app/app/src/main/res"
+  if [[ -d "$PREV_RES" ]]; then
+    for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+      rm -f "$PREV_RES/mipmap-$d/ic_launcher.png" \
+            "$PREV_RES/mipmap-$d/ic_launcher_foreground.png"
+    done
+  fi
+fi
+
 echo ">> dx build --$PLATFORM $PROFILE"
 # shellcheck disable=SC2086  # $DX_RELEASE is "" or "--release"; intentional split
 ( cd "$APP_DIR" && dx build "--$PLATFORM" $DX_RELEASE )
