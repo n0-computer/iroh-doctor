@@ -21,10 +21,12 @@ icon = ["assets/icon/icon-master.png"]
 # (dioxus-cli src/build/apple.rs uses it solely in compile_widget_extensions);
 # it does NOT reach the main app's Info.plist or the rustc link step. We set it
 # anyway for forward compatibility and declare the store-facing minimum via
-# MinimumOSVersion in [ios.plist] below. 13.0 matches the actool
-# --minimum-deployment-target in scripts/bundle-mobile.sh; nothing in the app
-# needs newer (the iOS 14+ local-network prompt degrades gracefully on 13).
-deployment_target = "13.0"
+# MinimumOSVersion in [ios.plist] below. 17.0 matches the binary's actual
+# LC_BUILD_VERSION minos, which comes from IPHONEOS_DEPLOYMENT_TARGET=17.0 in
+# the workspace .cargo/config.toml, and the actool --minimum-deployment-target
+# in scripts/bundle-mobile.sh. Keep all three in sync — a plist minimum below
+# the binary's would let the store install on devices where dyld then aborts.
+deployment_target = "17.0"
 
 # iOS Info.plist entries injected by `dx` at bundle time.
 [ios.plist]
@@ -36,7 +38,7 @@ CFBundleDisplayName = "iroh doctor"
 CFBundleName = "iroh doctor"
 # dx 0.7.9's Info.plist template has no MinimumOSVersion key and no other way
 # to set it, so we inject it here. Keep in sync with deployment_target above.
-MinimumOSVersion = "13.0"
+MinimumOSVersion = "17.0"
 # iroh makes direct connections to peers on the local subnet (hole punching).
 # Contrary to what this comment used to claim, iOS does NOT gate that QUIC
 # unicast traffic behind the local-network permission: device testing

@@ -80,8 +80,13 @@ if [[ "$PLATFORM" == "android" ]]; then
 fi
 
 echo ">> dx build --$PLATFORM $PROFILE"
-# shellcheck disable=SC2086  # $DX_RELEASE is "" or "--release"; intentional split
-( cd "$APP_DIR" && dx build "--$PLATFORM" $DX_RELEASE )
+# iOS: plain `dx build --ios` targets the SIMULATOR (LC_BUILD_VERSION
+# platform 7, no LC_ENCRYPTION_INFO — App Store validation rejects it with
+# error 90125). Pin the device triple so wrapper builds are always store-able.
+DX_TARGET=""
+[[ "$PLATFORM" == "ios" ]] && DX_TARGET="--target aarch64-apple-ios"
+# shellcheck disable=SC2086  # $DX_RELEASE/$DX_TARGET word-split intentionally
+( cd "$APP_DIR" && dx build "--$PLATFORM" $DX_RELEASE $DX_TARGET )
 
 if [[ "$PLATFORM" == "ios" ]]; then
   APP_BUNDLE="$OUT/IrohDoctorApp.app"
@@ -93,7 +98,7 @@ if [[ "$PLATFORM" == "ios" ]]; then
     --compile "$APP_BUNDLE" \
     --app-icon AppIcon \
     --platform iphoneos \
-    --minimum-deployment-target 13.0 \
+    --minimum-deployment-target 17.0 \
     --output-partial-info-plist "$TMP/icon-info.plist" \
     --errors --warnings >/dev/null
 

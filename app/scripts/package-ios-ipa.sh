@@ -25,6 +25,36 @@ APP="$WORKSPACE/target/dx/iroh-doctor-app/release/ios/IrohDoctorApp.app"
 BUILD_NUM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
 OUT="${2:-$WORKSPACE/target/iroh-doctor-$BUILD_NUM.ipa}"
 
+# App Store validation requires the DT* toolchain-metadata keys that Xcode
+# normally stamps (error 90507); dx 0.7.9's Info.plist template has none of
+# them. Derive them from the local toolchain, before signing seals the plist.
+SDK_VER="$(xcrun --sdk iphoneos --show-sdk-version)"
+SDK_BUILD="$(xcrun --sdk iphoneos --show-sdk-build-version)"
+PLATFORM_VER="$(xcrun --sdk iphoneos --show-sdk-platform-version)"
+XCODE_VER="$(xcodebuild -version | awk '/^Xcode/ {print $2}')"
+XCODE_BUILD="$(xcodebuild -version | awk '/^Build version/ {print $3}')"
+DTXCODE="$(echo "$XCODE_VER" | awk -F. '{printf "%d%d%d0", $1, int($2/10), $2%10}')"
+PLIST="$APP/Info.plist"
+plist_set() { /usr/libexec/PlistBuddy -c "Set :$1 $2" "$PLIST" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$PLIST"; }
+plist_set DTPlatformName iphoneos
+plist_set DTPlatformVersion "$PLATFORM_VER"
+plist_set DTPlatformBuild "$SDK_BUILD"
+plist_set DTSDKName "iphoneos$SDK_VER"
+plist_set DTSDKBuild "$SDK_BUILD"
+plist_set DTXcode "$DTXCODE"
+plist_set DTXcodeBuild "$XCODE_BUILD"
+plist_set DTCompiler com.apple.compilers.llvm.clang.1_0
+plist_set BuildMachineOSBuild "$(sw_vers -buildVersion)"
+# More dx-template gaps the store rejects: the bundle type code must be APPL
+# (error 90183), and CFBundleSupportedPlatforms must hold exactly one value —
+# dx writes [iPhoneOS, iPadOS] (error 91177). iPad support is unaffected;
+# UIDeviceFamily [1,2] governs that.
+plist_set CFBundlePackageType APPL
+/usr/libexec/PlistBuddy -c "Delete :CFBundleSupportedPlatforms" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$PLIST"
+
 # The store rejects bundles whose embedded profile doesn't match the signature,
 # so the profile is copied in before signing (the signature seals it).
 cp "$PROFILE" "$APP/embedded.mobileprovision"
