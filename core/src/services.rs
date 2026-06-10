@@ -24,29 +24,40 @@ pub const DEFAULT_API_SECRET: &str =
 /// iroh-services entirely when set to an empty string.
 pub const API_SECRET_ENV: &str = "IROH_SERVICES_API_SECRET";
 
+/// Where a binary wants the API secret to come from when
+/// `IROH_SERVICES_API_SECRET` is unset. Naming the fallback at the call site
+/// keeps the privacy-sensitive bundled-default path from being reached by a
+/// caller that just passes a conventional "nothing special" value.
+#[derive(Debug, Clone, Copy)]
+pub enum SecretSource<'a> {
+    /// Use the user's saved override; an empty override means telemetry
+    /// stays off. The app uses this: registering the device and pushing
+    /// metrics without an explicit key would break the promise the privacy
+    /// policy and store listings make.
+    SavedOverride(&'a str),
+    /// Fall back to [`DEFAULT_API_SECRET`] when nothing is set. The cli uses
+    /// this so the foreground dev tool works out of the box.
+    BundledDefault,
+}
+
 /// Resolves which API secret to use, or `None` to disable iroh-services.
 ///
 /// `IROH_SERVICES_API_SECRET` wins when set: a non-empty value is used as-is,
-/// an empty value opts out (returns `None`). Otherwise the caller's stance
-/// decides:
-///
-/// - The app passes `Some(saved_override)`. A non-empty saved key is used;
-///   an empty one means the user never opted in, so iroh-services stays off.
-///   The app must not fall back to the bundled key: that would register the
-///   device and push metrics every minute without consent, which the privacy
-///   policy and the store listings promise it does not do.
-/// - The cli passes `None` and falls back to [`DEFAULT_API_SECRET`], keeping
-///   the foreground dev tool working out of the box.
+/// an empty value opts out (returns `None`). Otherwise the
+/// [`SecretSource`] decides whether to honor a saved override or fall back to
+/// the bundled key.
 #[must_use]
-pub fn resolve_api_secret(override_secret: Option<&str>) -> Option<String> {
+pub fn resolve_api_secret(source: SecretSource<'_>) -> Option<String> {
     if let Ok(env) = std::env::var(API_SECRET_ENV) {
         let trimmed = env.trim();
         return (!trimmed.is_empty()).then(|| trimmed.to_string());
     }
-    match override_secret.map(str::trim) {
-        Some(s) if !s.is_empty() => Some(s.to_string()),
-        Some(_) => None,
-        None => Some(DEFAULT_API_SECRET.to_string()),
+    match source {
+        SecretSource::SavedOverride(s) => {
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        SecretSource::BundledDefault => Some(DEFAULT_API_SECRET.to_string()),
     }
 }
 
@@ -146,35 +157,42 @@ impl From<iroh_services::net_diagnostics::DiagnosticsReport> for DiagnosticsRepo
 mod tests {
     use super::*;
 
-    /// `IROH_SERVICES_API_SECRET` is process-global, so this single test
-    /// exercises every resolution branch in sequence rather than racing
-    /// separate tests against the same variable.
+    /// `IROH_SERVICES_API_SECRET` is process-global and Cargo runs tests in
+    /// one binary on multiple threads, so this single test exercises every
+    /// resolution branch in sequence rather than racing separate tests
+    /// against the same variable.
     #[test]
     fn resolve_api_secret_precedence() {
-        // SAFETY of remove/set: tests in one module run on one thread by
-        // default, and this is the only test that touches the variable.
+        use SecretSource::{BundledDefault, SavedOverride};
+        // The env var is shared process state; this is the only test that
+        // touches it, so the set/remove calls below do not race.
         std::env::remove_var(API_SECRET_ENV);
         assert_eq!(
-            resolve_api_secret(None).as_deref(),
+            resolve_api_secret(BundledDefault).as_deref(),
             Some(DEFAULT_API_SECRET)
         );
         assert_eq!(
-            resolve_api_secret(Some("custom")).as_deref(),
+            resolve_api_secret(SavedOverride("custom")).as_deref(),
             Some("custom")
+        );
+        // A non-empty saved key is trimmed before use.
+        assert_eq!(
+            resolve_api_secret(SavedOverride("  key  ")).as_deref(),
+            Some("key")
         );
         // An app-side override that is empty means the user never opted in:
         // iroh-services stays off rather than falling back to the bundled key.
-        assert_eq!(resolve_api_secret(Some("  ")), None);
-        assert_eq!(resolve_api_secret(Some("")), None);
+        assert_eq!(resolve_api_secret(SavedOverride("  ")), None);
+        assert_eq!(resolve_api_secret(SavedOverride("")), None);
 
         std::env::set_var(API_SECRET_ENV, "from-env");
         assert_eq!(
-            resolve_api_secret(Some("custom")).as_deref(),
+            resolve_api_secret(SavedOverride("custom")).as_deref(),
             Some("from-env")
         );
 
         std::env::set_var(API_SECRET_ENV, "");
-        assert_eq!(resolve_api_secret(Some("custom")), None);
+        assert_eq!(resolve_api_secret(SavedOverride("custom")), None);
 
         std::env::remove_var(API_SECRET_ENV);
     }

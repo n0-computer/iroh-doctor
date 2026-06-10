@@ -164,7 +164,9 @@ async fn report_inner(
 /// net_diagnostics) using the resolved API secret. Returns `None` when
 /// services are opted out via `IROH_SERVICES_API_SECRET=""`.
 async fn run_services(endpoint: &Endpoint) -> Option<ServicesBlock> {
-    let secret = iroh_doctor_core::services::resolve_api_secret(None)?;
+    let secret = iroh_doctor_core::services::resolve_api_secret(
+        iroh_doctor_core::services::SecretSource::BundledDefault,
+    )?;
     let name = iroh_doctor_core::services::device_name(&endpoint.id().to_string());
     let client = match iroh_doctor_core::services::build_client(endpoint, &secret, &name).await {
         Ok(c) => c,

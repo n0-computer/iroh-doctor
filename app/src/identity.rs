@@ -15,7 +15,10 @@ use anyhow::{Context, Result};
 use iroh::SecretKey;
 use iroh_doctor_core::identity::{persist_secret_key, read_secret_key};
 
-fn config_dir() -> Result<PathBuf> {
+/// The app's config directory, `dirs::config_dir()/iroh-doctor-app`. The
+/// single source of truth for where the app's small state files live; other
+/// modules (`first_run`, the log setup in `main`) build on it.
+pub(crate) fn config_dir() -> Result<PathBuf> {
     let base = dirs::config_dir().context("no config dir on this platform")?;
     Ok(base.join("iroh-doctor-app"))
 }

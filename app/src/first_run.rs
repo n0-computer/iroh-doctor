@@ -1,19 +1,21 @@
 //! Persistence for the first-run trust note's dismissed flag.
 //!
-//! Stored as a marker file at
-//! `dirs::config_dir()/iroh-doctor-app/trust_note_dismissed`, next to the
-//! other small state files (`identity.rs`, `endpoints.rs`). The file's
-//! presence means the user dismissed the note; its contents are ignored
-//! so a future version can add metadata without breaking older readers.
+//! Stored as a marker file `trust_note_dismissed` in the app config
+//! directory, alongside the `secret_key.bin` and `api_secret.txt` state
+//! files. The file's presence means the user dismissed the note; its
+//! contents are ignored so a future version can add metadata without
+//! breaking older readers.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::identity;
+
 const MARKER_FILE: &str = "trust_note_dismissed";
 
 fn config_dir() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("iroh-doctor-app"))
+    identity::config_dir().ok()
 }
 
 /// Returns true once the user has dismissed the first-run trust note.

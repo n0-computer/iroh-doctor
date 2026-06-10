@@ -7,6 +7,7 @@
 //! time-to-first-direct-byte, and throughput identically to the cli.
 
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -212,6 +213,15 @@ pub struct NodeCallbacks {
 /// in the noise floor.
 const PATHS_SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Reply when a services probe runs with no client configured. The UI
+/// matches on this exact text to keep the expected "telemetry off" case out
+/// of the global error modal, so producer and matcher share the constant.
+pub const SERVICES_OFF_ERROR: &str = "services client not initialized";
+
+/// Prefix of the [`ConnectionState::Error`] reported when the endpoint fails
+/// to bind. The UI matches on it to append recovery guidance.
+pub const BIND_FAILED_PREFIX: &str = "bind failed";
+
 /// Wall-clock ceiling for `endpoint.net_report().initialized()`. Matches
 /// `iroh-doctor::commands::probe::NET_REPORT_TIMEOUT` so the app and the
 /// CLI give up at the same point on a flaky network.
@@ -257,7 +267,9 @@ pub async fn run_node(
     let endpoint = match bind_endpoint(secret_key).await {
         Ok(ep) => ep,
         Err(e) => {
-            on_state(ConnectionState::Error(format!("bind failed: {e:#}")));
+            on_state(ConnectionState::Error(format!(
+                "{BIND_FAILED_PREFIX}: {e:#}"
+            )));
             return Err(e);
         }
     };
@@ -277,6 +289,12 @@ pub async fn run_node(
     // previous one before installing its own, so at most one runs at a time.
     let monitor: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
     let conn_slot: Arc<Mutex<Option<endpoint::Connection>>> = Arc::new(Mutex::new(None));
+
+    // True while a dial monitor owns the latency series: it plots probe ping
+    // round-trips, so the paths sampler must hold its path-RTT samples back.
+    // The monitor sets this for its whole lifetime (before it claims the slot
+    // until after it clears it), so the sampler never mixes the two sources.
+    let dial_active = Arc::new(AtomicBool::new(false));
 
     // Long-running tasks (accept loop, paths sampler) live on a JoinSet
     // owned by run_node so they shut down cleanly when the command pump
@@ -326,7 +344,7 @@ pub async fn run_node(
         let conn_slot = conn_slot.clone();
         let on_paths = on_paths.clone();
         let on_latency = on_latency.clone();
-        let monitor = monitor.clone();
+        let dial_active = dial_active.clone();
         long_lived.spawn(async move {
             let mut ticker = tokio::time::interval(PATHS_SAMPLE_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -337,12 +355,7 @@ pub async fn run_node(
                     let slot = conn_slot.lock().await;
                     slot.as_ref().map(snapshot_paths).unwrap_or_default()
                 };
-                let dialing = monitor
-                    .lock()
-                    .await
-                    .as_ref()
-                    .is_some_and(|task| !task.is_finished());
-                if !dialing {
+                if !dial_active.load(Ordering::Acquire) {
                     if let Some(selected) = snapshot.iter().find(|p| p.selected) {
                         on_latency(Duration::from_secs_f64(selected.rtt_ms / 1000.0));
                     }
@@ -386,10 +399,16 @@ pub async fn run_node(
                 let on_throughput = on_throughput.clone();
                 let on_ttfdb = on_ttfdb.clone();
                 let on_latency = on_latency.clone();
+                let dial_active = dial_active.clone();
                 let mut slot = monitor.lock().await;
                 if let Some(prev) = slot.take() {
                     prev.abort();
                 }
+                // Mark the dial active before spawning, after aborting the
+                // previous monitor, so the paths sampler suppresses path-RTT
+                // latency for this dial's whole lifetime. run_monitor clears
+                // it at its natural end; Disconnect clears it on abort.
+                dial_active.store(true, Ordering::Release);
                 *slot = Some(tokio::spawn(async move {
                     run_monitor(
                         endpoint,
@@ -401,17 +420,20 @@ pub async fn run_node(
                         on_latency,
                     )
                     .await;
+                    dial_active.store(false, Ordering::Release);
                 }));
             }
             NodeCommand::Disconnect => {
-                // Abort the monitor task. Its own cleanup does not run on
-                // abort, so we clear conn_slot and close the connection here.
+                // Abort the monitor task. Its own cleanup (including clearing
+                // dial_active) does not run on abort, so we do it here: clear
+                // the dial flag, conn_slot, and close the connection.
                 {
                     let mut slot = monitor.lock().await;
                     if let Some(task) = slot.take() {
                         task.abort();
                     }
                 }
+                dial_active.store(false, Ordering::Release);
                 if let Some(conn) = conn_slot.lock().await.take() {
                     conn.close(0u32.into(), b"disconnect");
                 }
@@ -434,7 +456,7 @@ pub async fn run_node(
                         Some(c) => iroh_doctor_core::services::ping(&c)
                             .await
                             .map_err(|e| format!("{e:#}")),
-                        None => Err("services client not initialized".into()),
+                        None => Err(SERVICES_OFF_ERROR.into()),
                     };
                     let _ = reply.send(result);
                 });
@@ -448,7 +470,7 @@ pub async fn run_node(
                         Some(c) => iroh_doctor_core::services::net_diagnostics(&c)
                             .await
                             .map_err(|e| format!("{e:#}")),
-                        None => Err("services client not initialized".into()),
+                        None => Err(SERVICES_OFF_ERROR.into()),
                     };
                     let _ = reply.send(result);
                 });
@@ -587,8 +609,9 @@ async fn start_services_client(
     // Otherwise telemetry runs only when the user saved a key: with no saved
     // override this resolves to `None` and iroh-services stays off, which is
     // what the privacy policy and the store listings promise.
-    let Some(secret) = iroh_doctor_core::services::resolve_api_secret(Some(api_secret_override))
-    else {
+    let Some(secret) = iroh_doctor_core::services::resolve_api_secret(
+        iroh_doctor_core::services::SecretSource::SavedOverride(api_secret_override),
+    ) else {
         on_telemetry(TelemetryState::Off);
         return None;
     };

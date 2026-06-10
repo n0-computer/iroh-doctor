@@ -53,8 +53,7 @@ fn main() {
 /// config dir is available on the platform; the app then logs only to
 /// stdout.
 fn log_dir() -> Option<std::path::PathBuf> {
-    let base = dirs::config_dir()?;
-    let dir = base.join("iroh-doctor-app").join("logs");
+    let dir = identity::config_dir().ok()?.join("logs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
@@ -254,8 +253,17 @@ fn App() -> Element {
                 Ok(()) = state_rx.changed() => {
                     let new_state = state_rx.borrow().clone();
                     record_event(event_log, start_instant, &new_state);
-                    if let ConnectionState::Connected { peer_id, .. } = &new_state {
-                        record_endpoint(endpoints_list, peer_id);
+                    match &new_state {
+                        // A fresh dial or an incoming probe takes over the
+                        // latency graph. Clear the previous peer's samples so
+                        // the sparkline does not splice one peer's series (or
+                        // one latency source) onto the next.
+                        ConnectionState::Connecting => clear_rtt_history(rtt_history),
+                        ConnectionState::Connected { peer_id, .. } => {
+                            clear_rtt_history(rtt_history);
+                            record_endpoint(endpoints_list, peer_id);
+                        }
+                        _ => {}
                     }
                     conn_state.clone().set(new_state);
                 }
@@ -437,16 +445,19 @@ fn App() -> Element {
 /// a services client, so the services ping and net_diagnostics probes
 /// could only fail; callers skip triggering them in that case.
 fn services_configured() -> bool {
-    iroh_doctor_core::services::resolve_api_secret(Some(&identity::load_api_secret_override()))
-        .is_some()
+    use iroh_doctor_core::services::{resolve_api_secret, SecretSource};
+    resolve_api_secret(SecretSource::SavedOverride(
+        &identity::load_api_secret_override(),
+    ))
+    .is_some()
 }
 
-/// Matches the node's "services client not initialized" reply. With no
-/// API key configured this is the expected state, not a failure: the
-/// Diagnostics tab already explains telemetry is off next to the key
-/// input, so the global error modal stays quiet for it.
+/// Matches the node's services-off reply. With no API key configured this
+/// is the expected state, not a failure: the Diagnostics tab already
+/// explains telemetry is off next to the key input, so the global error
+/// modal stays quiet for it.
 fn is_services_off_error(msg: &str) -> bool {
-    msg.contains("services client not initialized")
+    msg.contains(node::SERVICES_OFF_ERROR)
 }
 
 /// Expands the node's connect-stage errors with recovery guidance where
@@ -454,7 +465,7 @@ fn is_services_off_error(msg: &str) -> bool {
 /// is fatal for the process (the node task has exited), so the only
 /// recovery is fixing the network and relaunching.
 fn explain_connect_error(msg: &str) -> String {
-    if msg.starts_with("bind failed") {
+    if msg.starts_with(node::BIND_FAILED_PREFIX) {
         format!(
             "{msg}\n\nThe app could not open a network socket, so it cannot \
              connect to peers or accept probes. Check the device's network \
@@ -820,6 +831,12 @@ fn push_rtt_sample(mut rtt_history: Signal<VecDeque<f64>>, sample_ms: f64) {
     hist.push_back(sample_ms);
 }
 
+/// Drops the accumulated latency samples. Called when a new connection takes
+/// over so the sparkline starts clean for each peer.
+fn clear_rtt_history(mut rtt_history: Signal<VecDeque<f64>>) {
+    rtt_history.write().clear();
+}
+
 fn short_event_label(state: &ConnectionState) -> String {
     match state {
         ConnectionState::Idle => "idle".into(),
@@ -887,4 +904,30 @@ fn serde_escape(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn services_off_error_is_recognized_from_the_node_constant() {
+        // Pin the matcher to the exact text the node produces, so rewording
+        // the node-side reply cannot silently resurrect the first-run modal.
+        assert!(is_services_off_error(node::SERVICES_OFF_ERROR));
+        assert!(is_services_off_error(&format!(
+            "ping: {}",
+            node::SERVICES_OFF_ERROR
+        )));
+        assert!(!is_services_off_error("some other failure"));
+    }
+
+    #[test]
+    fn connect_error_explains_only_bind_failures() {
+        let bind = explain_connect_error(&format!("{}: address in use", node::BIND_FAILED_PREFIX));
+        assert!(bind.contains("close and reopen"));
+        // A non-bind error is passed through unchanged.
+        let other = explain_connect_error("invalid endpoint id");
+        assert_eq!(other, "invalid endpoint id");
+    }
 }
