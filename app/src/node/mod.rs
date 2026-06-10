@@ -67,11 +67,10 @@ pub enum NodeCommand {
         secret: String,
     },
     /// Turns telemetry on or off at runtime. Rebuilds the services client when
-    /// enabling and drops it when disabling, so pushes stop without waiting for
-    /// a restart. The metrics task is `Arc`-backed and shared with any
-    /// in-flight `PingServices`/`RunNetDiagnostics` probe, so a push can still
-    /// fire until such a probe finishes; with no probe running, dropping the
-    /// client stops pushes at once.
+    /// enabling and drops it when disabling. The metrics task is `Arc`-backed
+    /// and shared with any in-flight `PingServices`/`RunNetDiagnostics` probe,
+    /// so disabling aborts those probes before dropping the client, releasing
+    /// every clone so pushes stop promptly rather than at the next restart.
     SetTelemetryEnabled {
         enabled: bool,
     },
@@ -295,6 +294,12 @@ pub async fn run_node(
         &on_telemetry,
     )
     .await;
+    // In-flight PingServices/RunNetDiagnostics probes each hold a clone of the
+    // services client, whose metrics-push task is Arc-backed and stops only
+    // when the last clone drops. Track the probe tasks here so toggling
+    // telemetry off (or changing the key) can abort them, releasing those
+    // clones promptly rather than letting a push fire until the probe finishes.
+    let mut services_probes: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
     // Owner for the gossip protocol. Cheaply cloneable; clones share state
     // and outlive any individual connection.
@@ -464,7 +469,10 @@ pub async fn run_node(
             }
             NodeCommand::SaveApiSecret { secret } => {
                 api_secret_override = secret.trim().to_string();
-                services.take(); // drop the old client so its background tasks stop
+                // Abort in-flight probes, then drop the old client, so every
+                // clone of its metrics task is released and pushes stop.
+                services_probes.abort_all();
+                services.take();
                 services = start_services_client(
                     &endpoint,
                     telemetry_disabled,
@@ -476,7 +484,10 @@ pub async fn run_node(
             NodeCommand::SetTelemetryEnabled { enabled } => {
                 info!(enabled, "telemetry toggled");
                 telemetry_disabled = !enabled;
-                services.take(); // drop the old client so its background tasks stop
+                // Abort in-flight probes, then drop the old client, so every
+                // clone of its metrics task is released and pushes stop.
+                services_probes.abort_all();
+                services.take();
                 services = start_services_client(
                     &endpoint,
                     telemetry_disabled,
@@ -487,9 +498,12 @@ pub async fn run_node(
             }
             NodeCommand::PingServices { reply } => {
                 // A network round-trip to the services endpoint; spawn so it
-                // does not block the command pump for its duration.
+                // does not block the command pump. Tracked in `services_probes`
+                // (draining finished entries first) so a telemetry toggle can
+                // abort it and release its client clone.
                 let client = services.clone();
-                tokio::spawn(async move {
+                while services_probes.try_join_next().is_some() {}
+                services_probes.spawn(async move {
                     let result = match client {
                         Some(c) => iroh_doctor_core::services::ping(&c)
                             .await
@@ -501,9 +515,12 @@ pub async fn run_node(
             }
             NodeCommand::RunNetDiagnostics { reply } => {
                 // net_diagnostics probes external services and can take
-                // seconds; spawn so the command pump stays responsive.
+                // seconds; spawn so the command pump stays responsive. Tracked
+                // in `services_probes` (draining finished entries first) so a
+                // telemetry toggle can abort it and release its client clone.
                 let client = services.clone();
-                tokio::spawn(async move {
+                while services_probes.try_join_next().is_some() {}
+                services_probes.spawn(async move {
                     let result = match client {
                         Some(c) => iroh_doctor_core::services::net_diagnostics(&c)
                             .await
