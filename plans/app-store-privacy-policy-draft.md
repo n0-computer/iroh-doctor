@@ -76,9 +76,10 @@ on by default. The data sent is:
 
 These are numeric counters and gauges. We do not send the contents of your
 connections, message or file data, your contacts, or your location, and the
-metrics are not linked to your identity or used for tracking. You can turn this
-off at any time from the Diagnostics tab. See the iroh-services privacy terms at
-https://services.iroh.computer/legal/privacy.
+metrics are not linked to your identity or used for tracking. We do not use
+these diagnostics for advertising and do not share them with advertising
+partners. You can turn this off at any time from the Diagnostics tab. See the
+iroh-services privacy terms at https://services.iroh.computer/legal/privacy.
 
 Advanced users can point this at their own iroh-services account by supplying an
 API key in the same place; the key is stored only on your device.
@@ -99,8 +100,9 @@ iroh doctor is a developer/network tool and is not directed to children under
 
 Data stored on your device remains until you delete it or uninstall the app.
 We do not maintain user accounts, so there is no server-side profile to delete.
-Telemetry sent to iroh-services is retained for 90 days, then deleted or
-aggregated into non-identifying statistics.
+Telemetry sent to iroh-services is retained as described in the iroh-services
+privacy policy: for as long as needed to provide and improve the Services and
+for the other purposes set out in that policy.
 
 ### Changes
 
