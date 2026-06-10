@@ -3,15 +3,19 @@
 #
 # Prereqs (one-time, see plans/release-runbook.md):
 #   - "Apple Distribution" certificate in the login keychain (made via Xcode)
-#   - App Store provisioning profile for com.number0.irohdoctor downloaded
+#   - The App Store provisioning profile for com.number0.irohdoctor installed
+#     at the default path below (or pass a path)
 #   - A fresh release build: BUILD_NUMBER=<n> scripts/bundle-mobile.sh ios --release
 #
+# Signing entitlements are extracted from the provisioning profile itself, so
+# the team / app-id prefix can never drift from what the store expects.
+#
 # Usage:
-#   scripts/package-ios-ipa.sh <path-to.mobileprovision> [output.ipa]
+#   scripts/package-ios-ipa.sh [path-to.mobileprovision] [output.ipa]
 set -euo pipefail
 
-PROFILE="${1:-}"
-[[ -f "$PROFILE" ]] || { echo "usage: $0 <path-to.mobileprovision> [output.ipa]" >&2; exit 2; }
+PROFILE="${1:-$HOME/Library/MobileDevice/Provisioning Profiles/iroh_doctor_appstore.mobileprovision}"
+[[ -f "$PROFILE" ]] || { echo "no provisioning profile at $PROFILE" >&2; exit 2; }
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$APP_DIR/.." && pwd)"
@@ -21,26 +25,16 @@ APP="$WORKSPACE/target/dx/iroh-doctor-app/release/ios/IrohDoctorApp.app"
 BUILD_NUM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
 OUT="${2:-$WORKSPACE/target/iroh-doctor-$BUILD_NUM.ipa}"
 
-TEAM_ID="84T7UAWDW5"
-BUNDLE_ID="com.number0.irohdoctor"
-
 # The store rejects bundles whose embedded profile doesn't match the signature,
 # so the profile is copied in before signing (the signature seals it).
 cp "$PROFILE" "$APP/embedded.mobileprovision"
 
 ENT="$(mktemp -t entitlements).plist"
-cat > "$ENT" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>application-identifier</key><string>$TEAM_ID.$BUNDLE_ID</string>
-  <key>com.apple.developer.team-identifier</key><string>$TEAM_ID</string>
-</dict></plist>
-EOF
+security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements xml1 -o "$ENT" -
 
-echo ">> codesign (Apple Distribution, team $TEAM_ID)"
+echo ">> signing as: $(plutil -extract 'application-identifier' raw "$ENT")"
 codesign --force --sign "Apple Distribution" --entitlements "$ENT" "$APP"
-codesign --verify --deep --strict "$APP"
+codesign --verify --strict "$APP"
 
 echo ">> packaging $OUT"
 STAGE="$(mktemp -d)"
@@ -51,5 +45,5 @@ rm -f "$OUT"
 rm -rf "$STAGE" "$ENT"
 
 echo ">> done: $OUT (build $BUILD_NUM)"
-echo "Upload via Transporter.app, or with an App Store Connect API key:"
+echo "Upload (API key in ~/.appstoreconnect/private_keys is found automatically):"
 echo "  xcrun altool --upload-app -f \"$OUT\" -t ios --apiKey <KEY_ID> --apiIssuer <ISSUER_ID>"
