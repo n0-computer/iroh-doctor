@@ -12,6 +12,7 @@ mod identity;
 mod node;
 mod portmap_probe;
 mod relay_probe;
+mod telemetry_pref;
 
 use std::time::{Duration, Instant};
 
@@ -173,6 +174,7 @@ fn App() -> Element {
             }
         };
         let api_override = identity::load_api_secret_override();
+        let telemetry_disabled = telemetry_pref::telemetry_disabled();
 
         let (cmd_tx_inner, cmd_rx) = mpsc::channel::<NodeCommand>(64);
         let (id_tx, mut id_rx) = watch::channel::<String>(String::new());
@@ -208,6 +210,7 @@ fn App() -> Element {
                 let _ = node::run_node(
                     secret_key,
                     api_override,
+                    telemetry_disabled,
                     cmd_rx,
                     NodeCallbacks {
                         on_endpoint_id: Box::new(move |s| {
@@ -440,15 +443,17 @@ fn App() -> Element {
     }
 }
 
-/// Returns true when an iroh-services API key is configured (the env
-/// override or a key the user saved). Without one the node never starts
-/// a services client, so the services ping and net_diagnostics probes
-/// could only fail; callers skip triggering them in that case.
+/// Returns true when iroh-services telemetry is active: on by default with the
+/// bundled key, unless the user turned it off or an empty env override opts
+/// out. Without an active client the node never starts the services probes, so
+/// the services ping and net_diagnostics could only fail; callers skip
+/// triggering them in that case.
 fn services_configured() -> bool {
     use iroh_doctor_core::services::{resolve_api_secret, SecretSource};
-    resolve_api_secret(SecretSource::SavedOverride(
-        &identity::load_api_secret_override(),
-    ))
+    resolve_api_secret(SecretSource::AppDefault {
+        disabled: telemetry_pref::telemetry_disabled(),
+        custom: &identity::load_api_secret_override(),
+    })
     .is_some()
 }
 

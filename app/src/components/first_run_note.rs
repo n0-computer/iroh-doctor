@@ -26,6 +26,10 @@ pub fn FirstRunNote() -> Element {
                 "connection while the app runs. Share your id only with "
                 "people you trust. Close the app to stop listening."
             }
+            p { class: "hint-text",
+                "iroh doctor also sends anonymous connection diagnostics to "
+                "help improve iroh. You can turn this off in Diagnostics."
+            }
             div { class: "settings-actions",
                 button {
                     class: "btn",

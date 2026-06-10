@@ -44,12 +44,19 @@ agent should know before touching this code. Append as you discover.
 
 ## App services / telemetry
 
-- `core::services::resolve_api_secret` takes a `SecretSource` enum on
-  purpose: `BundledDefault` (cli) falls back to the embedded key,
-  `SavedOverride("")` (app, no key) resolves to `None` so telemetry
-  stays off. The app must never use `BundledDefault`; that would push
-  metrics on first launch and break the privacy-policy promise. This was
-  a real shipped bug before 2026-06-09.
+- Telemetry is on by default in the app as of 2026-06-10: iroh doctor is a
+  diagnostics tool and collects anonymous connection metrics out of the box,
+  with an in-app opt-out. (This reverses the 2026-06-09 opt-in decision; the
+  privacy docs and store declarations were updated to match.)
+- `core::services::resolve_api_secret` takes a `SecretSource` enum on purpose.
+  `BundledDefault` (cli) always uses the embedded key. `AppDefault { disabled,
+  custom }` (app) uses the bundled key by default and resolves to `None` only
+  when the user disabled telemetry or set `IROH_SERVICES_API_SECRET=""`; a
+  non-empty `custom` overrides the bundled key. The env var wins over both.
+- The app's opt-out is a `telemetry_disabled` marker file (`telemetry_pref.rs`),
+  absent = on, mirroring the `first_run` trust-note marker. Toggling it sends
+  `NodeCommand::SetTelemetryEnabled`, which drops and rebuilds the services
+  client so pushes stop immediately rather than at the next restart.
 
 ## App node concurrency
 

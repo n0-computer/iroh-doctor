@@ -2,50 +2,51 @@
 
 > Ready-to-enter answers for the Apple App Privacy "nutrition label" and the
 > Google Play Data Safety form. Written against the code on `rae/doctor-app`
-> as of 2026-06-09, updated after the opt-in telemetry fix below.
+> as of 2026-06-10, updated after the on-by-default telemetry decision below.
 
-## Premise: app telemetry is opt-in (fixed in the 2026-06-09 session)
+## Premise: app telemetry is on by default with an in-app opt-out (2026-06-10)
 
-Until the overnight 2026-06-09 session the code contradicted the "telemetry
-off by default" promise in the privacy-policy draft, the listing copy, and
-the release design: `resolve_api_secret` fell back to the bundled
-`DEFAULT_API_SECRET` when the saved override was empty (the fresh-install
-state), `start_services_client` built the iroh-services client at app
-startup, registering a device name derived from the node id, and the client
-pushed endpoint metrics every 60 seconds (the iroh-services 1.0.0-rc.1
-builder default that `build_client` never disables). There was no in-app
-opt-out: saving an empty key resolved back to the bundled default.
+iroh doctor is a diagnostics tool, so it collects anonymous connection
+telemetry by default. On a fresh install `resolve_api_secret` returns the
+bundled `DEFAULT_API_SECRET`, `start_services_client` builds the iroh-services
+client at startup, registering a device name derived from the node id, and the
+client pushes endpoint metrics every 60 seconds (the iroh-services 1.0.0-rc.1
+builder default). The user can turn this off at any time from the Diagnostics
+tab; the off state is persisted in a `telemetry_disabled` marker file and stops
+the push immediately by dropping the client.
 
-This is fixed in `core/src/services.rs`: an app-side empty override now
-resolves to `None`, so iroh-services stays off until the user pastes a key
-(or sets `IROH_SERVICES_API_SECRET`). The cli keeps its out-of-the-box
-bundled default; it is a foreground dev tool and not a store deliverable.
-The forms below describe this shipped behavior (scenario B). Re-verify the
-fresh-install behavior on a device before entering the answers.
+This is scenario C below. The privacy-policy draft and listing copy were updated
+in the same change to describe on-by-default collection with an opt-out, so they
+now match the code. The opt-out makes the collection user-controllable, which is
+how the Play form's "optional" flag is justified. The cli keeps its
+out-of-the-box bundled default; it is a foreground dev tool and not a store
+deliverable. Re-verify the fresh-install behavior on a device before entering
+the answers.
 
 ## Ship configurations and their outcomes
 
 - **A. Services client compiled out of mobile builds.** Apple: "Data Not
   Collected" overall. Play: "No data collected or shared". The cleanest
   label, but loses the side-by-side iroh-services diagnostics view.
-- **B. Opt-in only: no bundled default in the app, telemetry starts only
-  after the user pastes their own iroh-services key (IMPLEMENTED).** Apple:
-  declare Diagnostics and Identifiers as collected (not linked, no
-  tracking). Play: declare the same two types with the "optional" flag.
-  Reasoning below.
-- **C. Bundled default, on at startup (the pre-fix behavior).** Must declare
-  collection, cannot mark it optional on Play, and the listing copy and
-  privacy policy are false as written. Do not ship this.
+- **B. Opt-in only: telemetry starts only after the user enables it.** Apple:
+  declare Diagnostics and Identifiers as collected (not linked, no tracking).
+  Play: declare the same two types with the "optional" flag. This was the
+  2026-06-09 behavior, since reversed.
+- **C. Bundled default, on at startup, with an in-app opt-out (IMPLEMENTED).**
+  Declare collection on both stores. The privacy policy and listing copy
+  describe on-by-default collection with an opt-out, so they match. On Play the
+  collection is still "optional" because the user can turn it off; Apple has no
+  optional flag, so the two types are simply collected. Reasoning below.
 
-Why scenario B is not "Data Not Collected": Apple requires declaring all
-data the app collects, including from features only some users enable. The
-optional-disclosure carve-out (data the user actively submits through a
-form each time) does not apply, because once enabled the telemetry pushes
-continuously in the background. Google Play likewise requires declaring
-optional collection, but its form has a per-type "optional" toggle, which
-fits this case exactly.
+Why scenario C is not "Data Not Collected": Apple requires declaring all data
+the app collects, and here it collects on every fresh install. The
+optional-disclosure carve-out (data the user actively submits through a form
+each time) does not apply, because the telemetry pushes continuously in the
+background. Google Play likewise requires declaring the collection; its per-type
+"optional" toggle fits because the in-app off switch makes the collection
+user-controllable.
 
-## Apple App Privacy (App Store Connect), scenario B
+## Apple App Privacy (App Store Connect), scenario C
 
 Tracking question: **No, we do not use data for tracking.** No ad networks,
 no data brokers, no linking with third-party data.
@@ -61,10 +62,10 @@ no data brokers, no linking with third-party data.
 | User Content | Not collected | - | - | Gossip messages go peer-to-peer, encrypted in transit; we never receive or store them (see edge cases). |
 | Browsing History | Not collected | - | - | Not applicable. |
 | Search History | Not collected | - | - | Not applicable. |
-| Identifiers > Device ID | **Collected** | No | No | Opt-in telemetry registers an app-generated device name derived from the public node id. Per-install app-generated IDs count as Device ID. |
+| Identifiers > Device ID | **Collected** | No | No | On-by-default telemetry registers an app-generated device name derived from the public node id. Per-install app-generated IDs count as Device ID. |
 | Purchases | Not collected | - | - | No purchases. |
 | Usage Data | Not collected | - | - | No analytics SDK, no product-interaction tracking. |
-| Diagnostics > Performance Data | **Collected** | No | No | Opt-in telemetry pushes iroh endpoint metrics (connection and relay performance counters) to iroh-services. |
+| Diagnostics > Performance Data | **Collected** | No | No | On-by-default telemetry pushes iroh endpoint metrics (connection and relay performance counters) to iroh-services. |
 | Diagnostics > Crash Data | Not collected | - | - | No crash reporter. Update if one is added. |
 | Surroundings | Not collected | - | - | Not applicable. |
 | Body | Not collected | - | - | Not applicable. |
@@ -80,10 +81,10 @@ Under scenario A, every row is "Not collected" and the overall label is
 
 ## Edge cases and conclusions (both stores)
 
-- **Opt-in telemetry.** Conclusion: must be declared if the capability
-  ships in the binary, even though it is off by default. Apple has no
-  "optional" flag; Play does, so mark it optional there. The only way to a
-  clean "Data Not Collected" label is to compile the path out (scenario A).
+- **On-by-default telemetry.** Conclusion: must be declared, since it collects
+  on every fresh install. Apple has no "optional" flag; Play does, and the
+  in-app off switch justifies marking it optional there. The only way to a clean
+  "Data Not Collected" label is to compile the path out (scenario A).
 - **Diagnostics export.** Conclusion: not collection. The bundle is built
   on device and saved to a user-chosen location (desktop file dialog) or
   the app's documents directory (mobile). It reaches us only if the user
@@ -102,7 +103,7 @@ Under scenario A, every row is "Not collected" and the overall label is
   and rolling log files live only in app-private storage and never leave
   the device on their own.
 
-## Google Play Data Safety form, scenario B
+## Google Play Data Safety form, scenario C
 
 - **Does your app collect or share any of the required user data types?**
   Yes (scenario A: No, and the rest of the form disappears).
@@ -119,8 +120,8 @@ Data types declared:
 
 | Play data type | Collected | Shared | Ephemeral | Required or optional | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Device or other IDs | Yes | No | No | Optional (user enables telemetry by entering a key) | App functionality, Analytics |
-| App info and performance > Diagnostics | Yes | No | No | Optional (same gate) | App functionality, Analytics |
+| Device or other IDs | Yes | No | No | Optional (user can turn telemetry off in the app) | App functionality, Analytics |
+| App info and performance > Diagnostics | Yes | No | No | Optional (same opt-out) | App functionality, Analytics |
 
 Every other Play data type (Location, Personal info, Financial info, Health,
 Messages, Photos and videos, Audio, Files and docs, Calendar, Contacts, App
@@ -153,13 +154,17 @@ operated by number 0, the developer.
 ## Verified against code
 
 - Telemetry resolution: `core/src/services.rs` (`resolve_api_secret`: env
-  var wins, app-side empty override resolves to `None` so telemetry stays
-  off, cli-side `None` falls back to `DEFAULT_API_SECRET`; `build_client`
-  leaves the 60 s metrics interval enabled once a client exists;
-  `device_name`); `app/src/node/mod.rs` (`start_services_client`, called
-  at startup with the saved override); `app/src/main.rs` (passes
-  `identity::load_api_secret_override()`, empty on first run);
-  `app/src/identity.rs` (API key stored locally as `api_secret.txt`).
+  var wins, app-side `AppDefault { disabled, custom }` falls back to
+  `DEFAULT_API_SECRET` by default and resolves to `None` only when the user
+  disabled it or an empty env override opts out, cli-side `BundledDefault`
+  always uses `DEFAULT_API_SECRET`; `build_client` leaves the 60 s metrics
+  interval enabled once a client exists; `device_name`); `app/src/node/mod.rs`
+  (`start_services_client` takes the disabled flag and the custom key;
+  `NodeCommand::SetTelemetryEnabled` drops and rebuilds the client when the
+  user toggles); `app/src/main.rs` (reads the marker via
+  `telemetry_pref::telemetry_disabled()` at startup); `app/src/telemetry_pref.rs`
+  (the `telemetry_disabled` marker file, absent = on); `app/src/identity.rs`
+  (optional custom key stored locally as `api_secret.txt`).
 - `TelemetryState` enum and initial `Off` value: `app/src/node/mod.rs`,
   `app/src/main.rs` (signal and watch channel start at `Off`).
 - Logs are local only: `app/src/main.rs` (`log_dir`, `init_logging`: daily

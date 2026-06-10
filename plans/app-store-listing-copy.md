@@ -51,8 +51,9 @@ GOSSIP
 • Join an iroh-gossip topic, see neighbors, and broadcast messages
 
 iroh doctor talks to other peers using the same public iroh infrastructure any
-iroh app uses. It does not require an account, and by default it sends no data
-to us. It is a hands-on debugging tool: connect only to peers you trust.
+iroh app uses. It does not require an account. By default it sends anonymous
+connection diagnostics to Iroh Services to help improve iroh, which you can turn
+off in the app. It is a hands-on debugging tool: connect only to peers you trust.
 ```
 
 **What's New** (first release):
@@ -73,8 +74,9 @@ report, and an iroh-gossip playground.`
 (a utility with user-to-user messaging via gossip; disclose the messaging).
 
 **Data safety** (matches the privacy policy):
-- No data collected by default.
-- Optional, off-by-default telemetry to Iroh Services if the user supplies a key.
+- On-by-default connection diagnostics to Iroh Services (an app-generated device
+  id and performance metrics), which the user can turn off in the app. Not
+  linked to identity, not used for tracking.
 - Connection metadata (IP, node id) transits public iroh relay/discovery as an
   inherent part of establishing peer connections.
 - Data is not sold; no third-party ads/analytics SDKs.

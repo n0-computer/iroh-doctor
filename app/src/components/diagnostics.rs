@@ -10,6 +10,7 @@ use crate::identity;
 use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand, TelemetryState};
 use crate::portmap_probe::PortMapProbeResult;
 use crate::relay_probe::RelayProbeResult;
+use crate::telemetry_pref;
 use crate::NodeHandle;
 
 use super::diag_state::{
@@ -103,28 +104,68 @@ fn IrohServicesSection(
     let initial = identity::load_api_secret_override();
     let api_secret_input = use_signal(|| initial.clone());
     let saved_override = use_signal(|| initial);
+    // Telemetry is on by default; the marker's presence means the user opted
+    // out. Track the positive sense (enabled) for the toggle.
+    let enabled = use_signal(|| !telemetry_pref::telemetry_disabled());
 
     let telemetry_text = telemetry_line(&telemetry());
 
-    let footer = if saved_override().is_empty() {
-        "Telemetry is off. Paste a secret from services.iroh.computer to enable it; the key is stored locally on this device only."
+    let key_footer = if saved_override().is_empty() {
+        "Optional. Paste a key from services.iroh.computer to send diagnostics to your own account instead of the default. The key is stored locally on this device only."
     } else {
-        "Using your key. Tap Clear to turn telemetry off."
+        "Using your key. Tap Clear to fall back to the default."
     };
 
+    let on = enabled();
     let input_value = api_secret_input();
     let trimmed_input = input_value.trim().to_string();
-    let save_disabled = trimmed_input.is_empty() || trimmed_input == saved_override();
-    let clear_disabled = saved_override().is_empty() && input_value.is_empty();
+    // The custom key only takes effect while telemetry is on, so the advanced
+    // controls are disabled when it is off rather than silently no-op.
+    let save_disabled = !on || trimmed_input.is_empty() || trimmed_input == saved_override();
+    let clear_disabled = !on || (saved_override().is_empty() && input_value.is_empty());
 
     rsx! {
         section { class: "settings-section",
-            label { class: "label", "iroh services API key" }
+            label { class: "label", "Telemetry" }
+            label { class: "toggle-row",
+                input {
+                    r#type: "checkbox",
+                    checked: on,
+                    onchange: move |_| {
+                        let next = !enabled();
+                        // Persist first. If the write fails, leave the signal
+                        // unchanged so the checkbox reverts to the durable
+                        // state rather than showing a preference we did not
+                        // save, and skip the live toggle.
+                        if let Err(e) = telemetry_pref::set_telemetry_disabled(!next) {
+                            tracing::warn!(err = %e, "persisting telemetry preference");
+                            return;
+                        }
+                        enabled.clone().set(next);
+                        if let Some(handle) = cmd_handle.read().clone() {
+                            let _ = handle
+                                .tx
+                                .try_send(NodeCommand::SetTelemetryEnabled { enabled: next });
+                        }
+                    },
+                }
+                span { "Send anonymous connection diagnostics" }
+            }
+            div { class: "footer-note",
+                "iroh doctor sends anonymous connection diagnostics to iroh-services "
+                "to help improve iroh. Your endpoint id is the only identifier sent. "
+                "Turn this off any time."
+            }
+        }
+
+        section { class: "settings-section",
+            label { class: "label", "Advanced: custom iroh services key" }
             input {
                 class: "api-input",
                 r#type: "password",
                 placeholder: "services1...",
                 value: "{input_value}",
+                disabled: !on,
                 autocapitalize: "off",
                 autocorrect: "off",
                 spellcheck: "false",
@@ -164,7 +205,7 @@ fn IrohServicesSection(
                     "Clear"
                 }
             }
-            div { class: "footer-note", "{footer}" }
+            div { class: "footer-note", "{key_footer}" }
         }
 
         section { class: "settings-section",
@@ -176,7 +217,7 @@ fn IrohServicesSection(
 
 fn telemetry_line(state: &TelemetryState) -> String {
     match state {
-        TelemetryState::Off => "off - paste an API secret to enable".into(),
+        TelemetryState::Off => "off".into(),
         TelemetryState::Starting => "connecting...".into(),
         TelemetryState::Active { name } => format!("active - pushing as {name}"),
         TelemetryState::Error(msg) => format!("error: {msg}"),

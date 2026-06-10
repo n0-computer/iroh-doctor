@@ -392,6 +392,16 @@ html, body {
     font-size: 12px;
 }
 .settings-actions { display: flex; gap: 8px; }
+/* Telemetry on/off toggle: a checkbox and its label on one row. The whole
+   row is a <label>, so clicking the text toggles the box too. */
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.toggle-row input { margin: 0; }
 /* First-run trust note (Connect tab) and empty-state guidance cards.
    Both ride on .settings-section; .hint-text is the shared body copy.
    The note gets a warm tint so it reads as a heads-up, not an error.
@@ -406,6 +416,9 @@ html, body {
     font-size: 13px;
     line-height: 1.5;
 }
+/* Space stacked body paragraphs (the trust note has two) without adding a
+   top margin to a lone paragraph in the empty-state cards. */
+.hint-text + .hint-text { margin-top: 8px; }
 .footer-note {
     font-size: 12px;
     opacity: 0.65;

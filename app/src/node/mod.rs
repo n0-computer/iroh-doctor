@@ -66,6 +66,15 @@ pub enum NodeCommand {
     SaveApiSecret {
         secret: String,
     },
+    /// Turns telemetry on or off at runtime. Rebuilds the services client when
+    /// enabling and drops it when disabling, so pushes stop without waiting for
+    /// a restart. The metrics task is `Arc`-backed and shared with any
+    /// in-flight `PingServices`/`RunNetDiagnostics` probe, so a push can still
+    /// fire until such a probe finishes; with no probe running, dropping the
+    /// client stops pushes at once.
+    SetTelemetryEnabled {
+        enabled: bool,
+    },
     PingServices {
         reply: oneshot::Sender<Result<Duration, String>>,
     },
@@ -251,6 +260,7 @@ pub struct PathInfo {
 pub async fn run_node(
     secret_key: SecretKey,
     initial_api_secret_override: String,
+    initial_telemetry_disabled: bool,
     mut commands: mpsc::Receiver<NodeCommand>,
     callbacks: NodeCallbacks,
 ) -> Result<()> {
@@ -277,8 +287,14 @@ pub async fn run_node(
     on_state(ConnectionState::Ready);
 
     let mut api_secret_override = initial_api_secret_override;
-    let mut services: Option<ServicesClient> =
-        start_services_client(&endpoint, &api_secret_override, &on_telemetry).await;
+    let mut telemetry_disabled = initial_telemetry_disabled;
+    let mut services: Option<ServicesClient> = start_services_client(
+        &endpoint,
+        telemetry_disabled,
+        &api_secret_override,
+        &on_telemetry,
+    )
+    .await;
 
     // Owner for the gossip protocol. Cheaply cloneable; clones share state
     // and outlive any individual connection.
@@ -449,8 +465,25 @@ pub async fn run_node(
             NodeCommand::SaveApiSecret { secret } => {
                 api_secret_override = secret.trim().to_string();
                 services.take(); // drop the old client so its background tasks stop
-                services =
-                    start_services_client(&endpoint, &api_secret_override, &on_telemetry).await;
+                services = start_services_client(
+                    &endpoint,
+                    telemetry_disabled,
+                    &api_secret_override,
+                    &on_telemetry,
+                )
+                .await;
+            }
+            NodeCommand::SetTelemetryEnabled { enabled } => {
+                info!(enabled, "telemetry toggled");
+                telemetry_disabled = !enabled;
+                services.take(); // drop the old client so its background tasks stop
+                services = start_services_client(
+                    &endpoint,
+                    telemetry_disabled,
+                    &api_secret_override,
+                    &on_telemetry,
+                )
+                .await;
             }
             NodeCommand::PingServices { reply } => {
                 // A network round-trip to the services endpoint; spawn so it
@@ -607,15 +640,18 @@ async fn bind_endpoint(secret_key: SecretKey) -> Result<Endpoint> {
 
 async fn start_services_client(
     endpoint: &Endpoint,
+    telemetry_disabled: bool,
     api_secret_override: &str,
     on_telemetry: &TelemetryCb,
 ) -> Option<ServicesClient> {
     // `IROH_SERVICES_API_SECRET` wins when set (empty value opts out).
-    // Otherwise telemetry runs only when the user saved a key: with no saved
-    // override this resolves to `None` and iroh-services stays off, which is
-    // what the privacy policy and the store listings promise.
+    // Otherwise telemetry is on by default with the bundled key: it resolves to
+    // `None` only when the user turned it off or an empty env override opts out.
     let Some(secret) = iroh_doctor_core::services::resolve_api_secret(
-        iroh_doctor_core::services::SecretSource::SavedOverride(api_secret_override),
+        iroh_doctor_core::services::SecretSource::AppDefault {
+            disabled: telemetry_disabled,
+            custom: api_secret_override,
+        },
     ) else {
         on_telemetry(TelemetryState::Off);
         return None;

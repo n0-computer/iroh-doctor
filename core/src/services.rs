@@ -12,11 +12,11 @@ use iroh::Endpoint;
 use iroh_services::Client;
 use serde::Serialize;
 
-/// Bundled API secret used by the cli when nothing overrides it, so the
-/// foreground dev tool talks to iroh-services out of the box. The app never
-/// falls back to it: a GUI app that registers a device and pushes metrics on
-/// a timer must not do so without the user opting in (see
-/// [`resolve_api_secret`]).
+/// Bundled API secret used out of the box by both the cli and the app, so
+/// iroh-services telemetry works without the user supplying a key. The app
+/// is a diagnostics tool and collects this telemetry by default; the user can
+/// opt out via the in-app toggle (see [`SecretSource::AppDefault`]) or the
+/// `IROH_SERVICES_API_SECRET` empty-string override.
 pub const DEFAULT_API_SECRET: &str =
     "servicesaaqg6nnf7kr3uiacviqgbxeqconvhuz4ldr5dem4gqhsp3cyat6qxexoctwjsi7m6dh2t2qvfu2yhdoaav6eibaj4aaavhonlixbohceu4aa";
 
@@ -25,27 +25,28 @@ pub const DEFAULT_API_SECRET: &str =
 pub const API_SECRET_ENV: &str = "IROH_SERVICES_API_SECRET";
 
 /// Where a binary wants the API secret to come from when
-/// `IROH_SERVICES_API_SECRET` is unset. Naming the fallback at the call site
-/// keeps the privacy-sensitive bundled-default path from being reached by a
-/// caller that just passes a conventional "nothing special" value.
+/// `IROH_SERVICES_API_SECRET` is unset. Naming the source at the call site
+/// keeps each binary's telemetry policy explicit rather than implied by a
+/// bare string.
 #[derive(Debug, Clone, Copy)]
 pub enum SecretSource<'a> {
-    /// Use the user's saved override; an empty override means telemetry
-    /// stays off. The app uses this: registering the device and pushing
-    /// metrics without an explicit key would break the promise the privacy
-    /// policy and store listings make.
-    SavedOverride(&'a str),
-    /// Fall back to [`DEFAULT_API_SECRET`] when nothing is set. The cli uses
-    /// this so the foreground dev tool works out of the box.
+    /// The app's policy: telemetry is on by default with the bundled key.
+    /// `disabled` is the user's saved opt-out (the in-app toggle); when set,
+    /// telemetry resolves to `None`. `custom` is an optional user-supplied
+    /// key that overrides the bundled one; an empty `custom` with `disabled`
+    /// false uses [`DEFAULT_API_SECRET`].
+    AppDefault { disabled: bool, custom: &'a str },
+    /// Fall back to [`DEFAULT_API_SECRET`]. The cli uses this so the
+    /// foreground dev tool works out of the box.
     BundledDefault,
 }
 
 /// Resolves which API secret to use, or `None` to disable iroh-services.
 ///
 /// `IROH_SERVICES_API_SECRET` wins when set: a non-empty value is used as-is,
-/// an empty value opts out (returns `None`). Otherwise the
-/// [`SecretSource`] decides whether to honor a saved override or fall back to
-/// the bundled key.
+/// an empty value opts out (returns `None`). Otherwise the [`SecretSource`]
+/// decides: the app stays on by default unless the user disabled it, and the
+/// cli always falls back to the bundled key.
 #[must_use]
 pub fn resolve_api_secret(source: SecretSource<'_>) -> Option<String> {
     if let Ok(env) = std::env::var(API_SECRET_ENV) {
@@ -53,9 +54,17 @@ pub fn resolve_api_secret(source: SecretSource<'_>) -> Option<String> {
         return (!trimmed.is_empty()).then(|| trimmed.to_string());
     }
     match source {
-        SecretSource::SavedOverride(s) => {
-            let trimmed = s.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        SecretSource::AppDefault { disabled: true, .. } => None,
+        SecretSource::AppDefault {
+            disabled: false,
+            custom,
+        } => {
+            let trimmed = custom.trim();
+            Some(if trimmed.is_empty() {
+                DEFAULT_API_SECRET.to_string()
+            } else {
+                trimmed.to_string()
+            })
         }
         SecretSource::BundledDefault => Some(DEFAULT_API_SECRET.to_string()),
     }
@@ -163,36 +172,83 @@ mod tests {
     /// against the same variable.
     #[test]
     fn resolve_api_secret_precedence() {
-        use SecretSource::{BundledDefault, SavedOverride};
+        use SecretSource::{AppDefault, BundledDefault};
         // The env var is shared process state; this is the only test that
         // touches it, so the set/remove calls below do not race.
         std::env::remove_var(API_SECRET_ENV);
+
+        // The cli always falls back to the bundled key.
         assert_eq!(
             resolve_api_secret(BundledDefault).as_deref(),
             Some(DEFAULT_API_SECRET)
         );
+
+        // The app is on by default: no custom key, not disabled, uses the
+        // bundled key.
         assert_eq!(
-            resolve_api_secret(SavedOverride("custom")).as_deref(),
-            Some("custom")
+            resolve_api_secret(AppDefault {
+                disabled: false,
+                custom: "",
+            })
+            .as_deref(),
+            Some(DEFAULT_API_SECRET)
         );
-        // A non-empty saved key is trimmed before use.
+        // A blank custom key still resolves to the bundled key, not off.
         assert_eq!(
-            resolve_api_secret(SavedOverride("  key  ")).as_deref(),
+            resolve_api_secret(AppDefault {
+                disabled: false,
+                custom: "  ",
+            })
+            .as_deref(),
+            Some(DEFAULT_API_SECRET)
+        );
+        // A non-empty custom key overrides the bundled one and is trimmed.
+        assert_eq!(
+            resolve_api_secret(AppDefault {
+                disabled: false,
+                custom: "  key  ",
+            })
+            .as_deref(),
             Some("key")
         );
-        // An app-side override that is empty means the user never opted in:
-        // iroh-services stays off rather than falling back to the bundled key.
-        assert_eq!(resolve_api_secret(SavedOverride("  ")), None);
-        assert_eq!(resolve_api_secret(SavedOverride("")), None);
+        // The user's opt-out wins over any custom key.
+        assert_eq!(
+            resolve_api_secret(AppDefault {
+                disabled: true,
+                custom: "key",
+            }),
+            None
+        );
 
+        // A non-empty env var overrides everything: a disabled app, and a
+        // custom key.
         std::env::set_var(API_SECRET_ENV, "from-env");
         assert_eq!(
-            resolve_api_secret(SavedOverride("custom")).as_deref(),
+            resolve_api_secret(AppDefault {
+                disabled: true,
+                custom: "key",
+            })
+            .as_deref(),
+            Some("from-env")
+        );
+        assert_eq!(
+            resolve_api_secret(AppDefault {
+                disabled: false,
+                custom: "key",
+            })
+            .as_deref(),
             Some("from-env")
         );
 
+        // An empty env var is the dev/CI opt-out and beats on-by-default.
         std::env::set_var(API_SECRET_ENV, "");
-        assert_eq!(resolve_api_secret(SavedOverride("custom")), None);
+        assert_eq!(
+            resolve_api_secret(AppDefault {
+                disabled: false,
+                custom: "",
+            }),
+            None
+        );
 
         std::env::remove_var(API_SECRET_ENV);
     }

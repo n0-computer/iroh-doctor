@@ -21,7 +21,9 @@ policy explains what the app does and does not do with data.
 
 - We do **not** require an account, and we do **not** collect personal
   information for advertising or analytics.
-- By default, the app sends **no diagnostic or usage data** to us.
+- By default, the app sends anonymous connection diagnostics to iroh-services
+  to help improve iroh; you can turn this off at any time (see Connection
+  diagnostics below).
 - The app is a networking tool: to connect you to a peer it uses the same public
   iroh infrastructure (relay and discovery servers) any iroh application uses.
   Establishing connections necessarily exposes network information such as IP
@@ -59,19 +61,24 @@ operated by number 0:
 We do not use this connection information to build advertising or marketing
 profiles.
 
-### Optional telemetry (off by default)
+### Connection diagnostics (on by default, can be turned off)
 
-The app can integrate with iroh-services, a service operated by number 0.
-**This is disabled by default.** It is enabled only if you supply an
-iroh-services API key and turn it on. When enabled, diagnostic and operational
-telemetry is sent to iroh-services to help analyze connectivity. You can leave
-it off, and you can stop it at any time by removing the key. [Confirm exact
-telemetry fields and link to the iroh-services privacy terms before publishing.]
+iroh doctor sends anonymous connection diagnostics to iroh-services, a service
+operated by number 0, to help us analyze connectivity and improve iroh. This is
+on by default. The data is an app-generated device name derived from your public
+node id and connection performance metrics; it is not linked to your identity
+and is not used for tracking. You can turn it off at any time from the
+Diagnostics tab, which stops it immediately. [Confirm exact telemetry fields and
+link to the iroh-services privacy terms before publishing.]
+
+Advanced users can point this at their own iroh-services account by supplying an
+API key in the same place; the key is stored only on your device.
 
 ### Third parties
 
-- **number 0 infrastructure** (relay, discovery, and — only if you enable it —
-  iroh-services), as described above.
+- **number 0 infrastructure** (relay, discovery, and iroh-services, which
+  receives the connection diagnostics unless you turn them off), as described
+  above.
 - We do **not** use third-party advertising or analytics SDKs.
 
 ### Children
