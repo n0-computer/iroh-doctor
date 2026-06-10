@@ -34,8 +34,7 @@ jobs:
         # iroh-doctor-app is a Dioxus GUI crate. Its renderer features
         # (web/desktop/mobile) are mutually exclusive, so --all-features
         # cannot enable them together, and it needs platform GUI libraries
-        # this runner does not have. Exclude it here until it gets its own
-        # dx-based, per-platform CI.
+        # this runner does not have. The app job below covers it.
         run: cargo clippy --locked --workspace --exclude iroh-doctor-app --all-targets --all-features
 
   test:
@@ -68,9 +67,31 @@ jobs:
           targets: ${{ matrix.target.toolchain }}
       - uses: swatinem/rust-cache@v2
       - name: cargo test
-        # iroh-doctor-app is excluded here; see the clippy job for why. Its
-        # tests run locally and will move to a dedicated app CI job.
+        # iroh-doctor-app is excluded here; see the clippy job for why.
+        # The app job below runs its tests.
         run: cargo test --locked --workspace --exclude iroh-doctor-app --all-features --bins --tests --examples
+
+  # Dedicated job for iroh-doctor-app, which the workspace-wide jobs above
+  # exclude (mutually exclusive renderer features, platform GUI libraries).
+  # We run it on macOS because the default desktop renderer builds there
+  # with no system packages, matching the locally verified path. The Linux
+  # alternative needs an apt package set (webkit2gtk 4.1, gtk3, xdo,
+  # ayatana-appindicator) that has to track dioxus's requirements as runner
+  # images change. This covers "compiles and tests pass" with the default
+  # desktop feature; per-platform dx bundles (web, iOS, Android) are a
+  # separate follow-up.
+  app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --locked -p iroh-doctor-app --all-targets
+      - name: cargo test
+        run: cargo test --locked -p iroh-doctor-app
 
   # Checks correct runtime deps and features are requested by not including dev-dependencies.
   check-deps:
