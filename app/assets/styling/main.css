@@ -216,7 +216,13 @@ html, body {
 }
 
 /* Connect bar */
+.connect-bar-wrap { display: flex; flex-direction: column; gap: 6px; }
 .connect-bar { display: flex; gap: 8px; align-items: center; }
+.input-hint {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #b35900;
+}
 .connect-status { flex: 1; font-size: 13px; opacity: 0.75; }
 .peer-id-input {
     flex: 1;
@@ -386,6 +392,20 @@ html, body {
     font-size: 12px;
 }
 .settings-actions { display: flex; gap: 8px; }
+/* First-run trust note (Connect tab) and empty-state guidance cards.
+   Both ride on .settings-section; .hint-text is the shared body copy.
+   The note gets a warm tint so it reads as a heads-up, not an error.
+   Its dismiss button inherits the 44px mobile touch minimum from the
+   .btn rule in the max-width media query above. */
+.first-run-note {
+    border-color: rgba(255, 149, 0, 0.45);
+    background: rgba(255, 149, 0, 0.06);
+}
+.hint-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+}
 .footer-note {
     font-size: 12px;
     opacity: 0.65;

@@ -3,6 +3,7 @@ mod diag_state;
 mod diagnostics;
 mod endpoints;
 mod error_dialog;
+mod first_run_note;
 mod gossip;
 
 pub use connection::{ConnectView, EventEntry};
@@ -13,6 +14,7 @@ pub use diag_state::{
 pub use diagnostics::DiagnosticsView;
 pub use endpoints::EndpointsView;
 pub use error_dialog::{AppError, ErrorDialog};
+pub use first_run_note::FirstRunNote;
 pub use gossip::GossipView;
 
 /// Truncates a long hex identifier (endpoint id, topic id, blob hash) to

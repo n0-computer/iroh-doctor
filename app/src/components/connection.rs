@@ -54,6 +54,26 @@ pub fn ConnectView(
                 PathsTable { paths }
 
                 EventLog { event_log }
+            } else if connection_state == ConnectionStateLabel::Disconnected {
+                ConnectHint {}
+            }
+        }
+    }
+}
+
+/// Empty-state guidance shown while nothing is connected, so a first
+/// launch reads as instructions instead of a bare "disconnected".
+#[component]
+fn ConnectHint() -> Element {
+    rsx! {
+        section { class: "settings-section",
+            label { class: "label", "Get started" }
+            p { class: "hint-text",
+                "Nothing is connected yet. To test a connection between two "
+                "devices, paste the other device's endpoint id above and press "
+                "Connect, or copy your id and have the other side connect to "
+                "you. Latency, paths, and connection events appear here once "
+                "a probe is running."
             }
         }
     }

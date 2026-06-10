@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, watch};
 mod components;
 mod diagnostics_export;
 mod endpoints;
+mod first_run;
 mod identity;
 mod node;
 mod portmap_probe;
@@ -16,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use components::{
     AppError, ConnectView, DiagState, DiagnosticsView, EndpointsView, ErrorDialog, EventEntry,
-    GossipView,
+    FirstRunNote, GossipView,
 };
 use node::{
     ConnectionState, DiagnosticsReport, NetReportSummary, NodeCallbacks, NodeCommand, PathInfo,
@@ -281,8 +282,10 @@ fn App() -> Element {
 
     use_effect(move || {
         if matches!(conn_state(), ConnectionState::Connected { .. }) {
-            components::trigger_pings(cmd_handle, services_ping_state);
-            components::trigger_net_diagnostics(cmd_handle, net_state);
+            if services_configured() {
+                components::trigger_pings(cmd_handle, services_ping_state);
+                components::trigger_net_diagnostics(cmd_handle, net_state);
+            }
             components::trigger_probe_net_report(cmd_handle, net_report_state);
             components::trigger_probe_relays(cmd_handle, relays_state);
             components::trigger_probe_portmap(cmd_handle, portmap_state);
@@ -298,8 +301,14 @@ fn App() -> Element {
         use_effect(move || {
             if cmd_handle.read().is_some() && !auto_flag.peek().to_owned() {
                 auto_flag.set(true);
-                components::trigger_pings(cmd_handle, services_ping_state);
-                components::trigger_net_diagnostics(cmd_handle, net_state);
+                // The services probes need an API key; without one they can
+                // only fail with "not initialized", which would greet a
+                // first-run user (telemetry is off by default) with an
+                // error. Skip them and leave their panels at "not run yet".
+                if services_configured() {
+                    components::trigger_pings(cmd_handle, services_ping_state);
+                    components::trigger_net_diagnostics(cmd_handle, net_state);
+                }
                 components::trigger_probe_net_report(cmd_handle, net_report_state);
                 components::trigger_probe_relays(cmd_handle, relays_state);
                 components::trigger_probe_portmap(cmd_handle, portmap_state);
@@ -314,17 +323,21 @@ fn App() -> Element {
     let mut error_sink = app_error;
     use_effect(move || {
         if let ConnectionState::Error(msg) = conn_state() {
-            error_sink.set(Some(AppError::new("connect", msg)));
+            error_sink.set(Some(AppError::new("connect", explain_connect_error(&msg))));
         }
     });
     use_effect(move || {
         if let DiagState::Err(msg) = services_ping_state() {
-            error_sink.set(Some(AppError::new("services ping", msg)));
+            if !is_services_off_error(&msg) {
+                error_sink.set(Some(AppError::new("services ping", msg)));
+            }
         }
     });
     use_effect(move || {
         if let DiagState::Err(msg) = net_state() {
-            error_sink.set(Some(AppError::new("services net_diagnostics", msg)));
+            if !is_services_off_error(&msg) {
+                error_sink.set(Some(AppError::new("services net_diagnostics", msg)));
+            }
         }
     });
     use_effect(move || {
@@ -411,10 +424,44 @@ fn App() -> Element {
                         ttfdb,
                         throughput,
                         endpoints_list,
+                        app_error,
                     );
                 },
             }
         }
+    }
+}
+
+/// Returns true when an iroh-services API key is configured (the env
+/// override or a key the user saved). Without one the node never starts
+/// a services client, so the services ping and net_diagnostics probes
+/// could only fail; callers skip triggering them in that case.
+fn services_configured() -> bool {
+    iroh_doctor_core::services::resolve_api_secret(Some(&identity::load_api_secret_override()))
+        .is_some()
+}
+
+/// Matches the node's "services client not initialized" reply. With no
+/// API key configured this is the expected state, not a failure: the
+/// Diagnostics tab already explains telemetry is off next to the key
+/// input, so the global error modal stays quiet for it.
+fn is_services_off_error(msg: &str) -> bool {
+    msg.contains("services client not initialized")
+}
+
+/// Expands the node's connect-stage errors with recovery guidance where
+/// the raw message alone leaves a first-time user stuck. A failed bind
+/// is fatal for the process (the node task has exited), so the only
+/// recovery is fixing the network and relaunching.
+fn explain_connect_error(msg: &str) -> String {
+    if msg.starts_with("bind failed") {
+        format!(
+            "{msg}\n\nThe app could not open a network socket, so it cannot \
+             connect to peers or accept probes. Check the device's network \
+             connection, then close and reopen the app."
+        )
+    } else {
+        msg.to_string()
     }
 }
 
@@ -434,7 +481,9 @@ fn handle_send_diagnostics(
     ttfdb: Signal<Option<Duration>>,
     throughput: Signal<Option<node::ThroughputSnapshot>>,
     endpoints_list: Signal<Vec<endpoints::Endpoint>>,
+    mut error_sink: Signal<Option<AppError>>,
 ) {
+    use anyhow::Context as _;
     let (net_report, _) = diagnostics_export::Snapshot::extract_diag_state(&net_report_state());
     let (portmap, portmap_err) = diagnostics_export::Snapshot::extract_diag_state(&portmap_state());
     let (relays, relays_err) = diagnostics_export::Snapshot::extract_diag_state(&relays_state());
@@ -457,34 +506,42 @@ fn handle_send_diagnostics(
         log_dir: log_dir(),
     };
     spawn(async move {
-        let bytes = match diagnostics_export::build_zip(&snapshot) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::error!(err = %e, "building diagnostics zip");
-                return;
-            }
-        };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let filename = format!("iroh-doctor-app-diagnostics-{now}.zip");
-        save_diagnostics_zip(&filename, &bytes).await;
+        let result = async {
+            let bytes =
+                diagnostics_export::build_zip(&snapshot).context("building diagnostics zip")?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let filename = format!("iroh-doctor-app-diagnostics-{now}.zip");
+            save_diagnostics_zip(&filename, &bytes).await
+        }
+        .await;
+        if let Err(e) = result {
+            let msg = format!("{e:#}");
+            tracing::error!(err = %msg, "diagnostics export failed");
+            error_sink.set(Some(AppError::new("diagnostics export", msg)));
+        }
     });
 }
 
 /// Desktop path: open a native save dialog via rfd and write the bytes
-/// to whichever location the user picks.
+/// to whichever location the user picks. Cancelling the dialog is `Ok`;
+/// only a failed write is an error worth surfacing.
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
-async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) {
+async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    use anyhow::Context as _;
     let dialog = rfd::AsyncFileDialog::new()
         .set_file_name(filename)
         .set_title("Save iroh-doctor-app diagnostics");
-    if let Some(handle) = dialog.save_file().await {
-        if let Err(e) = handle.write(bytes).await {
-            tracing::error!(err = %e, "writing diagnostics zip");
-        }
-    }
+    let Some(handle) = dialog.save_file().await else {
+        return Ok(());
+    };
+    handle
+        .write(bytes)
+        .await
+        .context("writing diagnostics zip")?;
+    Ok(())
 }
 
 /// Mobile path (iOS + Android): rfd has no usable backend, so write to the
@@ -492,17 +549,16 @@ async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) {
 /// exposes it. The user can share the file from there. Logs the resulting
 /// path so a developer inspecting the log file can find it without guessing.
 #[cfg(any(target_os = "ios", target_os = "android"))]
-async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) {
-    let Some(dir) = dirs::document_dir().or_else(dirs::data_local_dir) else {
-        tracing::error!("no document directory on this mobile build");
-        return;
-    };
+async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    let dir = dirs::document_dir()
+        .or_else(dirs::data_local_dir)
+        .context("no documents directory on this device")?;
     let path = dir.join(filename);
-    if let Err(e) = std::fs::write(&path, bytes) {
-        tracing::error!(err = %e, path = %path.display(), "writing diagnostics zip");
-        return;
-    }
+    std::fs::write(&path, bytes)
+        .with_context(|| format!("writing diagnostics zip to {}", path.display()))?;
     tracing::info!(path = %path.display(), "wrote diagnostics zip");
+    Ok(())
 }
 
 #[component]
@@ -570,6 +626,7 @@ fn ConnectPage(
     rsx! {
         div { class: "page",
             h2 { class: "page-title", "Connect" }
+            FirstRunNote {}
             Header { endpoint_id }
             ConnectBar { cmd_handle, peer_id_input, conn_state }
             ConnectView {
@@ -672,29 +729,41 @@ fn ConnectBar(
 
     let input_value = peer_id_input();
     let connect_disabled = !node::looks_like_endpoint_id(&input_value);
+    // The Connect button stays disabled on malformed input; without a
+    // hint a first-time user pasting a truncated id only sees a button
+    // that will not press. Explain what a valid id looks like.
+    let show_invalid_hint = connect_disabled && !input_value.trim().is_empty();
 
     rsx! {
-        div { class: "connect-bar",
-            input {
-                class: "peer-id-input",
-                r#type: "text",
-                placeholder: "Peer endpoint id",
-                value: "{input_value}",
-                autocapitalize: "off",
-                autocorrect: "off",
-                spellcheck: "false",
-                oninput: move |evt| { peer_id_input.clone().set(evt.value()); },
+        div { class: "connect-bar-wrap",
+            div { class: "connect-bar",
+                input {
+                    class: "peer-id-input",
+                    r#type: "text",
+                    placeholder: "Peer endpoint id",
+                    value: "{input_value}",
+                    autocapitalize: "off",
+                    autocorrect: "off",
+                    spellcheck: "false",
+                    oninput: move |evt| { peer_id_input.clone().set(evt.value()); },
+                }
+                button {
+                    class: "btn btn-primary",
+                    disabled: connect_disabled,
+                    onclick: move |_| {
+                        let id = peer_id_input();
+                        if let Some(handle) = cmd_handle.read().clone() {
+                            let _ = handle.tx.try_send(NodeCommand::Connect { hex_id: id });
+                        }
+                    },
+                    "Connect"
+                }
             }
-            button {
-                class: "btn btn-primary",
-                disabled: connect_disabled,
-                onclick: move |_| {
-                    let id = peer_id_input();
-                    if let Some(handle) = cmd_handle.read().clone() {
-                        let _ = handle.tx.try_send(NodeCommand::Connect { hex_id: id });
-                    }
-                },
-                "Connect"
+            if show_invalid_hint {
+                div { class: "input-hint",
+                    "Not a valid endpoint id yet: ids are 64 hex characters. "
+                    "Paste the full id from the other device's Copy button."
+                }
             }
         }
     }
