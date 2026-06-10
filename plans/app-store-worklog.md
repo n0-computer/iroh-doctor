@@ -61,3 +61,31 @@ cd app
 scripts/bundle-mobile.sh android   # or: android --release
 scripts/bundle-mobile.sh ios       # or: ios --release  (then sign/archive)
 ```
+
+## 2026-06-10 — publish push (session with Rae)
+
+Accounts confirmed: Apple = personal paid membership (krmckelv@gmail.com,
+team 84T7UAWDW5) → iOS path unblocked. Play Console = created, identity
+verification PENDING → Play uploads blocked until it clears.
+
+Done this session:
+- Display name fixed durably for iOS: `[ios.plist]` CFBundleDisplayName/
+  CFBundleName = "iroh doctor" in Dioxus.toml — verified to override dx 0.7.9's
+  crate-name template even on plain `dx build --ios` (the design doc's
+  hypothesized fix, now confirmed). Android still needs the wrapper.
+- Release artifacts built + verified with BUILD_NUMBER=1: iOS branded .app
+  (CFBundleVersion=1) and Android AAB + APK. See plans/release-runbook.md.
+- Play upload keystore generated: ~/.android-keystores/iroh-doctor-upload.jks
+  (alias `upload`; password in adjacent README — Rae: move to password manager).
+- Store screenshots captured at 1320×2868 (6.9", iPhone 16 Pro Max simulator)
+  in app/assets/store/screenshots/: first-run note, clean Connect, and a live
+  probe (direct path, latency sparkline, throughput) driven by the CLI
+  (`iroh-doctor connect <sim app id>`). Tab screenshots (Diagnostics/Gossip/
+  Endpoints) need simulated taps = macOS accessibility permission, or 2 min of
+  manual capture: `xcrun simctl io booted screenshot out.png`.
+- Wrote plans/release-runbook.md: exact remaining steps both stores, signing/
+  IPA commands, build-number ledger.
+
+Open blockers (Rae-only): deploy privacy policy (uncommitted in
+../iroh.computer), merge n0-computer/svc#887, ASC app record + distribution
+cert + profile + upload, Play verification wait, merge rae/doctor-app.
