@@ -18,7 +18,7 @@ use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher}
 use serde::Serialize;
 
 use iroh_doctor_core::nat::{classify_nat_type, ExtendedNetworkReport, NatType};
-use iroh_doctor_core::port_variation::PortVariationReport;
+use iroh_doctor_core::port_variation::{ExpectedExternal, PortVariationReport};
 use iroh_doctor_core::portmap::PortMapResult;
 use iroh_doctor_core::relay_probe::RelayProbeResult;
 use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
@@ -100,11 +100,24 @@ async fn report_inner(
         .await
         .context("net_report did not initialize within timeout")?;
 
+    // A NAT probe failure (bad hostname, DNS down, no helper) must not sink
+    // the rest of the report: this is a diagnostics tool, often run on a
+    // broken network, and the net_report already in hand is the point. Warn
+    // and continue with no port-variation data.
     let port_variation = if nat_probe.is_empty() {
         None
     } else {
-        let targets = resolve_nat_probe_targets(nat_probe).await?;
-        Some(iroh_doctor_core::port_variation::probe_port_variation(&targets).await?)
+        let expected = ExpectedExternal {
+            ipv4: net_report.global_v4.map(|a| *a.ip()),
+            ipv6: net_report.global_v6.map(|a| *a.ip()),
+        };
+        match run_nat_probe(nat_probe, expected).await {
+            Ok(pv) => Some(pv),
+            Err(e) => {
+                eprintln!("warning: NAT port probe skipped: {e:#}");
+                None
+            }
+        }
     };
 
     let mut extended = ExtendedNetworkReport::from_base_report(Some(net_report.clone()));
@@ -235,8 +248,10 @@ fn print_tables(r: &Report) {
         );
         if pv.varies_ipv4.is_none() && pv.varies_ipv6.is_none() {
             println!(
-                "warning: no two successful probes shared a host, so the \
-                 port-variation verdict is unknown"
+                "warning: port-variation verdict is unknown. Each helper must \
+                 sit outside this NAT and observe the public address above, \
+                 and two must share a host on different ports. A helper on \
+                 this network sees a private address and cannot measure it."
             );
         }
         println!();
@@ -295,11 +310,24 @@ fn print_tables(r: &Report) {
     }
 }
 
+/// Resolves the `--nat-probe` helper addresses and runs the port-variation
+/// probe against them.
+async fn run_nat_probe(
+    entries: &[String],
+    expected: ExpectedExternal,
+) -> anyhow::Result<PortVariationReport> {
+    let targets = resolve_nat_probe_targets(entries).await?;
+    iroh_doctor_core::port_variation::probe_port_variation(&targets, expected).await
+}
+
 /// Resolves `--nat-probe` entries (`host:port`) to socket addresses.
 ///
-/// A hostname is resolved once and its first address reused for every entry
+/// A hostname is resolved once and the chosen address reused for every entry
 /// naming it, so two ports on one host stay comparable even when DNS would
-/// rotate between several addresses.
+/// rotate between several addresses. IPv4 is preferred because the
+/// `nat-helper` default bind is IPv4, and DNS ordering (RFC 6724) often puts
+/// IPv6 first, which would point the probe at a port the helper does not
+/// serve.
 async fn resolve_nat_probe_targets(entries: &[String]) -> anyhow::Result<Vec<SocketAddr>> {
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -316,18 +344,29 @@ async fn resolve_nat_probe_targets(entries: &[String]) -> anyhow::Result<Vec<Soc
         let ip = match resolved_hosts.get(host) {
             Some(ip) => *ip,
             None => {
-                let addr = tokio::net::lookup_host((host, port))
+                let candidates: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
                     .await
                     .with_context(|| format!("resolving {host:?}"))?
-                    .next()
+                    .collect();
+                let ip = prefer_ipv4(&candidates)
                     .with_context(|| format!("no addresses for {host:?}"))?;
-                resolved_hosts.insert(host.to_string(), addr.ip());
-                addr.ip()
+                resolved_hosts.insert(host.to_string(), ip);
+                ip
             }
         };
         targets.push(SocketAddr::new(ip, port));
     }
     Ok(targets)
+}
+
+/// Picks one resolved address, preferring IPv4 over IPv6. Returns `None`
+/// only when `candidates` is empty.
+fn prefer_ipv4(candidates: &[SocketAddr]) -> Option<std::net::IpAddr> {
+    candidates
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or_else(|| candidates.first())
+        .map(SocketAddr::ip)
 }
 
 /// Splits a `host:port` string on the last colon. IPv6 literals must use
@@ -415,6 +454,49 @@ fn fmt_opt_ms(ms: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefer_ipv4_picks_v4_then_falls_back() {
+        use std::net::IpAddr;
+        let v6: SocketAddr = "[2001:db8::1]:1".parse().unwrap();
+        let v4: SocketAddr = "203.0.113.1:1".parse().unwrap();
+        // v4 chosen even when listed after v6 (DNS often returns AAAA first).
+        assert_eq!(
+            prefer_ipv4(&[v6, v4]),
+            Some("203.0.113.1".parse::<IpAddr>().unwrap())
+        );
+        // Only v6 available: fall back to it rather than failing.
+        assert_eq!(
+            prefer_ipv4(&[v6]),
+            Some("2001:db8::1".parse::<IpAddr>().unwrap())
+        );
+        assert_eq!(prefer_ipv4(&[]), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_targets_passes_ip_literals_through_unchanged() {
+        let targets = resolve_nat_probe_targets(&[
+            "203.0.113.7:3478".to_string(),
+            "203.0.113.7:3479".to_string(),
+        ])
+        .await
+        .unwrap();
+        assert_eq!(
+            targets,
+            vec![
+                "203.0.113.7:3478".parse().unwrap(),
+                "203.0.113.7:3479".parse().unwrap(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_targets_rejects_malformed_entry() {
+        let err = resolve_nat_probe_targets(&["no-port-here".to_string()])
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("expected host:port"));
+    }
 
     #[test]
     fn split_host_port_handles_names_and_rejects_garbage() {

@@ -69,9 +69,11 @@ impl std::fmt::Display for NatType {
 pub struct ExtendedNetworkReport {
     /// Base network report from iroh.
     pub base_report: Option<iroh::NetReport>,
-    /// Whether the NAT mapping varies by destination port for IPv4 (not yet collected).
+    /// Whether the NAT mapping varies by destination port for IPv4.
+    /// Collected by [`crate::port_variation`]; `None` when not probed.
     pub mapping_varies_by_dest_port_ipv4: Option<bool>,
-    /// Whether the NAT mapping varies by destination port for IPv6 (not yet collected).
+    /// Whether the NAT mapping varies by destination port for IPv6.
+    /// Collected by [`crate::port_variation`]; `None` when not probed.
     pub mapping_varies_by_dest_port_ipv6: Option<bool>,
 }
 
@@ -90,7 +92,15 @@ impl ExtendedNetworkReport {
 ///
 /// Returns [`NatType::Unknown`] when there is no base report, no globally
 /// routable address, no UDP reachability, or no address-mapping-variation
-/// data. The mapping-variation lookup is `ipv4.or(ipv6)`.
+/// data.
+///
+/// Each address family is classified on its own: the destination-address
+/// axis and the destination-port axis are read from the same family, so a v6
+/// address axis is never mixed with a v4 port axis (which could otherwise
+/// report `Easy` for a family whose address behavior was never measured).
+/// The two families then combine to the easier outcome, because P2P succeeds
+/// over whichever family can holepunch; a family that was not measured is
+/// ignored rather than dragging the result down.
 #[must_use]
 pub fn classify_nat_type(report: &ExtendedNetworkReport) -> NatType {
     let Some(ref base) = report.base_report else {
@@ -104,19 +114,44 @@ pub fn classify_nat_type(report: &ExtendedNetworkReport) -> NatType {
         return NatType::Unknown;
     }
 
-    let mapping_varies_by_dest = base
-        .mapping_varies_by_dest_ipv4
-        .or(base.mapping_varies_by_dest_ipv6);
-    let mapping_varies_by_dest_port = report
-        .mapping_varies_by_dest_port_ipv4
-        .or(report.mapping_varies_by_dest_port_ipv6);
+    let v4 = classify_family(
+        base.mapping_varies_by_dest_ipv4,
+        report.mapping_varies_by_dest_port_ipv4,
+    );
+    let v6 = classify_family(
+        base.mapping_varies_by_dest_ipv6,
+        report.mapping_varies_by_dest_port_ipv6,
+    );
+    combine_families(v4, v6)
+}
 
-    match (mapping_varies_by_dest, mapping_varies_by_dest_port) {
+/// Classifies one address family from its destination-address and
+/// destination-port variation. `None` for the address axis means the family
+/// was not measured.
+fn classify_family(varies_by_dest: Option<bool>, varies_by_dest_port: Option<bool>) -> NatType {
+    match (varies_by_dest, varies_by_dest_port) {
         (Some(true), _) => NatType::Hard,
         (Some(false), Some(true)) => NatType::Medium,
         (Some(false), None) => NatType::Medium,
         (Some(false), Some(false)) => NatType::Easy,
         (None, _) => NatType::Unknown,
+    }
+}
+
+/// Combines the per-family classifications to the easier (lower-difficulty)
+/// of the two, since P2P only needs one family to holepunch. A family that
+/// was not measured ([`NatType::Unknown`]) is ignored so it cannot mask a
+/// good path on the other family.
+fn combine_families(v4: NatType, v6: NatType) -> NatType {
+    match (v4, v6) {
+        (NatType::Unknown, other) | (other, NatType::Unknown) => other,
+        (a, b) => {
+            if a.p2p_difficulty() <= b.p2p_difficulty() {
+                a
+            } else {
+                b
+            }
+        }
     }
 }
 
@@ -248,6 +283,33 @@ mod tests {
         base.mapping_varies_by_dest_ipv4 = Some(false);
         base.mapping_varies_by_dest_ipv6 = Some(true);
         assert_eq!(classify_base_report(&base), NatType::Medium);
+    }
+
+    #[test]
+    fn easier_family_wins_the_combination() {
+        // v4 fully measured stable (Easy), v6 address-dependent (Hard).
+        // P2P succeeds over v4, so the overall verdict is Easy.
+        let mut report = create_test_report();
+        if let Some(ref mut base) = report.base_report {
+            base.mapping_varies_by_dest_ipv4 = Some(false);
+            base.mapping_varies_by_dest_ipv6 = Some(true);
+        }
+        report.mapping_varies_by_dest_port_ipv4 = Some(false);
+        assert_eq!(classify_nat_type(&report), NatType::Easy);
+    }
+
+    #[test]
+    fn port_axis_is_not_read_across_families() {
+        // v4 address-dependence is unmeasured; only a v6 port result is
+        // present. The classifier must not borrow the v6 port axis for v4
+        // and must not invent an Easy: v4 is Unknown, v6 has no address
+        // axis so it is Unknown too.
+        let mut report = create_test_report();
+        if let Some(ref mut base) = report.base_report {
+            base.mapping_varies_by_dest_ipv4 = None;
+        }
+        report.mapping_varies_by_dest_port_ipv6 = Some(false);
+        assert_eq!(classify_nat_type(&report), NatType::Unknown);
     }
 
     #[test]

@@ -83,17 +83,18 @@ pub enum Commands {
     /// Serve two QUIC address discovery endpoints for `diagnostics
     /// --nat-probe`.
     ///
-    /// A NAT's mapping behavior across destination *ports* can only be
+    /// A NAT's mapping behavior across destination ports can only be
     /// measured against one host listening on two ports, which the public
-    /// iroh relays do not offer. Run this on a machine the diagnosing side
-    /// can reach directly, then probe it from over there.
+    /// iroh relays do not offer. Run this on a machine the machine under
+    /// test can reach directly, then run `diagnostics --nat-probe` on the
+    /// machine under test.
     NatHelper {
         /// Address to bind both helpers to.
         #[clap(long, default_value = "0.0.0.0")]
         bind: std::net::IpAddr,
         /// The two UDP ports to serve on, comma separated. 0 picks a free
         /// port.
-        #[clap(long, value_delimiter = ',', num_args = 1.., default_value = "0,0")]
+        #[clap(long, value_delimiter = ',', default_value = "0,0")]
         ports: Vec<u16>,
     },
     /// Wait for incoming connections and monitor each one live (latency,
@@ -431,12 +432,13 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 .await
         }
         Commands::NatHelper { bind, ports } => {
-            anyhow::ensure!(
-                ports.len() == 2,
-                "--ports takes exactly two comma-separated ports, got {}",
-                ports.len()
-            );
-            commands::nat_helper::nat_helper(bind, (ports[0], ports[1])).await
+            let [port_a, port_b] = ports[..] else {
+                anyhow::bail!(
+                    "--ports takes exactly two comma-separated ports, got {:?}",
+                    ports
+                );
+            };
+            commands::nat_helper::nat_helper(bind, (port_a, port_b)).await
         }
         Commands::Connect {
             dial,
