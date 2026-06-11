@@ -150,6 +150,7 @@ new one).
 | # | Date | Version | Platforms | Notes |
 |---|------|---------|-----------|-------|
 | 1 | 2026-06-10 | 0.1.0 | ios+android | iOS: uploaded to ASC (delivery 52ee7635). Android AAB built, awaiting Play verification |
+| 2 | 2026-06-11 | 0.1.0 | ios | Clipboard fix (UIPasteboard on iOS, commit 0ddd764). Uploaded to ASC (delivery f1c7549f) |
 
-Next upload: `BUILD_NUMBER=2` (never reuse, never decrease; shared counter
+Next upload: `BUILD_NUMBER=3` (never reuse, never decrease; shared counter
 across both stores).
