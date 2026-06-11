@@ -40,6 +40,13 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "t
 # into `os_log`, where they can be collected from the device. See init_logging.
 [target.'cfg(target_os = "ios")'.dependencies]
 tracing-oslog = "0.3"
+# The Copy button writes through UIPasteboard on iOS instead of the JS
+# Clipboard API: when the iOS build runs on an Apple silicon Mac, WebKit's
+# navigator.clipboard.writeText resolves ok but only WebKit's private
+# pasteboard type crosses the UIPasteboard -> NSPasteboard bridge, so every
+# other app sees an empty clipboard. See copy_to_clipboard in src/main.rs.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "UIPasteboard"] }
 
 [features]
 default = ["desktop"]

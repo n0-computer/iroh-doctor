@@ -4050,6 +4050,8 @@ dependencies = [
  "iroh-gossip",
  "iroh-services",
  "n0-future",
+ "objc2-foundation",
+ "objc2-ui-kit",
  "rfd 0.15.4",
  "rustls",
  "serde",
