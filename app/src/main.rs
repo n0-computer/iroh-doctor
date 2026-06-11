@@ -4,6 +4,8 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use tokio::sync::{mpsc, watch};
 
+#[cfg(target_os = "android")]
+mod android;
 mod components;
 mod diagnostics_export;
 mod endpoints;
@@ -104,11 +106,26 @@ fn init_logging(
     #[cfg(not(target_os = "ios"))]
     let oslog_layer: Option<tracing_subscriber::layer::Identity> = None;
 
+    // On Android stdout goes to /dev/null, so the fmt stdout layer above is
+    // invisible. Mirror it into logcat (tag `iroh-doctor-app`), where
+    // `adb logcat -s iroh-doctor-app` and `dx`'s log stream pick it up.
+    #[cfg(target_os = "android")]
+    let logcat_layer = Some(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(paranoid_android::AndroidLogMakeWriter::new(
+                "iroh-doctor-app".to_owned(),
+            )),
+    );
+    #[cfg(not(target_os = "android"))]
+    let logcat_layer: Option<tracing_subscriber::layer::Identity> = None;
+
     tracing_subscriber::registry()
         .with(env_filter)
         .with(stdout_layer)
         .with(file_layer)
         .with(oslog_layer)
+        .with(logcat_layer)
         .init();
     guard
 }
@@ -760,8 +777,24 @@ fn ConnectBar(
                     value: "{input_value}",
                     autocapitalize: "off",
                     autocorrect: "off",
+                    autocomplete: "off",
                     spellcheck: "false",
                     oninput: move |evt| { peer_id_input.clone().set(evt.value()); },
+                }
+                button {
+                    class: "btn",
+                    onclick: move |_| {
+                        let mut peer = peer_id_input;
+                        spawn(async move {
+                            if let Some(text) = read_clipboard().await {
+                                let text = text.trim();
+                                if !text.is_empty() {
+                                    peer.set(text.to_string());
+                                }
+                            }
+                        });
+                    },
+                    "Paste"
                 }
                 button {
                     class: "btn btn-primary",
@@ -879,6 +912,29 @@ fn status_kind(state: &ConnectionState) -> &'static str {
         ConnectionState::Connected { .. } => "connected",
         ConnectionState::PeerDisconnected { .. } => "disconnected",
         ConnectionState::Error(_) => "error",
+    }
+}
+
+/// Reads the system clipboard for the Paste button. Android's WebView never
+/// surfaces the long-press paste item, so we read the clipboard natively
+/// there; every other backend's Clipboard API works from JS. `None` when the
+/// clipboard is empty or access is denied.
+async fn read_clipboard() -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        android::clipboard_text()
+    }
+    #[cfg(all(not(target_os = "android"), any(feature = "desktop", feature = "mobile")))]
+    {
+        let mut eval = dioxus::prelude::document::eval(
+            "navigator.clipboard.readText().then(t => dioxus.send(t)).catch(() => dioxus.send(\"\"));",
+        );
+        let text = eval.recv::<String>().await.ok()?;
+        (!text.is_empty()).then_some(text)
+    }
+    #[cfg(all(not(target_os = "android"), not(any(feature = "desktop", feature = "mobile"))))]
+    {
+        None
     }
 }
 

@@ -1,6 +1,6 @@
 //! On-disk persistence for the iroh secret key + the optional API secret override.
 //!
-//! Stored under `dirs::config_dir()/iroh-doctor-app/`:
+//! Stored under `<config base>/iroh-doctor-app/` (see `config_base`):
 //! - `secret_key.bin` - 32 bytes, generated on first run.
 //! - `api_secret.txt` - optional iroh-services key; missing or empty = telemetry off.
 //!
@@ -15,19 +15,31 @@ use anyhow::{Context, Result};
 use iroh::SecretKey;
 use iroh_doctor_core::identity::{persist_secret_key, read_secret_key};
 
-/// The app's config directory, `dirs::config_dir()/iroh-doctor-app`. The
-/// single source of truth for where the app's small state files live; other
-/// modules (`first_run`, the log setup in `main`) build on it.
+/// The app's config directory, `<config base>/iroh-doctor-app`. The single
+/// source of truth for where the app's small state files live; other modules
+/// (`first_run`, the log setup in `main`) build on it.
 pub(crate) fn config_dir() -> Result<PathBuf> {
-    let base = dirs::config_dir().context("no config dir on this platform")?;
-    Ok(base.join("iroh-doctor-app"))
+    Ok(config_base()?.join("iroh-doctor-app"))
 }
 
 /// Pre-rename config directory (`iroh-pong`). Read as a fallback so an
 /// upgrade preserves the existing identity and settings.
 pub(crate) fn legacy_config_dir() -> Result<PathBuf> {
-    let base = dirs::config_dir().context("no config dir on this platform")?;
-    Ok(base.join("iroh-pong"))
+    Ok(config_base()?.join("iroh-pong"))
+}
+
+/// Platform config root the two helpers above build on. Desktop and iOS get a
+/// usable home from `dirs`; Android has no XDG home (so `dirs::config_dir()`
+/// returns `None`), so we read the app's private files dir off the Android
+/// `Context` over JNI instead.
+#[cfg(not(target_os = "android"))]
+fn config_base() -> Result<PathBuf> {
+    dirs::config_dir().context("no config dir on this platform")
+}
+
+#[cfg(target_os = "android")]
+fn config_base() -> Result<PathBuf> {
+    crate::android::files_dir()
 }
 
 fn secret_key_path() -> Result<PathBuf> {

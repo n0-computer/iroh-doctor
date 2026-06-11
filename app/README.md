@@ -82,6 +82,55 @@ RUST_LOG=info,iroh_doctor_app=debug dx serve --platform desktop
 (The binary calls `tracing_subscriber::fmt().with_env_filter(...).init()`
 with the same fallback filter when `RUST_LOG` is unset.)
 
+### Android
+
+Install the SDK (with platform-tools + emulator), an NDK, and a JDK
+(Android Studio bundles a suitable one as `jbr`). Export, adjusting the
+NDK version and `JAVA_HOME` to your install:
+
+```sh
+export ANDROID_SDK_ROOT=$ANDROID_HOME
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.12674087
+export NDK_HOME=$ANDROID_NDK_HOME
+export JAVA_HOME=/opt/android-studio/jbr
+export PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$PATH
+```
+
+Then:
+
+```sh
+dx serve --platform android
+```
+
+`dx` shells out to `adb` without `-s`, so if you have more than one
+device attached (e.g. a physical phone *and* an emulator) it fails with
+`adb: more than one device/emulator`. `adb` honours `ANDROID_SERIAL`, so
+pick the target by serial (from `adb devices`):
+
+```sh
+ANDROID_SERIAL=<serial> dx serve --platform android
+```
+
+Unlike desktop/iOS, Android has no XDG home and `dirs::config_dir()`
+returns `None`, so the app reads its private files dir off the Android
+`Context` over JNI (see `identity::config_base`). State lives under that
+dir's `iroh-doctor-app/` rather than a user-visible config path.
+
+#### Logs
+
+An Android app's stdout/stderr goes to `/dev/null`, so the fmt stdout
+layer is invisible there. The tracing subscriber instead writes to logcat
+under the tag `iroh-doctor-app` (see `init_logging`). `dx serve` streams
+logcat, so the logs show up in the terminal you ran it from. To watch them
+directly:
+
+```sh
+adb logcat -s iroh-doctor-app
+```
+
+(add `ANDROID_SERIAL=<serial>` if more than one device is attached). The
+default filter is `info,iroh_doctor_app=debug`.
+
 ## Project layout
 
 ```

@@ -41,6 +41,17 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "t
 [target.'cfg(target_os = "ios")'.dependencies]
 tracing-oslog = "0.3"
 
+# Android has no XDG home, so dirs::config_dir() returns None. We pull the app's
+# files dir off the Android Context over JNI instead (see identity::config_dir).
+# Versions match the ones tao/wry already pull in, so nothing extra is built.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+# An app's stdout/stderr is sent to /dev/null on Android, so the fmt stdout
+# layer is invisible. paranoid-android is a tracing MakeWriter that writes to
+# logcat instead, where `adb logcat` / `dx` can see it. See init_logging.
+paranoid-android = "0.2"
+
 [features]
 default = ["desktop"]
 web = ["dioxus/web"]
