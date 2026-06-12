@@ -10,7 +10,6 @@ mod endpoints;
 mod first_run;
 mod identity;
 mod node;
-mod portmap_probe;
 mod telemetry_pref;
 
 use std::time::{Duration, Instant};
@@ -130,8 +129,6 @@ fn App() -> Element {
     let net_state: Signal<DiagState<DiagnosticsReport>> = use_signal(|| DiagState::Idle);
     let net_report_state: Signal<DiagState<NetReportSummary>> = use_signal(|| DiagState::Idle);
     let relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>> =
-        use_signal(|| DiagState::Idle);
-    let portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>> =
         use_signal(|| DiagState::Idle);
     let paths: Signal<Vec<PathInfo>> = use_signal(Vec::new);
     let ttfdb: Signal<Option<Duration>> = use_signal(|| None);
@@ -290,7 +287,6 @@ fn App() -> Element {
             }
             components::trigger_probe_net_report(cmd_handle, net_report_state);
             components::trigger_probe_relays(cmd_handle, relays_state);
-            components::trigger_probe_portmap(cmd_handle, portmap_state);
         }
     });
 
@@ -313,7 +309,6 @@ fn App() -> Element {
                 }
                 components::trigger_probe_net_report(cmd_handle, net_report_state);
                 components::trigger_probe_relays(cmd_handle, relays_state);
-                components::trigger_probe_portmap(cmd_handle, portmap_state);
             }
         });
     }
@@ -352,11 +347,6 @@ fn App() -> Element {
             error_sink.set(Some(AppError::new("relay latency probe", msg)));
         }
     });
-    use_effect(move || {
-        if let DiagState::Err(msg) = portmap_state() {
-            error_sink.set(Some(AppError::new("portmap probe", msg)));
-        }
-    });
     let tab = current_tab();
     let status = status_line(&conn_state());
     let status_kind = status_kind(&conn_state());
@@ -384,7 +374,6 @@ fn App() -> Element {
                             cmd_handle,
                             telemetry,
                             services_ping_state, net_state, net_report_state, relays_state,
-                            portmap_state,
                         }
                     },
                     Tab::Gossip => rsx! {
@@ -421,7 +410,6 @@ fn App() -> Element {
                         rtt_history,
                         event_log,
                         net_report_state,
-                        portmap_state,
                         relays_state,
                         ttfdb,
                         throughput,
@@ -483,7 +471,6 @@ fn handle_send_diagnostics(
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
-    portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
     relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>>,
     ttfdb: Signal<Option<Duration>>,
     throughput: Signal<Option<node::ThroughputSnapshot>>,
@@ -492,7 +479,6 @@ fn handle_send_diagnostics(
 ) {
     use anyhow::Context as _;
     let (net_report, _) = diagnostics_export::Snapshot::extract_diag_state(&net_report_state());
-    let (portmap, portmap_err) = diagnostics_export::Snapshot::extract_diag_state(&portmap_state());
     let (relays, relays_err) = diagnostics_export::Snapshot::extract_diag_state(&relays_state());
 
     let snapshot = diagnostics_export::Snapshot {
@@ -503,8 +489,6 @@ fn handle_send_diagnostics(
         rtt_history: rtt_history(),
         events: event_log(),
         net_report,
-        portmap,
-        portmap_err,
         relays: relays.unwrap_or_default(),
         relays_err,
         ttfdb: ttfdb(),
@@ -656,7 +640,6 @@ fn DiagnosticsPage(
     net_state: Signal<DiagState<DiagnosticsReport>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
     relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>>,
-    portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
 ) -> Element {
     rsx! {
         div { class: "page",
@@ -668,7 +651,6 @@ fn DiagnosticsPage(
                 net_state,
                 net_report_state,
                 relays_state,
-                portmap_state,
             }
         }
     }

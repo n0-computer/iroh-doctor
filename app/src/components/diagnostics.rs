@@ -1,6 +1,6 @@
 //! The Diagnostics tab: the local network environment, independent of any
-//! peer. Renders the net_report/NAT summary, the direct port-map probe, the
-//! per-relay latency panel, and the iroh-services diagnostics.
+//! peer. Renders the net_report/NAT summary, the per-relay latency panel,
+//! and the iroh-services diagnostics.
 
 use std::time::Duration;
 
@@ -10,20 +10,20 @@ use iroh_doctor_core::report::RelayLatencyRow;
 
 use crate::identity;
 use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand, TelemetryState};
-use crate::portmap_probe::PortMapProbeResult;
 use crate::telemetry_pref;
 use crate::NodeHandle;
 
 use super::diag_state::{
-    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
-    trigger_probe_relays, DiagState,
+    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_relays,
+    DiagState,
 };
 
 /// The network-environment report: a local net_report with a NAT
-/// classification, the direct port-map probe, per-relay latency, and the
-/// iroh-services diagnostics. These probe the local endpoint, the relays, and
-/// iroh-services rather than the connected peer, so they stay available even
-/// when disconnected (the same picture `iroh-doctor diagnostics` prints).
+/// classification, per-relay latency, and the iroh-services diagnostics
+/// (which include the UPnP/PCP/NAT-PMP gateway picture). These probe the
+/// local endpoint, the relays, and iroh-services rather than the connected
+/// peer, so they stay available even when disconnected (the same picture
+/// `iroh-doctor diagnostics` prints).
 #[component]
 pub fn DiagnosticsView(
     cmd_handle: Signal<Option<NodeHandle>>,
@@ -32,13 +32,11 @@ pub fn DiagnosticsView(
     net_state: Signal<DiagState<DiagnosticsReport>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
     relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
-    portmap_state: Signal<DiagState<PortMapProbeResult>>,
 ) -> Element {
     let busy = matches!(services_state(), DiagState::Running)
         || matches!(net_state(), DiagState::Running)
         || matches!(net_report_state(), DiagState::Running)
-        || matches!(relays_state(), DiagState::Running)
-        || matches!(portmap_state(), DiagState::Running);
+        || matches!(relays_state(), DiagState::Running);
 
     rsx! {
         div { class: "diagnostics",
@@ -53,20 +51,12 @@ pub fn DiagnosticsView(
                             trigger_net_diagnostics(cmd_handle, net_state);
                             trigger_probe_net_report(cmd_handle, net_report_state);
                             trigger_probe_relays(cmd_handle, relays_state);
-                            trigger_probe_portmap(cmd_handle, portmap_state);
                         },
                         "Refresh"
                     }
                 }
                 dl { class: "diag-table",
                     {render_net_report_rows(&net_report_state())}
-                }
-            }
-
-            section { class: "settings-section",
-                label { class: "label", "Direct port-map probe" }
-                dl { class: "diag-table",
-                    {render_portmap_rows(&portmap_state())}
                 }
             }
 
@@ -389,41 +379,6 @@ fn render_relay_rows(state: &DiagState<Vec<RelayLatencyRow>>) -> Element {
                     }
                 }
             }
-        }
-    }
-}
-
-fn render_portmap_rows(state: &DiagState<PortMapProbeResult>) -> Element {
-    match state {
-        DiagState::Idle => rsx! {
-            dt { "status" }
-            dd { class: "diag-idle", "not probed yet" }
-        },
-        DiagState::Running => rsx! {
-            dt { "status" }
-            dd { class: "diag-running", "probing..." }
-        },
-        DiagState::Err(e) => rsx! {
-            dt { "status" }
-            dd { class: "diag-err", "error: {e}" }
-        },
-        DiagState::Ok(r) => {
-            let mut rows = rsx! {
-                dt { "UPnP" }
-                dd { "{tribool(r.upnp)}" }
-                dt { "PCP" }
-                dd { "{tribool(r.pcp)}" }
-                dt { "NAT-PMP" }
-                dd { "{tribool(r.nat_pmp)}" }
-            };
-            if let Some(err) = &r.error {
-                rows = rsx! {
-                    {rows}
-                    dt { "warning" }
-                    dd { class: "diag-err", "{err}" }
-                };
-            }
-            rows
         }
     }
 }

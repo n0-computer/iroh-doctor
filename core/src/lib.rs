@@ -16,7 +16,6 @@
 //!   throughput against a peer.
 //! - [`report`]: UI-facing projections of `iroh::NetReport` (per-relay
 //!   latency rows).
-//! - [`portmap`]: a one-shot UPnP/PCP/NAT-PMP gateway probe.
 //! - [`services`]: iroh-services client setup, API-secret resolution, and the
 //!   ping + net_diagnostics queries.
 
@@ -31,7 +30,6 @@ pub const NET_REPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 
 pub mod monitor;
 pub mod nat;
-pub mod portmap;
 pub mod probe;
 pub mod report;
 pub mod services;

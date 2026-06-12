@@ -10,7 +10,6 @@ anyhow = "1"
 iroh = "=1.0.0-rc.1"
 iroh-services = { version = "=1.0.0-rc.1", default-features = false }
 n0-future = "0.3"
-portmapper = "0.18"
 postcard = { version = "1", features = ["experimental-derive"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "rt", "sync", "time"] }

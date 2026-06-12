@@ -8,8 +8,8 @@ mod gossip;
 
 pub use connection::{ConnectView, EventEntry};
 pub use diag_state::{
-    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
-    trigger_probe_relays, DiagState,
+    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_relays,
+    DiagState,
 };
 pub use diagnostics::DiagnosticsView;
 pub use endpoints::EndpointsView;

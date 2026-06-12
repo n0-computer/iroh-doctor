@@ -24,7 +24,6 @@ use iroh_doctor_core::report::RelayLatencyRow;
 use crate::components::{DiagState, EventEntry};
 use crate::endpoints::{self, Endpoint};
 use crate::node::{NetReportSummary, PathInfo, ThroughputSnapshot};
-use crate::portmap_probe::PortMapProbeResult;
 
 /// Everything the export needs, cloned out of the App-level signals at
 /// the moment the user clicks Send diagnostics.
@@ -36,8 +35,6 @@ pub struct Snapshot {
     pub rtt_history: VecDeque<f64>,
     pub events: VecDeque<EventEntry>,
     pub net_report: Option<NetReportSummary>,
-    pub portmap: Option<PortMapProbeResult>,
-    pub portmap_err: Option<String>,
     pub relays: Vec<RelayLatencyRow>,
     pub relays_err: Option<String>,
     pub ttfdb: Option<Duration>,
@@ -87,9 +84,6 @@ pub fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
 
         zip.start_file("net_report.txt", opts)?;
         zip.write_all(net_report_section(snapshot).as_bytes())?;
-
-        zip.start_file("portmap.txt", opts)?;
-        zip.write_all(portmap_section(snapshot).as_bytes())?;
 
         zip.start_file("relays.csv", opts)?;
         zip.write_all(relays_csv(snapshot).as_bytes())?;
@@ -214,23 +208,6 @@ fn net_report_section(s: &Snapshot) -> String {
         r.preferred_relay.as_deref().unwrap_or("(none)"),
     ));
     out.push_str(&format!("relays_seen: {}\n", r.relays_seen));
-    out
-}
-
-fn portmap_section(s: &Snapshot) -> String {
-    if let Some(err) = &s.portmap_err {
-        return format!("error: {err}\n");
-    }
-    let Some(p) = &s.portmap else {
-        return "(portmap probe not run)\n".to_string();
-    };
-    let mut out = String::new();
-    out.push_str(&format!("upnp: {}\n", opt_bool(p.upnp)));
-    out.push_str(&format!("pcp: {}\n", opt_bool(p.pcp)));
-    out.push_str(&format!("nat_pmp: {}\n", opt_bool(p.nat_pmp)));
-    if let Some(err) = &p.error {
-        out.push_str(&format!("warning: {err}\n"));
-    }
     out
 }
 

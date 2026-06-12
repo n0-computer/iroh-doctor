@@ -1,11 +1,11 @@
 //! `iroh-doctor diagnostics` command.
 //!
 //! One command that paints the whole picture of the current network: a NAT
-//! classification on top of iroh's `NetReport`, which port-mapping protocols
-//! (UPnP/PCP/NAT-PMP) the local gateway offers, and the per-relay latencies
-//! iroh recorded while building the report. The default output is a set of
-//! tables; `--json` emits the same data as a single structure for piping
-//! into another tool.
+//! classification on top of iroh's `NetReport`, the per-relay latencies iroh
+//! recorded while building the report, and the iroh-services checks (whose
+//! net_diagnostics covers the UPnP/PCP/NAT-PMP gateway protocols). The
+//! default output is a set of tables; `--json` emits the same data as a
+//! single structure for piping into another tool.
 //!
 //! The report projections and the NAT classifier live in `iroh-doctor-core`
 //! so the app reports the same numbers; this module only orchestrates them
@@ -17,7 +17,6 @@ use serde::Serialize;
 
 use iroh_doctor_core::fmt::{opt_bool, tribool_text};
 use iroh_doctor_core::nat::{classify_net_report, NatType};
-use iroh_doctor_core::portmap::PortMapResult;
 use iroh_doctor_core::report::{relay_latencies, RelayLatencyRow};
 use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
 use iroh_doctor_core::NET_REPORT_TIMEOUT;
@@ -31,7 +30,6 @@ use crate::config::NodeConfig;
 pub struct Report {
     pub net_report: Option<NetReport>,
     pub nat: NatType,
-    pub port_map: Option<PortMapResult>,
     /// Per-relay latencies recorded by iroh while building the net report.
     pub relays: Vec<RelayLatencyRow>,
     /// iroh-services checks (ping + server-side net_diagnostics). `None` when
@@ -48,7 +46,7 @@ pub struct ServicesBlock {
 }
 
 /// Runs every probe and prints the combined report.
-pub async fn diagnostics(config: &NodeConfig, no_port_map: bool, json: bool) -> anyhow::Result<()> {
+pub async fn diagnostics(config: &NodeConfig, json: bool) -> anyhow::Result<()> {
     let relay_map = config.relay_map()?.unwrap_or_else(RelayMap::empty);
 
     let endpoint = Endpoint::builder(presets::N0)
@@ -58,12 +56,12 @@ pub async fn diagnostics(config: &NodeConfig, no_port_map: bool, json: bool) -> 
 
     // Run the actual work inside a helper so endpoint.close() always runs
     // even if one of the steps returns Err.
-    let result = report_inner(&endpoint, no_port_map, json).await;
+    let result = report_inner(&endpoint, json).await;
     endpoint.close().await;
     result
 }
 
-async fn report_inner(endpoint: &Endpoint, no_port_map: bool, json: bool) -> anyhow::Result<()> {
+async fn report_inner(endpoint: &Endpoint, json: bool) -> anyhow::Result<()> {
     // Wait for the first non-empty report with a hard ceiling. The reporter
     // streams updates indefinitely; without a timeout the command would hang
     // on a network with no DNS or no reachable STUN.
@@ -76,24 +74,11 @@ async fn report_inner(endpoint: &Endpoint, no_port_map: bool, json: bool) -> any
     // no separate sweep needed.
     let relays = relay_latencies(&net_report);
 
-    // The gateway probe and the services checks are independent; run them
-    // concurrently so a degraded network costs the slower stage's timeout
-    // rather than the sum of both.
-    let (port_map, services) = tokio::join!(
-        async {
-            if no_port_map {
-                None
-            } else {
-                Some(iroh_doctor_core::portmap::probe().await)
-            }
-        },
-        run_services(endpoint),
-    );
+    let services = run_services(endpoint).await;
 
     let report = Report {
         net_report: Some(net_report),
         nat,
-        port_map,
         relays,
         services,
     };
@@ -170,20 +155,6 @@ fn print_tables(r: &Report) {
     print!("{}", markdown_table(&["Property", "Value"], &summary));
     println!("{} - {}", r.nat, r.nat.description());
     println!();
-
-    if let Some(pm) = &r.port_map {
-        let rows = vec![
-            kv("UPnP", tribool_text(pm.upnp)),
-            kv("PCP", tribool_text(pm.pcp)),
-            kv("NAT-PMP", tribool_text(pm.nat_pmp)),
-        ];
-        println!("Port mapping");
-        print!("{}", markdown_table(&["Protocol", "Available"], &rows));
-        if let Some(err) = &pm.error {
-            println!("warning: {err}");
-        }
-        println!();
-    }
 
     if !r.relays.is_empty() {
         let rows: Vec<Vec<String>> = r

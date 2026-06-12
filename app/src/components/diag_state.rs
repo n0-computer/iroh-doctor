@@ -10,7 +10,6 @@ use tokio::sync::oneshot;
 use iroh_doctor_core::report::RelayLatencyRow;
 
 use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand};
-use crate::portmap_probe::PortMapProbeResult;
 use crate::NodeHandle;
 
 #[derive(Clone)]
@@ -66,18 +65,6 @@ pub fn trigger_probe_relays(
     spawn(async move {
         let result = run_probe_relays(handle).await;
         relays_state.set(into_state(result));
-    });
-}
-
-pub fn trigger_probe_portmap(
-    cmd_handle: Signal<Option<NodeHandle>>,
-    mut portmap_state: Signal<DiagState<PortMapProbeResult>>,
-) {
-    portmap_state.set(DiagState::Running);
-    let handle = cmd_handle.read().clone();
-    spawn(async move {
-        let result = run_probe_portmap(handle).await;
-        portmap_state.set(into_state(result));
     });
 }
 
@@ -137,20 +124,6 @@ async fn run_probe_relays(handle: Option<NodeHandle>) -> Result<Vec<RelayLatency
     let (tx, rx) = oneshot::channel();
     if h.tx
         .try_send(NodeCommand::ProbeRelayLatencies { reply: tx })
-        .is_err()
-    {
-        return Err("queue full".into());
-    }
-    rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
-}
-
-async fn run_probe_portmap(handle: Option<NodeHandle>) -> Result<PortMapProbeResult, String> {
-    let Some(h) = handle else {
-        return Err("not ready".into());
-    };
-    let (tx, rx) = oneshot::channel();
-    if h.tx
-        .try_send(NodeCommand::ProbePortMap { reply: tx })
         .is_err()
     {
         return Err("queue full".into());

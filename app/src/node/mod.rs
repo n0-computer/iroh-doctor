@@ -92,12 +92,6 @@ pub enum NodeCommand {
     ProbeRelayLatencies {
         reply: oneshot::Sender<Result<Vec<iroh_doctor_core::report::RelayLatencyRow>, String>>,
     },
-    /// Probes the local gateway directly for UPnP, PCP, and NAT-PMP
-    /// support. Reports the same tri-state booleans as the services-
-    /// based net diagnostics, but without involving the services API.
-    ProbePortMap {
-        reply: oneshot::Sender<Result<crate::portmap_probe::PortMapProbeResult, String>>,
-    },
     /// Joins an iroh-gossip topic. `topic_input` is parsed as 64-hex if it
     /// matches that shape, otherwise hashed with BLAKE3 so any string
     /// becomes a deterministic topic. Any previously joined topic is
@@ -586,15 +580,6 @@ pub async fn run_node(
                         )),
                     };
                     let _ = reply.send(result);
-                });
-            }
-            NodeCommand::ProbePortMap { reply } => {
-                // Direct port-mapping probe. The portmapper crate spawns
-                // background gateway calls; we bound the whole thing with
-                // a timeout inside `probe()`.
-                tokio::spawn(async move {
-                    let result = crate::portmap_probe::probe().await;
-                    let _ = reply.send(Ok(result));
                 });
             }
             NodeCommand::JoinGossip {
