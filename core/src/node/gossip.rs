@@ -21,14 +21,39 @@ pub enum GossipEvent {
     Lagged,
 }
 
-#[instrument(
-    skip(gossip, recv_handle, sender_slot, events_tx, bootstrap),
-    fields(topic_input)
-)]
+/// The node's gossip membership: at most one joined topic at a time.
+/// [`join_gossip`] tears the previous session down before installing the
+/// next; broadcasting reads the current sender.
+#[derive(Debug, Default)]
+pub(crate) struct GossipSession {
+    /// Receiver task forwarding topic events to the front end.
+    recv_task: Option<JoinHandle<()>>,
+    /// Sender for the joined topic.
+    sender: Option<iroh_gossip::api::GossipSender>,
+}
+
+impl GossipSession {
+    /// The current topic's sender, if a topic is joined.
+    pub(crate) async fn sender(
+        session: &Arc<Mutex<Self>>,
+    ) -> Option<iroh_gossip::api::GossipSender> {
+        session.lock().await.sender.clone()
+    }
+
+    /// Aborts the receiver task and drops the sender.
+    async fn clear(session: &Arc<Mutex<Self>>) {
+        let mut s = session.lock().await;
+        if let Some(prev) = s.recv_task.take() {
+            prev.abort();
+        }
+        s.sender.take();
+    }
+}
+
+#[instrument(skip(gossip, session, events_tx, bootstrap), fields(topic_input))]
 pub(crate) async fn join_gossip(
     gossip: Gossip,
-    recv_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    sender_slot: Arc<Mutex<Option<iroh_gossip::api::GossipSender>>>,
+    session: Arc<Mutex<GossipSession>>,
     topic_input: String,
     bootstrap: Vec<String>,
     events_tx: mpsc::Sender<GossipEvent>,
@@ -48,28 +73,18 @@ pub(crate) async fn join_gossip(
         bootstrap_ids.push(id);
     }
 
-    {
-        let mut h = recv_handle.lock().await;
-        if let Some(prev) = h.take() {
-            prev.abort();
-        }
-    }
-    {
-        let mut s = sender_slot.lock().await;
-        s.take();
-    }
+    // Tear the previous session down first, and do not hold the lock over
+    // the join: a slow join must not block a concurrent broadcast attempt
+    // (which fails cleanly with "not joined" in that window).
+    GossipSession::clear(&session).await;
 
     let topic = gossip
         .subscribe_and_join(topic_id, bootstrap_ids)
         .await
         .map_err(|e| format!("subscribe_and_join: {e:#}"))?;
     let (sender, mut receiver) = topic.split();
-    {
-        let mut s = sender_slot.lock().await;
-        *s = Some(sender);
-    }
 
-    let handle = tokio::spawn(async move {
+    let recv_task = tokio::spawn(async move {
         while let Some(item) = receiver.next().await {
             use iroh_gossip::api::Event;
             let event = match item {
@@ -98,8 +113,9 @@ pub(crate) async fn join_gossip(
         }
     });
 
-    let mut h = recv_handle.lock().await;
-    *h = Some(handle);
+    let mut s = session.lock().await;
+    s.recv_task = Some(recv_task);
+    s.sender = Some(sender);
 
     Ok(topic_id.to_string())
 }

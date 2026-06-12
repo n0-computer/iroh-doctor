@@ -22,110 +22,67 @@ pub enum DiagState<T: Clone + 'static> {
 
 pub fn trigger_pings(
     cmd_handle: Signal<Option<NodeHandle>>,
-    mut services_state: Signal<DiagState<Duration>>,
+    services_state: Signal<DiagState<Duration>>,
 ) {
-    services_state.set(DiagState::Running);
-    let handle = cmd_handle.read().clone();
-    spawn(async move {
-        let result = run_ping_services(handle).await;
-        services_state.set(into_state(result));
+    trigger(cmd_handle, services_state, |reply| {
+        NodeCommand::PingServices { reply }
     });
 }
 
 pub fn trigger_net_diagnostics(
     cmd_handle: Signal<Option<NodeHandle>>,
-    mut net_state: Signal<DiagState<DiagnosticsReport>>,
+    net_state: Signal<DiagState<DiagnosticsReport>>,
 ) {
-    net_state.set(DiagState::Running);
-    let handle = cmd_handle.read().clone();
-    spawn(async move {
-        let result = run_net(handle).await;
-        net_state.set(into_state(result));
+    trigger(cmd_handle, net_state, |reply| {
+        NodeCommand::RunNetDiagnostics { reply }
     });
 }
 
 pub fn trigger_probe_net_report(
     cmd_handle: Signal<Option<NodeHandle>>,
-    mut net_report_state: Signal<DiagState<NetReportSummary>>,
+    net_report_state: Signal<DiagState<NetReportSummary>>,
 ) {
-    net_report_state.set(DiagState::Running);
-    let handle = cmd_handle.read().clone();
-    spawn(async move {
-        let result = run_probe_net_report(handle).await;
-        net_report_state.set(into_state(result));
+    trigger(cmd_handle, net_report_state, |reply| {
+        NodeCommand::ProbeNetReport { reply }
     });
 }
 
 pub fn trigger_probe_relays(
     cmd_handle: Signal<Option<NodeHandle>>,
-    mut relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
+    relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
 ) {
-    relays_state.set(DiagState::Running);
-    let handle = cmd_handle.read().clone();
-    spawn(async move {
-        let result = run_probe_relays(handle).await;
-        relays_state.set(into_state(result));
+    trigger(cmd_handle, relays_state, |reply| {
+        NodeCommand::ProbeRelayLatencies { reply }
     });
 }
 
-fn into_state<T: Clone + 'static>(r: Result<T, String>) -> DiagState<T> {
-    match r {
-        Ok(v) => DiagState::Ok(v),
-        Err(e) => DiagState::Err(e),
-    }
+/// Marks `state` running, sends the command built by `make_cmd`, and folds
+/// the reply (or the failure to deliver it) back into `state`.
+fn trigger<T: Clone + 'static>(
+    cmd_handle: Signal<Option<NodeHandle>>,
+    mut state: Signal<DiagState<T>>,
+    make_cmd: impl FnOnce(oneshot::Sender<Result<T, String>>) -> NodeCommand + 'static,
+) {
+    state.set(DiagState::Running);
+    let handle = cmd_handle.read().clone();
+    spawn(async move {
+        let result = request(handle, make_cmd).await;
+        state.set(match result {
+            Ok(v) => DiagState::Ok(v),
+            Err(e) => DiagState::Err(e),
+        });
+    });
 }
 
-async fn run_ping_services(handle: Option<NodeHandle>) -> Result<Duration, String> {
+async fn request<T>(
+    handle: Option<NodeHandle>,
+    make_cmd: impl FnOnce(oneshot::Sender<Result<T, String>>) -> NodeCommand,
+) -> Result<T, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
-    if h.tx
-        .try_send(NodeCommand::PingServices { reply: tx })
-        .is_err()
-    {
-        return Err("queue full".into());
-    }
-    rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
-}
-
-async fn run_net(handle: Option<NodeHandle>) -> Result<DiagnosticsReport, String> {
-    let Some(h) = handle else {
-        return Err("not ready".into());
-    };
-    let (tx, rx) = oneshot::channel();
-    if h.tx
-        .try_send(NodeCommand::RunNetDiagnostics { reply: tx })
-        .is_err()
-    {
-        return Err("queue full".into());
-    }
-    rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
-}
-
-async fn run_probe_net_report(handle: Option<NodeHandle>) -> Result<NetReportSummary, String> {
-    let Some(h) = handle else {
-        return Err("not ready".into());
-    };
-    let (tx, rx) = oneshot::channel();
-    if h.tx
-        .try_send(NodeCommand::ProbeNetReport { reply: tx })
-        .is_err()
-    {
-        return Err("queue full".into());
-    }
-    rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
-}
-
-async fn run_probe_relays(handle: Option<NodeHandle>) -> Result<Vec<RelayLatencyRow>, String> {
-    let Some(h) = handle else {
-        return Err("not ready".into());
-    };
-    let (tx, rx) = oneshot::channel();
-    if h.tx
-        .try_send(NodeCommand::ProbeRelayLatencies { reply: tx })
-        .is_err()
-    {
+    if h.tx.try_send(make_cmd(tx)).is_err() {
         return Err("queue full".into());
     }
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))

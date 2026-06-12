@@ -18,6 +18,30 @@ use super::diag_state::{
     DiagState,
 };
 
+#[component]
+pub fn DiagnosticsPage(
+    cmd_handle: Signal<Option<NodeHandle>>,
+    telemetry: Signal<TelemetryState>,
+    services_ping_state: Signal<DiagState<Duration>>,
+    net_state: Signal<DiagState<DiagnosticsReport>>,
+    net_report_state: Signal<DiagState<NetReportSummary>>,
+    relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
+) -> Element {
+    rsx! {
+        div { class: "page",
+            h2 { class: "page-title", "Diagnostics" }
+            DiagnosticsView {
+                cmd_handle,
+                telemetry,
+                services_state: services_ping_state,
+                net_state,
+                net_report_state,
+                relays_state,
+            }
+        }
+    }
+}
+
 /// The network-environment report: a local net_report with a NAT
 /// classification, per-relay latency, and the iroh-services diagnostics
 /// (which include the UPnP/PCP/NAT-PMP gateway picture). These probe the
@@ -25,7 +49,7 @@ use super::diag_state::{
 /// peer, so they stay available even when disconnected (the same picture
 /// `iroh-doctor diagnostics` prints).
 #[component]
-pub fn DiagnosticsView(
+fn DiagnosticsView(
     cmd_handle: Signal<Option<NodeHandle>>,
     telemetry: Signal<TelemetryState>,
     services_state: Signal<DiagState<Duration>>,

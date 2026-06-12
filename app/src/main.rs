@@ -1,21 +1,29 @@
+//! App entry point: owns the top-level Dioxus state and the bridge that
+//! folds the headless node's event stream into it. Everything else lives
+//! in focused modules: the UI in [`components`], the export bundle in
+//! [`diagnostics_export`], platform glue in [`clipboard`] and [`logging`],
+//! and the node itself in `iroh_doctor_core::node` (re-exported as
+//! [`node`]).
+
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use tokio::sync::mpsc;
 
+mod clipboard;
 mod components;
 mod diagnostics_export;
 mod endpoints;
 mod first_run;
 mod identity;
+mod logging;
 mod node;
 mod telemetry_pref;
 
-use std::time::{Duration, Instant};
-
 use components::{
-    AppError, ConnectView, DiagState, DiagnosticsView, EndpointsView, ErrorDialog, EventEntry,
-    FirstRunNote, GossipView,
+    status_kind, status_line, AppError, ConnectPage, DiagState, DiagnosticsPage, ErrorDialog,
+    EventEntry, GossipView, Nav, Tab,
 };
 use node::{
     ConnectionState, DiagnosticsReport, NetReportSummary, NodeCommand, NodeEvent, PathSnapshot,
@@ -33,86 +41,17 @@ const MAIN_CSS: Asset = asset!("/assets/styling/main.css");
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 
 fn main() {
-    let log_dir = log_dir();
-    let _log_guard = init_logging(log_dir.as_ref());
+    let log_dir = logging::log_dir();
+    let _log_guard = logging::init(log_dir.as_ref());
 
     dioxus::launch(App);
 }
 
-/// Returns the directory we write rolling log files to. `None` when no
-/// config dir is available on the platform; the app then logs only to
-/// stdout.
-fn log_dir() -> Option<std::path::PathBuf> {
-    let dir = identity::config_dir().ok()?.join("logs");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir)
-}
-
-/// Sets up stdout + (optional) daily rolling file logging. Returns the
-/// `WorkerGuard` for the file writer; dropping it would stop flushing
-/// log lines, so `main()` keeps it bound for the program lifetime.
-fn init_logging(
-    log_dir: Option<&std::path::PathBuf>,
-) -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info,iroh_doctor_app=debug".into());
-
-    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
-
-    let (file_layer, guard) = match log_dir {
-        Some(dir) => {
-            let file_appender = tracing_appender::rolling::daily(dir, "iroh-doctor-app.log");
-            let (writer, guard) = tracing_appender::non_blocking(file_appender);
-            (
-                Some(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(writer)
-                        .with_ansi(false),
-                ),
-                Some(guard),
-            )
-        }
-        None => (None, None),
-    };
-
-    // On iOS, stdout is dropped (GUI apps aren't attached to a terminal) and
-    // the rolling file lives inside the app sandbox, so neither layer above is
-    // visible to `log stream` / Console.app / Xcode. Forward tracing into
-    // `os_log` so iroh's logs (discovery publish, relay, magicsock, ...) land
-    // in the iOS unified log, filterable by `subsystem:com.number0.iroh-doctor-app`.
-    // `Option<L>` implements `Layer`, so the non-iOS no-op (`None`) keeps the
-    // registry type identical across targets.
-    #[cfg(target_os = "ios")]
-    let oslog_layer = Some(tracing_oslog::OsLogger::new(
-        "com.number0.iroh-doctor-app",
-        "default",
-    ));
-    #[cfg(not(target_os = "ios"))]
-    let oslog_layer: Option<tracing_subscriber::layer::Identity> = None;
-
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(stdout_layer)
-        .with(file_layer)
-        .with(oslog_layer)
-        .init();
-    guard
-}
-
+/// Sender half of the node's command channel, shared with every component
+/// that fires a [`NodeCommand`].
 #[derive(Clone)]
 pub struct NodeHandle {
     pub tx: mpsc::Sender<NodeCommand>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tab {
-    Connect,
-    Diagnostics,
-    Gossip,
-    Endpoints,
 }
 
 #[component]
@@ -150,6 +89,8 @@ fn App() -> Element {
     let app_error: Signal<Option<AppError>> = use_signal(|| None);
     use_context_provider(|| app_error);
 
+    // The node bridge: spawn the headless node, then fold its event
+    // stream into the signals above for as long as the app lives.
     use_future(move || async move {
         let secret_key = match identity::load_or_create_secret_key() {
             Ok(k) => k,
@@ -173,7 +114,6 @@ fn App() -> Element {
             let _ = node::run_node(options, cmd_rx, event_tx).await;
         });
 
-        // Fold the node's event stream into the Dioxus signals.
         while let Some(event) = event_rx.recv().await {
             match event {
                 NodeEvent::EndpointId(id) => endpoint_id.clone().set(id),
@@ -272,6 +212,7 @@ fn App() -> Element {
             error_sink.set(Some(AppError::new("relay latency probe", msg)));
         }
     });
+
     let tab = current_tab();
     let status = status_line(&conn_state());
     let status_kind = status_kind(&conn_state());
@@ -310,7 +251,7 @@ fn App() -> Element {
                     Tab::Endpoints => rsx! {
                         div { class: "page",
                             h2 { class: "page-title", "Endpoints" }
-                            EndpointsView {
+                            components::EndpointsView {
                                 cmd_handle,
                                 endpoints: endpoints_list,
                                 on_change: move |next: Vec<endpoints::Endpoint>| save_endpoints(endpoints_list, next),
@@ -327,7 +268,7 @@ fn App() -> Element {
             ErrorDialog {
                 error: app_error,
                 on_send_diagnostics: move |err: AppError| {
-                    handle_send_diagnostics(
+                    diagnostics_export::send(
                         err,
                         endpoint_id,
                         conn_state,
@@ -385,304 +326,6 @@ fn explain_connect_error(msg: &str) -> String {
     }
 }
 
-/// Glue: snapshot every relevant App-level signal, build the zip, and
-/// hand it off to the platform save dialog.
-#[allow(clippy::too_many_arguments)]
-fn handle_send_diagnostics(
-    err: AppError,
-    endpoint_id: Signal<String>,
-    conn_state: Signal<ConnectionState>,
-    paths: Signal<Vec<PathSnapshot>>,
-    rtt_history: Signal<VecDeque<f64>>,
-    event_log: Signal<VecDeque<EventEntry>>,
-    net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>>,
-    ttfdb: Signal<Option<Duration>>,
-    throughput: Signal<Option<node::ThroughputSnapshot>>,
-    endpoints_list: Signal<Vec<endpoints::Endpoint>>,
-    mut error_sink: Signal<Option<AppError>>,
-) {
-    use anyhow::Context as _;
-    let (net_report, _) = diagnostics_export::Snapshot::extract_diag_state(&net_report_state());
-    let (relays, relays_err) = diagnostics_export::Snapshot::extract_diag_state(&relays_state());
-
-    let snapshot = diagnostics_export::Snapshot {
-        error_message: format!("[{}] {}", err.source, err.message),
-        endpoint_id: endpoint_id(),
-        conn_state_label: short_event_label(&conn_state()),
-        paths: paths(),
-        rtt_history: rtt_history(),
-        events: event_log(),
-        net_report,
-        relays: relays.unwrap_or_default(),
-        relays_err,
-        ttfdb: ttfdb(),
-        throughput: throughput(),
-        endpoints: endpoints_list(),
-        log_dir: log_dir(),
-    };
-    spawn(async move {
-        let result = async {
-            let bytes =
-                diagnostics_export::build_zip(&snapshot).context("building diagnostics zip")?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let filename = format!("iroh-doctor-app-diagnostics-{now}.zip");
-            save_diagnostics_zip(&filename, &bytes).await
-        }
-        .await;
-        if let Err(e) = result {
-            let msg = format!("{e:#}");
-            tracing::error!(err = %msg, "diagnostics export failed");
-            error_sink.set(Some(AppError::new("diagnostics export", msg)));
-        }
-    });
-}
-
-/// Desktop path: open a native save dialog via rfd and write the bytes
-/// to whichever location the user picks. Cancelling the dialog is `Ok`;
-/// only a failed write is an error worth surfacing.
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) -> anyhow::Result<()> {
-    use anyhow::Context as _;
-    let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name(filename)
-        .set_title("Save iroh-doctor-app diagnostics");
-    let Some(handle) = dialog.save_file().await else {
-        return Ok(());
-    };
-    handle
-        .write(bytes)
-        .await
-        .context("writing diagnostics zip")?;
-    Ok(())
-}
-
-/// Mobile path (iOS + Android): rfd has no usable backend, so write to the
-/// app's sandbox documents directory where the platform's Files browser
-/// exposes it. The user can share the file from there. Logs the resulting
-/// path so a developer inspecting the log file can find it without guessing.
-#[cfg(any(target_os = "ios", target_os = "android"))]
-async fn save_diagnostics_zip(filename: &str, bytes: &[u8]) -> anyhow::Result<()> {
-    use anyhow::Context as _;
-    let dir = dirs::document_dir()
-        .or_else(dirs::data_local_dir)
-        .context("no documents directory on this device")?;
-    let path = dir.join(filename);
-    std::fs::write(&path, bytes)
-        .with_context(|| format!("writing diagnostics zip to {}", path.display()))?;
-    tracing::info!(path = %path.display(), "wrote diagnostics zip");
-    Ok(())
-}
-
-#[component]
-fn Nav(current_tab: Signal<Tab>) -> Element {
-    let active = current_tab();
-    rsx! {
-        nav { class: "nav",
-            NavItem {
-                label: "Connect",
-                icon: "⇄",
-                is_active: active == Tab::Connect,
-                on_select: move |_| current_tab.clone().set(Tab::Connect),
-            }
-            NavItem {
-                label: "Diagnostics",
-                icon: "⌁",
-                is_active: active == Tab::Diagnostics,
-                on_select: move |_| current_tab.clone().set(Tab::Diagnostics),
-            }
-            NavItem {
-                label: "Gossip",
-                icon: "≈",
-                is_active: active == Tab::Gossip,
-                on_select: move |_| current_tab.clone().set(Tab::Gossip),
-            }
-            NavItem {
-                label: "Endpoints",
-                icon: "▣",
-                is_active: active == Tab::Endpoints,
-                on_select: move |_| current_tab.clone().set(Tab::Endpoints),
-            }
-        }
-    }
-}
-
-#[component]
-fn NavItem(label: String, icon: String, is_active: bool, on_select: EventHandler<()>) -> Element {
-    let class = if is_active {
-        "nav-item active"
-    } else {
-        "nav-item"
-    };
-    rsx! {
-        button {
-            class: "{class}",
-            onclick: move |_| on_select.call(()),
-            span { class: "nav-icon", "{icon}" }
-            span { class: "nav-label", "{label}" }
-        }
-    }
-}
-
-#[component]
-fn ConnectPage(
-    endpoint_id: Signal<String>,
-    conn_state: Signal<ConnectionState>,
-    cmd_handle: Signal<Option<NodeHandle>>,
-    peer_id_input: Signal<String>,
-    paths: Signal<Vec<PathSnapshot>>,
-    rtt_history: Signal<VecDeque<f64>>,
-    event_log: Signal<VecDeque<EventEntry>>,
-    ttfdb: Signal<Option<Duration>>,
-    throughput: Signal<Option<node::ThroughputSnapshot>>,
-) -> Element {
-    rsx! {
-        div { class: "page",
-            h2 { class: "page-title", "Connect" }
-            FirstRunNote {}
-            Header { endpoint_id }
-            ConnectBar { cmd_handle, peer_id_input, conn_state }
-            ConnectView {
-                conn_state,
-                paths,
-                rtt_history,
-                event_log,
-                ttfdb,
-                throughput,
-            }
-        }
-    }
-}
-
-#[component]
-fn DiagnosticsPage(
-    cmd_handle: Signal<Option<NodeHandle>>,
-    telemetry: Signal<TelemetryState>,
-    services_ping_state: Signal<DiagState<Duration>>,
-    net_state: Signal<DiagState<DiagnosticsReport>>,
-    net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>>,
-) -> Element {
-    rsx! {
-        div { class: "page",
-            h2 { class: "page-title", "Diagnostics" }
-            DiagnosticsView {
-                cmd_handle,
-                telemetry,
-                services_state: services_ping_state,
-                net_state,
-                net_report_state,
-                relays_state,
-            }
-        }
-    }
-}
-
-#[component]
-fn Header(endpoint_id: Signal<String>) -> Element {
-    let id = endpoint_id();
-    let display = if id.is_empty() {
-        "...".to_string()
-    } else {
-        id.clone()
-    };
-    let copy_disabled = id.is_empty();
-
-    rsx! {
-        div { class: "header",
-            span { class: "label", "My id:" }
-            span { class: "endpoint-id", title: "{id}", "{display}" }
-            button {
-                class: "btn",
-                disabled: copy_disabled,
-                onclick: move |_| {
-                    let id = endpoint_id();
-                    if !id.is_empty() {
-                        copy_to_clipboard(&id);
-                    }
-                },
-                "Copy"
-            }
-        }
-    }
-}
-
-#[component]
-fn ConnectBar(
-    cmd_handle: Signal<Option<NodeHandle>>,
-    peer_id_input: Signal<String>,
-    conn_state: Signal<ConnectionState>,
-) -> Element {
-    // Connect and disconnect are distinct steps. Once a session is dialing or
-    // live, the input gives way to a single Disconnect button (Cancel while a
-    // dial is still in flight); otherwise we show the input and Connect.
-    let state = conn_state();
-    let connecting = matches!(state, ConnectionState::Connecting);
-    let active = connecting || matches!(state, ConnectionState::Connected { .. });
-
-    if active {
-        let label = if connecting { "Cancel" } else { "Disconnect" };
-        return rsx! {
-            div { class: "connect-bar",
-                span { class: "connect-status", "{status_line(&state)}" }
-                button {
-                    class: "btn btn-danger",
-                    onclick: move |_| {
-                        if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::Disconnect);
-                        }
-                    },
-                    "{label}"
-                }
-            }
-        };
-    }
-
-    let input_value = peer_id_input();
-    let connect_disabled = !node::looks_like_endpoint_id(&input_value);
-    // The Connect button stays disabled on malformed input; without a
-    // hint a first-time user pasting a truncated id only sees a button
-    // that will not press. Explain what a valid id looks like.
-    let show_invalid_hint = connect_disabled && !input_value.trim().is_empty();
-
-    rsx! {
-        div { class: "connect-bar-wrap",
-            div { class: "connect-bar",
-                input {
-                    class: "peer-id-input",
-                    r#type: "text",
-                    placeholder: "Peer endpoint id",
-                    value: "{input_value}",
-                    autocapitalize: "off",
-                    autocorrect: "off",
-                    spellcheck: "false",
-                    oninput: move |evt| { peer_id_input.clone().set(evt.value()); },
-                }
-                button {
-                    class: "btn btn-primary",
-                    disabled: connect_disabled,
-                    onclick: move |_| {
-                        let id = peer_id_input();
-                        if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::Connect { hex_id: id });
-                        }
-                    },
-                    "Connect"
-                }
-            }
-            if show_invalid_hint {
-                div { class: "input-hint",
-                    "Not a valid endpoint id yet: ids are 64 hex characters. "
-                    "Paste the full id from the other device's Copy button."
-                }
-            }
-        }
-    }
-}
-
 fn record_event(
     mut event_log: Signal<VecDeque<EventEntry>>,
     start_instant: Signal<Instant>,
@@ -691,7 +334,7 @@ fn record_event(
     let elapsed = start_instant.read().elapsed();
     let entry = EventEntry {
         elapsed,
-        label: short_event_label(state),
+        label: components::short_event_label(state),
         kind: status_kind(state).to_string(),
     };
     let mut log = event_log.write();
@@ -738,94 +381,6 @@ fn push_rtt_sample(mut rtt_history: Signal<VecDeque<f64>>, sample_ms: f64) {
 /// over so the sparkline starts clean for each peer.
 fn clear_rtt_history(mut rtt_history: Signal<VecDeque<f64>>) {
     rtt_history.write().clear();
-}
-
-fn short_event_label(state: &ConnectionState) -> String {
-    match state {
-        ConnectionState::Idle => "idle".into(),
-        ConnectionState::Binding => "binding".into(),
-        ConnectionState::Ready => "ready".into(),
-        ConnectionState::Connecting => "connecting".into(),
-        ConnectionState::Connected { peer_short_id, .. } => format!("connected: {peer_short_id}"),
-        ConnectionState::PeerDisconnected { peer_short_id } => {
-            format!("peer disconnected: {peer_short_id}")
-        }
-        ConnectionState::Error(msg) => format!("error: {msg}"),
-    }
-}
-
-fn status_line(state: &ConnectionState) -> String {
-    match state {
-        ConnectionState::Idle => "idle".into(),
-        ConnectionState::Binding => "binding...".into(),
-        ConnectionState::Ready => "ready".into(),
-        ConnectionState::Connecting => "connecting...".into(),
-        ConnectionState::Connected { peer_short_id, .. } => format!("connected to {peer_short_id}"),
-        ConnectionState::PeerDisconnected { peer_short_id } => {
-            format!("{peer_short_id} disconnected")
-        }
-        ConnectionState::Error(msg) => format!("error: {msg}"),
-    }
-}
-
-fn status_kind(state: &ConnectionState) -> &'static str {
-    match state {
-        ConnectionState::Idle => "idle",
-        ConnectionState::Binding => "pending",
-        ConnectionState::Ready => "ready",
-        ConnectionState::Connecting => "pending",
-        ConnectionState::Connected { .. } => "connected",
-        ConnectionState::PeerDisconnected { .. } => "disconnected",
-        ConnectionState::Error(_) => "error",
-    }
-}
-
-pub fn copy_to_clipboard(_text: &str) {
-    // On iOS, write through UIPasteboard instead of the JS Clipboard API.
-    // When the iOS build runs on an Apple silicon Mac ("iOS app on Mac"),
-    // navigator.clipboard.writeText resolves ok but only WebKit's private
-    // com.apple.WebKit.custom-pasteboard-data type crosses the
-    // UIPasteboard -> NSPasteboard bridge; the text/plain representation
-    // is dropped, so pasting into any other app yields nothing.
-    // UIPasteboard bridges correctly in both environments.
-    #[cfg(target_os = "ios")]
-    {
-        use objc2_foundation::NSString;
-        use objc2_ui_kit::UIPasteboard;
-
-        let text = NSString::from_str(_text);
-        // SAFETY: setString is unsafe only because UIPasteboard is not
-        // documented as thread-safe. We are on the main thread here: this
-        // is only called from Dioxus event handlers, which run on the UI
-        // thread on mobile.
-        unsafe { UIPasteboard::generalPasteboard().setString(Some(&text)) };
-    }
-    #[cfg(all(any(feature = "desktop", feature = "mobile"), not(target_os = "ios")))]
-    {
-        let text = _text.to_string();
-        dioxus::prelude::document::eval(&format!(
-            "navigator.clipboard.writeText({});",
-            serde_escape(&text)
-        ));
-    }
-}
-
-#[cfg(all(any(feature = "desktop", feature = "mobile"), not(target_os = "ios")))]
-fn serde_escape(s: &str) -> String {
-    let mut out = String::from("\"");
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

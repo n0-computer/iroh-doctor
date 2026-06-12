@@ -9,6 +9,7 @@
 //! same one `iroh-doctor connect` uses, so every front end reports latency,
 //! paths, time-to-first-direct-byte, and throughput identically to the cli.
 
+use std::future::Future;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -31,7 +32,7 @@ mod monitor;
 pub use gossip::GossipEvent;
 
 use accept::ProbeProtocol;
-use gossip::join_gossip;
+use gossip::{join_gossip, GossipSession};
 use monitor::run_monitor;
 
 use crate::monitor::{snapshot_paths, PathSnapshot};
@@ -234,10 +235,15 @@ pub async fn run_node(
     mut commands: mpsc::Receiver<NodeCommand>,
     events: mpsc::UnboundedSender<NodeEvent>,
 ) -> Result<()> {
+    let NodeOptions {
+        secret_key,
+        api_secret_override,
+        telemetry_disabled,
+    } = options;
     let events = Events(events);
 
     events.state(ConnectionState::Binding);
-    let endpoint = match bind_endpoint(options.secret_key).await {
+    let endpoint = match bind_endpoint(secret_key).await {
         Ok(ep) => ep,
         Err(e) => {
             events.state(ConnectionState::Error(format!(
@@ -249,8 +255,8 @@ pub async fn run_node(
     events.send(NodeEvent::EndpointId(endpoint.id().to_string()));
     events.state(ConnectionState::Ready);
 
-    let mut node = Node::new(endpoint, events, options.api_secret_override).await;
-    node.set_services_client(options.telemetry_disabled).await;
+    let mut node = Node::new(endpoint, events, api_secret_override, telemetry_disabled);
+    node.rebuild_services_client().await;
 
     // Route incoming connections by ALPN: gossip to the gossip handler,
     // the probe ALPN to the capacity-capped probe responder. The router
@@ -303,14 +309,18 @@ struct Node {
     services_probes: tokio::task::JoinSet<()>,
     api_secret_override: String,
     telemetry_disabled: bool,
-    /// Receiver task for the joined gossip topic, at most one at a time.
-    gossip_recv_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    /// Sender for the joined gossip topic.
-    gossip_sender_slot: Arc<Mutex<Option<iroh_gossip::api::GossipSender>>>,
+    /// The joined gossip topic (receiver task plus sender), at most one at
+    /// a time.
+    gossip_session: Arc<Mutex<GossipSession>>,
 }
 
 impl Node {
-    async fn new(endpoint: Endpoint, events: Events, api_secret_override: String) -> Self {
+    fn new(
+        endpoint: Endpoint,
+        events: Events,
+        api_secret_override: String,
+        telemetry_disabled: bool,
+    ) -> Self {
         // Owner for the gossip protocol. Cheaply cloneable; clones share
         // state and outlive any individual connection.
         let gossip = Gossip::builder().spawn(endpoint.clone());
@@ -324,17 +334,15 @@ impl Node {
             services: None,
             services_probes: tokio::task::JoinSet::new(),
             api_secret_override,
-            telemetry_disabled: false,
-            gossip_recv_handle: Arc::new(Mutex::new(None)),
-            gossip_sender_slot: Arc::new(Mutex::new(None)),
+            telemetry_disabled,
+            gossip_session: Arc::new(Mutex::new(GossipSession::default())),
         }
     }
 
     /// (Re)builds the services client for the current telemetry setting,
     /// aborting in-flight probes first so every clone of the previous
     /// client is released and its metrics pushes stop.
-    async fn set_services_client(&mut self, telemetry_disabled: bool) {
-        self.telemetry_disabled = telemetry_disabled;
+    async fn rebuild_services_client(&mut self) {
         self.services_probes.abort_all();
         self.services.take();
         self.services = start_services_client(
@@ -344,6 +352,43 @@ impl Node {
             &self.events,
         )
         .await;
+    }
+
+    /// Runs one services query on its own task, replying with
+    /// [`SERVICES_OFF_ERROR`] when no client is configured. The task joins
+    /// `services_probes` (finished entries drained first) so a telemetry
+    /// toggle can abort it and release its client clone.
+    fn spawn_services_probe<T, Fut>(
+        &mut self,
+        reply: oneshot::Sender<Result<T, String>>,
+        query: impl FnOnce(ServicesClient) -> Fut + Send + 'static,
+    ) where
+        T: Send + 'static,
+        Fut: Future<Output = Result<T>> + Send,
+    {
+        let client = self.services.clone();
+        while self.services_probes.try_join_next().is_some() {}
+        self.services_probes.spawn(async move {
+            let result = match client {
+                Some(c) => query(c).await.map_err(|e| format!("{e:#}")),
+                None => Err(SERVICES_OFF_ERROR.into()),
+            };
+            let _ = reply.send(result);
+        });
+    }
+
+    /// Awaits the endpoint's net report on its own task and replies with a
+    /// projection of it, so the command pump never blocks on the network.
+    fn spawn_net_report_probe<T: Send + 'static>(
+        &self,
+        reply: oneshot::Sender<Result<T, String>>,
+        project: impl FnOnce(&iroh::NetReport) -> Result<T, String> + Send + 'static,
+    ) {
+        let endpoint = self.endpoint.clone();
+        tokio::spawn(async move {
+            let result = net_report(&endpoint).await.and_then(|r| project(&r));
+            let _ = reply.send(result);
+        });
     }
 
     /// Paths sampler: every [`PATHS_SAMPLE_INTERVAL`], snapshot the active
@@ -389,66 +434,32 @@ impl Node {
             NodeCommand::Disconnect => self.disconnect().await,
             NodeCommand::SaveApiSecret { secret } => {
                 self.api_secret_override = secret.trim().to_string();
-                self.set_services_client(self.telemetry_disabled).await;
+                self.rebuild_services_client().await;
             }
             NodeCommand::SetTelemetryEnabled { enabled } => {
                 info!(enabled, "telemetry toggled");
-                self.set_services_client(!enabled).await;
+                self.telemetry_disabled = !enabled;
+                self.rebuild_services_client().await;
             }
             NodeCommand::PingServices { reply } => {
-                // A network round-trip to the services endpoint; spawn so it
-                // does not block the command pump. Tracked in
-                // `services_probes` (draining finished entries first) so a
-                // telemetry toggle can abort it and release its client clone.
-                let client = self.services.clone();
-                while self.services_probes.try_join_next().is_some() {}
-                self.services_probes.spawn(async move {
-                    let result = match client {
-                        Some(c) => crate::services::ping(&c)
-                            .await
-                            .map_err(|e| format!("{e:#}")),
-                        None => Err(SERVICES_OFF_ERROR.into()),
-                    };
-                    let _ = reply.send(result);
-                });
+                self.spawn_services_probe(reply, |c| async move { crate::services::ping(&c).await })
             }
-            NodeCommand::RunNetDiagnostics { reply } => {
-                // net_diagnostics probes external services and can take
-                // seconds; spawn so the command pump stays responsive.
-                let client = self.services.clone();
-                while self.services_probes.try_join_next().is_some() {}
-                self.services_probes.spawn(async move {
-                    let result = match client {
-                        Some(c) => crate::services::net_diagnostics(&c)
-                            .await
-                            .map_err(|e| format!("{e:#}")),
-                        None => Err(SERVICES_OFF_ERROR.into()),
-                    };
-                    let _ = reply.send(result);
-                });
-            }
+            NodeCommand::RunNetDiagnostics { reply } => self
+                .spawn_services_probe(reply, |c| async move {
+                    crate::services::net_diagnostics(&c).await
+                }),
             NodeCommand::ProbeNetReport { reply } => {
-                let endpoint = self.endpoint.clone();
-                tokio::spawn(async move {
-                    let result = net_report(&endpoint)
-                        .await
-                        .map(|report| NetReportSummary::from(&report));
-                    let _ = reply.send(result);
-                });
+                self.spawn_net_report_probe(reply, |report| Ok(NetReportSummary::from(report)))
             }
             NodeCommand::ProbeRelayLatencies { reply } => {
-                let endpoint = self.endpoint.clone();
-                tokio::spawn(async move {
-                    let result = net_report(&endpoint).await.and_then(|report| {
-                        let rows = crate::report::relay_latencies(&report);
-                        if rows.is_empty() {
-                            Err("no relay latencies recorded yet".into())
-                        } else {
-                            Ok(rows)
-                        }
-                    });
-                    let _ = reply.send(result);
-                });
+                self.spawn_net_report_probe(reply, |report| {
+                    let rows = crate::report::relay_latencies(report);
+                    if rows.is_empty() {
+                        Err("no relay latencies recorded yet".into())
+                    } else {
+                        Ok(rows)
+                    }
+                })
             }
             NodeCommand::JoinGossip {
                 topic_input,
@@ -456,27 +467,20 @@ impl Node {
                 events_tx,
                 reply,
             } => {
+                // Joining dials bootstrap peers and can take a while; spawn
+                // so the command pump stays responsive.
                 let gossip = self.gossip.clone();
-                let recv_handle = self.gossip_recv_handle.clone();
-                let sender_slot = self.gossip_sender_slot.clone();
+                let session = self.gossip_session.clone();
                 tokio::spawn(async move {
-                    let result = join_gossip(
-                        gossip,
-                        recv_handle,
-                        sender_slot,
-                        topic_input,
-                        bootstrap,
-                        events_tx,
-                    )
-                    .await;
+                    let result =
+                        join_gossip(gossip, session, topic_input, bootstrap, events_tx).await;
                     let _ = reply.send(result);
                 });
             }
             NodeCommand::GossipBroadcast { msg, reply } => {
-                let sender_slot = self.gossip_sender_slot.clone();
+                let session = self.gossip_session.clone();
                 tokio::spawn(async move {
-                    let sender = sender_slot.lock().await.clone();
-                    let result = match sender {
+                    let result = match GossipSession::sender(&session).await {
                         Some(s) => s
                             .broadcast(bytes::Bytes::from(msg.into_bytes()))
                             .await
