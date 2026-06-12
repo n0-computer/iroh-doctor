@@ -110,10 +110,10 @@ impl ProtocolHandler for ProbeProtocol {
             })
         };
 
-        if let Err(e) = probe::handle_connection_with(conn, tx).await {
+        if let Err(e) = probe::handle_connection(conn, Some(tx)).await {
             warn!(err = %e, "peer-probe accept failed");
         }
-        // Sender drops when handle_connection_with returns; the drainer's
+        // Sender drops when handle_connection returns; the drainer's
         // `rx.recv()` then returns None and the task ends. Await it so we
         // don't leak a JoinHandle.
         let _ = drain.await;

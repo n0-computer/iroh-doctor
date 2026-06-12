@@ -49,10 +49,7 @@ fn main() {
 
 /// Sender half of the node's command channel, shared with every component
 /// that fires a [`NodeCommand`].
-#[derive(Clone)]
-pub struct NodeHandle {
-    pub tx: mpsc::Sender<NodeCommand>,
-}
+pub type NodeHandle = mpsc::Sender<NodeCommand>;
 
 #[component]
 fn App() -> Element {
@@ -109,7 +106,7 @@ fn App() -> Element {
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<NodeCommand>(64);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NodeEvent>();
-        cmd_handle.clone().set(Some(NodeHandle { tx: cmd_tx }));
+        cmd_handle.clone().set(Some(cmd_tx));
         tokio::spawn(async move {
             let _ = node::run_node(options, cmd_rx, event_tx).await;
         });

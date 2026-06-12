@@ -82,7 +82,7 @@ async fn request<T>(
         return Err("not ready".into());
     };
     let (tx, rx) = oneshot::channel();
-    if h.tx.try_send(make_cmd(tx)).is_err() {
+    if h.try_send(make_cmd(tx)).is_err() {
         return Err("queue full".into());
     }
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))

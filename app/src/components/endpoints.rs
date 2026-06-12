@@ -92,7 +92,7 @@ fn EndpointRow(
                         class: "btn btn-primary",
                         onclick: move |_| {
                             if let Some(handle) = cmd_handle.read().clone() {
-                                let _ = handle.tx.try_send(NodeCommand::Connect {
+                                let _ = handle.try_send(NodeCommand::Connect {
                                     hex_id: id_for_connect.clone(),
                                 });
                                 on_connect.call(());

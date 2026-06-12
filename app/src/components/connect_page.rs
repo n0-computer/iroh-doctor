@@ -2,14 +2,14 @@
 //! bar, and the live connection view.
 
 use std::collections::VecDeque;
+use std::str::FromStr;
 use std::time::Duration;
 
 use dioxus::prelude::*;
+use iroh::EndpointId;
 
 use crate::clipboard::copy_to_clipboard;
-use crate::node::{
-    looks_like_endpoint_id, ConnectionState, NodeCommand, PathSnapshot, ThroughputSnapshot,
-};
+use crate::node::{ConnectionState, NodeCommand, PathSnapshot, ThroughputSnapshot};
 use crate::NodeHandle;
 
 use super::status::status_line;
@@ -97,7 +97,7 @@ fn ConnectBar(
                     class: "btn btn-danger",
                     onclick: move |_| {
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::Disconnect);
+                            let _ = handle.try_send(NodeCommand::Disconnect);
                         }
                     },
                     "{label}"
@@ -107,7 +107,9 @@ fn ConnectBar(
     }
 
     let input_value = peer_id_input();
-    let connect_disabled = !looks_like_endpoint_id(&input_value);
+    // Validate with the same parse the node runs on Connect, so the button
+    // enables exactly when the dial can actually start.
+    let connect_disabled = EndpointId::from_str(input_value.trim()).is_err();
     // The Connect button stays disabled on malformed input; without a
     // hint a first-time user pasting a truncated id only sees a button
     // that will not press. Explain what a valid id looks like.
@@ -132,7 +134,7 @@ fn ConnectBar(
                     onclick: move |_| {
                         let id = peer_id_input();
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::Connect { hex_id: id });
+                            let _ = handle.try_send(NodeCommand::Connect { hex_id: id });
                         }
                     },
                     "Connect"

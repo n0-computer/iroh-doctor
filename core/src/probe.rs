@@ -150,16 +150,16 @@ pub async fn run_client(
     config: ClientConfig,
     samples: tokio::sync::mpsc::Sender<ClientSample>,
 ) -> ClientEnd {
-    let mut client = match ProbeClient::connect(conn).await {
-        Ok(client) => client,
+    let (mut send, mut recv) = match conn.open_bi().await {
+        Ok(streams) => streams,
         Err(cause) => {
             return ClientEnd {
                 phase: "setup",
-                cause: format!("{cause:#}"),
+                cause: format!("open probe bidi stream: {cause:#}"),
             }
         }
     };
-    drive_client(&mut client.send, &mut client.recv, config, &samples).await
+    drive_client(&mut send, &mut recv, config, &samples).await
 }
 
 /// The [`run_client`] loop, generic over the stream types so it can run over
@@ -233,20 +233,14 @@ fn consumer_gone() -> ClientEnd {
 
 /// Serves the passive side of one probe stream until the client closes it
 /// or the connection ends (iroh's idle timeout reaps a vanished peer).
-pub async fn handle_connection(conn: endpoint::Connection) -> Result<()> {
-    let (send, recv) = conn.accept_bi().await.context("accept probe bidi stream")?;
-    serve_stream(send, recv, None).await
-}
-
-/// Like [`handle_connection`] but emits [`ProbeEvent`]s on the supplied
-/// channel as they happen. Used by the app to surface throughput from an
-/// incoming `iroh-doctor connect` monitor.
-pub async fn handle_connection_with(
+/// Pass an `events` channel to observe [`ProbeEvent`]s as they happen (the
+/// app surfaces them as throughput readouts); `None` serves silently.
+pub async fn handle_connection(
     conn: endpoint::Connection,
-    events: tokio::sync::mpsc::Sender<ProbeEvent>,
+    events: Option<tokio::sync::mpsc::Sender<ProbeEvent>>,
 ) -> Result<()> {
     let (send, recv) = conn.accept_bi().await.context("accept probe bidi stream")?;
-    serve_stream(send, recv, Some(events)).await
+    serve_stream(send, recv, events).await
 }
 
 async fn serve_stream<S, R>(
@@ -297,31 +291,6 @@ where
     }
     let _ = send.shutdown().await;
     Ok(())
-}
-
-/// Active side of the probe over a single bidi stream.
-pub struct ProbeClient {
-    send: endpoint::SendStream,
-    recv: endpoint::RecvStream,
-}
-
-impl ProbeClient {
-    /// Opens a probe stream on an existing connection.
-    pub async fn connect(conn: &endpoint::Connection) -> Result<Self> {
-        let (send, recv) = conn.open_bi().await.context("open probe bidi stream")?;
-        Ok(Self { send, recv })
-    }
-
-    /// Sends one ping and returns the round-trip time.
-    pub async fn ping(&mut self, nonce: u32) -> Result<Duration> {
-        ping_once(&mut self.send, &mut self.recv, nonce).await
-    }
-
-    /// Uploads `bytes` bytes and returns how long it took the peer to
-    /// acknowledge them. Pair with [`throughput_mbps`].
-    pub async fn upload(&mut self, bytes: u64) -> Result<Duration> {
-        upload_once(&mut self.send, &mut self.recv, bytes).await
-    }
 }
 
 async fn ping_once<S, R>(send: &mut S, recv: &mut R, nonce: u32) -> Result<Duration>

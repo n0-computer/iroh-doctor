@@ -1,10 +1,12 @@
 use std::collections::{HashSet, VecDeque};
+use std::str::FromStr;
 
 use dioxus::prelude::*;
+use iroh::EndpointId;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{short_id, AppError};
-use crate::node::{looks_like_endpoint_id, ConnectionState, GossipEvent, NodeCommand};
+use crate::node::{ConnectionState, GossipEvent, NodeCommand};
 use crate::NodeHandle;
 
 const MESSAGE_LOG_LEN: usize = 200;
@@ -133,7 +135,6 @@ fn JoinSection(
                         let send_handle = handle.clone();
                         spawn(async move {
                             let _ = send_handle
-                                .tx
                                 .send(NodeCommand::JoinGossip {
                                     topic_input: topic_str,
                                     bootstrap,
@@ -257,7 +258,6 @@ fn ComposeSection(
                         let (tx, rx) = oneshot::channel();
                         spawn(async move {
                             let _ = handle
-                                .tx
                                 .send(NodeCommand::GossipBroadcast { msg, reply: tx })
                                 .await;
                             match rx.await {
@@ -358,7 +358,9 @@ fn bootstrap_status_line(text: &str, connected_peer: Option<&str>) -> String {
         if trimmed.is_empty() {
             continue;
         }
-        if looks_like_endpoint_id(trimmed) {
+        // The same parse the node runs at join time, so "malformed" here
+        // means exactly "the join would reject it".
+        if EndpointId::from_str(trimmed).is_ok() {
             ok += 1;
             if let Some(peer) = connected_peer {
                 if trimmed.eq_ignore_ascii_case(peer) {
@@ -397,9 +399,17 @@ mod tests {
         );
     }
 
+    /// A deterministic, genuinely parseable endpoint id for tests (the
+    /// status line runs the real id parse, so a fake hex string won't do).
+    fn test_id(byte: u8) -> String {
+        iroh::SecretKey::from_bytes(&[byte; 32])
+            .public()
+            .to_string()
+    }
+
     #[test]
     fn bootstrap_status_pluralization() {
-        let one = "a".repeat(64);
+        let one = test_id(1);
         assert_eq!(bootstrap_status_line(&one, None), "1 bootstrap peer");
         let two = format!("{one}\n{one}");
         assert_eq!(bootstrap_status_line(&two, None), "2 bootstrap peers");
@@ -407,8 +417,7 @@ mod tests {
 
     #[test]
     fn bootstrap_status_counts_malformed() {
-        let one = "a".repeat(64);
-        let mixed = format!("{one}\nnot-a-real-id");
+        let mixed = format!("{}\nnot-a-real-id", test_id(1));
         assert_eq!(
             bootstrap_status_line(&mixed, None),
             "1 bootstrap peer, 1 malformed"
@@ -417,12 +426,12 @@ mod tests {
 
     #[test]
     fn bootstrap_status_adds_connected_peer() {
-        let peer = "b".repeat(64);
+        let peer = test_id(2);
         assert_eq!(
             bootstrap_status_line("", Some(&peer)),
             "1 bootstrap peer (+ connected peer)"
         );
-        let one = "a".repeat(64);
+        let one = test_id(1);
         assert_eq!(
             bootstrap_status_line(&one, Some(&peer)),
             "2 bootstrap peers (+ connected peer)"
@@ -431,7 +440,7 @@ mod tests {
 
     #[test]
     fn bootstrap_status_does_not_double_count_listed_peer() {
-        let peer = "a".repeat(64);
+        let peer = test_id(1);
         // User typed the connected peer in the textarea -> count it once,
         // no "+ connected peer" annotation.
         assert_eq!(

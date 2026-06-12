@@ -159,7 +159,6 @@ fn IrohServicesSection(
                         enabled.clone().set(next);
                         if let Some(handle) = cmd_handle.read().clone() {
                             let _ = handle
-                                .tx
                                 .try_send(NodeCommand::SetTelemetryEnabled { enabled: next });
                         }
                     },
@@ -197,7 +196,7 @@ fn IrohServicesSection(
                             saved_override.clone().set(trimmed.clone());
                         }
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::SaveApiSecret {
+                            let _ = handle.try_send(NodeCommand::SaveApiSecret {
                                 secret: trimmed,
                             });
                         }
@@ -212,7 +211,7 @@ fn IrohServicesSection(
                         let _ = identity::save_api_secret_override("");
                         saved_override.clone().set(String::new());
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::SaveApiSecret {
+                            let _ = handle.try_send(NodeCommand::SaveApiSecret {
                                 secret: String::new(),
                             });
                         }

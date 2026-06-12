@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use iroh::endpoint::{self, presets};
 use iroh::protocol::Router;
-use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
+use iroh::{Endpoint, EndpointId, SecretKey};
 use iroh_gossip::net::Gossip;
 use iroh_services::Client as ServicesClient;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -507,7 +507,7 @@ impl Node {
         // Clear any TTFDB value from a prior run; the per-connection
         // ttfdb watcher in run_monitor publishes the new one.
         self.events.ttfdb(None);
-        let addr = EndpointAddr::from_parts(parsed, std::iter::empty());
+        let addr = parsed.into();
         // Dialing plus hole punching can take seconds, so the monitor runs
         // on its own task and the command pump stays responsive. Abort any
         // monitor from a previous dial first, then own the new one.
@@ -616,51 +616,5 @@ async fn start_services_client(
             events.telemetry(TelemetryState::Error(format!("{e:#}")));
             None
         }
-    }
-}
-
-/// Returns whether `s` looks like a peer endpoint id (64 hex characters),
-/// the shape a front end can validate before sending [`NodeCommand::Connect`].
-pub fn looks_like_endpoint_id(s: &str) -> bool {
-    let trimmed = s.trim();
-    trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn looks_like_endpoint_id_accepts_64_hex() {
-        let s = "a".repeat(64);
-        assert!(looks_like_endpoint_id(&s));
-        assert!(looks_like_endpoint_id(&format!("  {s}  ")));
-    }
-
-    #[test]
-    fn looks_like_endpoint_id_rejects_wrong_length() {
-        assert!(!looks_like_endpoint_id("abc"));
-        assert!(!looks_like_endpoint_id(&"a".repeat(63)));
-        assert!(!looks_like_endpoint_id(&"a".repeat(65)));
-    }
-
-    #[test]
-    fn looks_like_endpoint_id_rejects_non_hex() {
-        let s = "z".repeat(64);
-        assert!(!looks_like_endpoint_id(&s));
-    }
-
-    #[test]
-    fn looks_like_endpoint_id_accepts_uppercase_hex() {
-        // is_ascii_hexdigit accepts 'A'..='F'; the helper inherits that.
-        let s: String = std::iter::repeat_n('F', 64).collect();
-        assert!(looks_like_endpoint_id(&s));
-    }
-
-    #[test]
-    fn looks_like_endpoint_id_rejects_all_whitespace() {
-        // 64 ASCII spaces trim to empty, which then fails the length check.
-        let s = " ".repeat(64);
-        assert!(!looks_like_endpoint_id(&s));
     }
 }

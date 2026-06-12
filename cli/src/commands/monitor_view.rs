@@ -4,7 +4,7 @@
 //! table, time-to-first-direct-byte, latency over time with a sparkline,
 //! and throughput. `connect` drives latency by pinging the peer; `accept`
 //! reads it off the connection's path RTT. Throughput on `connect` comes
-//! from `ProbeClient::upload`, on `accept` from
+//! from the probe client's upload samples, on `accept` from
 //! `iroh_doctor_core::probe::ProbeEvent::UploadCompleted`.
 
 use std::{collections::VecDeque, time::Duration};
