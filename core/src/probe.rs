@@ -10,9 +10,12 @@
 //! The responder is built for continuous monitoring: it echoes pings
 //! without a count cap (a `Pong` is cheap) and keeps serving after an
 //! upload, so a client can ping for as long as it likes and interleave the
-//! occasional throughput measurement. A per-frame idle timeout bounds a
-//! stalled or vanished client, and the upload size is capped so a peer
-//! cannot make the responder drain an unbounded stream.
+//! occasional throughput measurement. There are no protocol-level timeouts:
+//! a vanished peer surfaces as a stream error once iroh's connection idle
+//! timeout fires (iroh's default transport config keeps paths alive with
+//! heartbeats and idles dead ones out), and a quiet-but-alive peer is left
+//! alone. The upload size is capped so a peer cannot make the responder
+//! drain an unbounded stream.
 
 use std::time::{Duration, Instant};
 
@@ -31,17 +34,6 @@ use tracing::warn;
 // `/0` and `/1` on the passive side for one release so a mixed-version
 // deployment does not hard-fail.
 pub const ALPN: &[u8] = b"iroh-pong-probe/0";
-
-/// How long the responder waits for the next frame before treating the
-/// client as gone. Comfortably longer than a client's ping interval.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// How long the client waits for a `Pong` after sending a `Ping`.
-const PING_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How long the client waits for `UploadDone` after sending the payload.
-/// Generous because the peer is still draining the upload.
-const UPLOAD_DONE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Upper bound on `UploadStart::bytes` the responder will accept. Anything
 /// larger fails immediately so a peer cannot make us drain forever.
@@ -86,10 +78,6 @@ pub fn throughput_mbps(bytes: u64, elapsed: Duration) -> Option<f64> {
     }
     Some((bytes as f64 * 8.0) / secs / 1_000_000.0)
 }
-
-/// How long the active client waits to open the probe stream before giving
-/// up. Matches the value the cli and app previously inlined.
-const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Pacing for the active probe client loop driven by [`run_client`].
 #[derive(Debug, Clone, Copy)]
@@ -154,21 +142,12 @@ pub async fn run_client(
     config: ClientConfig,
     samples: tokio::sync::mpsc::Sender<ClientSample>,
 ) -> ClientEnd {
-    let mut client = match tokio::time::timeout(SETUP_TIMEOUT, ProbeClient::connect(conn)).await {
-        Ok(Ok(client)) => client,
-        Ok(Err(cause)) => {
+    let mut client = match ProbeClient::connect(conn).await {
+        Ok(client) => client,
+        Err(cause) => {
             return ClientEnd {
                 phase: "setup",
                 cause: format!("{cause:#}"),
-            }
-        }
-        Err(_) => {
-            return ClientEnd {
-                phase: "setup",
-                cause: format!(
-                    "timed out opening probe stream after {}s",
-                    SETUP_TIMEOUT.as_secs()
-                ),
             }
         }
     };
@@ -245,12 +224,9 @@ fn consumer_gone() -> ClientEnd {
 }
 
 /// Serves the passive side of one probe stream until the client closes it
-/// or goes idle for [`IDLE_TIMEOUT`].
+/// or the connection ends (iroh's idle timeout reaps a vanished peer).
 pub async fn handle_connection(conn: endpoint::Connection) -> Result<()> {
-    let (send, recv) = tokio::time::timeout(Duration::from_secs(5), conn.accept_bi())
-        .await
-        .context("accept probe bidi stream: timeout")?
-        .context("accept probe bidi stream")?;
+    let (send, recv) = conn.accept_bi().await.context("accept probe bidi stream")?;
     serve_stream(send, recv, None).await
 }
 
@@ -261,10 +237,7 @@ pub async fn handle_connection_with(
     conn: endpoint::Connection,
     events: tokio::sync::mpsc::Sender<ProbeEvent>,
 ) -> Result<()> {
-    let (send, recv) = tokio::time::timeout(Duration::from_secs(5), conn.accept_bi())
-        .await
-        .context("accept probe bidi stream: timeout")?
-        .context("accept probe bidi stream")?;
+    let (send, recv) = conn.accept_bi().await.context("accept probe bidi stream")?;
     serve_stream(send, recv, Some(events)).await
 }
 
@@ -278,9 +251,10 @@ where
     R: AsyncRead + Unpin,
 {
     loop {
-        let frame = match read_frame(&mut recv, IDLE_TIMEOUT).await {
+        let frame = match read_frame(&mut recv).await {
             Ok(f) => f,
-            // Idle, closed, or malformed: the client is done with us.
+            // Closed, connection gone, or malformed: the client is done
+            // with us.
             Err(_) => break,
         };
         match frame {
@@ -295,12 +269,8 @@ where
                 let drain_started = Instant::now();
                 while remaining > 0 {
                     let take = remaining.min(buf.len() as u64) as usize;
-                    // Bound each read: a client that announces an upload and
-                    // then stalls must not pin the responder, since the
-                    // continuous case has no overall handler timeout.
-                    tokio::time::timeout(IDLE_TIMEOUT, recv.read_exact(&mut buf[..take]))
+                    recv.read_exact(&mut buf[..take])
                         .await
-                        .context("upload drain: idle timeout")?
                         .context("upload drain")?;
                     remaining -= take as u64;
                 }
@@ -353,7 +323,7 @@ where
 {
     let started = Instant::now();
     write_frame(send, &Frame::Ping(nonce)).await?;
-    match read_frame(recv, PING_TIMEOUT).await? {
+    match read_frame(recv).await? {
         Frame::Pong(n) if n == nonce => Ok(started.elapsed()),
         other => anyhow::bail!("unexpected reply to ping {nonce}: {other:?}"),
     }
@@ -375,7 +345,7 @@ where
             .context("upload write")?;
         written += take as u64;
     }
-    match read_frame(recv, UPLOAD_DONE_TIMEOUT).await? {
+    match read_frame(recv).await? {
         Frame::UploadDone => Ok(started.elapsed()),
         other => anyhow::bail!("unexpected reply to upload: {other:?}"),
     }
@@ -390,23 +360,19 @@ async fn write_frame<W: AsyncWrite + Unpin>(send: &mut W, frame: &Frame) -> Resu
     Ok(())
 }
 
-// Not cancel-safe: a timed-out length read may leave the stream mid-frame.
-// Every caller drops the stream on timeout, so the desync never matters.
-async fn read_frame<R: AsyncRead + Unpin>(recv: &mut R, budget: Duration) -> Result<Frame> {
+// Not cancel-safe: cancelling mid-read leaves the stream mid-frame. No
+// caller resumes a cancelled read; the stream is dropped instead.
+async fn read_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Frame> {
     let mut len_buf = [0u8; 2];
-    tokio::time::timeout(budget, recv.read_exact(&mut len_buf))
+    recv.read_exact(&mut len_buf)
         .await
-        .context("read frame length: timeout")?
         .context("read frame length")?;
     let len = u16::from_le_bytes(len_buf) as usize;
     if len > Frame::POSTCARD_MAX_SIZE {
         anyhow::bail!("frame too large: {len}");
     }
     let mut buf = vec![0u8; len];
-    tokio::time::timeout(budget, recv.read_exact(&mut buf))
-        .await
-        .context("read frame body: timeout")?
-        .context("read frame body")?;
+    recv.read_exact(&mut buf).await.context("read frame body")?;
     postcard::from_bytes(&buf).context("decode frame")
 }
 
@@ -482,7 +448,8 @@ mod tests {
         let server = tokio::spawn(serve_stream(server_send, server_recv, None));
 
         // Announce more than the responder will accept: it closes without
-        // acking, so the client's wait for UploadDone fails.
+        // acking, so the client's wait for UploadDone fails. The timeout is
+        // test-local insurance against a hang, not protocol behavior.
         write_frame(
             &mut client_send,
             &Frame::UploadStart {
@@ -491,9 +458,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(read_frame(&mut client_recv, Duration::from_secs(1))
+        let reply = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut client_recv))
             .await
-            .is_err());
+            .expect("responder must close the stream rather than stall");
+        assert!(reply.is_err());
         server.await.unwrap().expect("responder finished cleanly");
     }
 
