@@ -3,7 +3,6 @@
 
 use std::{
     net::SocketAddr,
-    num::NonZeroU16,
     time::{Duration, Instant},
 };
 
@@ -139,25 +138,6 @@ pub enum Commands {
         /// Default is `None`, which means the endpoint will bind to a random port.
         #[clap(long)]
         socket_addr: Option<SocketAddr>,
-    },
-    /// Attempt to get a port mapping to the given local port.
-    PortMap {
-        /// Protocol to use for port mapping. One of ["upnp", "nat_pmp", "pcp"].
-        protocol: String,
-        /// Local port to get a mapping.
-        local_port: NonZeroU16,
-        /// How long to wait for an external port to be ready in seconds.
-        #[clap(long, default_value_t = 10)]
-        timeout_secs: u64,
-    },
-    /// Get the latencies of the different relay url
-    ///
-    /// Tests the latencies of the default relay url and nodes. To test custom urls or nodes,
-    /// adjust the `Config`.
-    RelayUrls {
-        /// How often to execute.
-        #[clap(long, default_value_t = 5)]
-        count: usize,
     },
 }
 
@@ -462,15 +442,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             Ok(())
         }
-        Commands::PortMap {
-            protocol,
-            local_port,
-            timeout_secs,
-        } => {
-            commands::port_map::port_map(&protocol, local_port, Duration::from_secs(timeout_secs))
-                .await
-        }
-        Commands::RelayUrls { count } => commands::relay_urls::relay_urls(count, config).await,
     };
     if let Some(server) = metrics_server {
         server.shutdown().await;

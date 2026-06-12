@@ -44,8 +44,6 @@ Commands:
   diagnostics  Report on the current network environment: NetReport, NAT class, relay latency, and the iroh-services ping + net_diagnostics, which covers port-map availability (use --json for machine output; set IROH_SERVICES_API_SECRET to a key to override, or to "" to skip services)
   accept      Wait for incoming requests from iroh doctor connect
   connect     Connect to a peer and monitor the connection live
-  port-map    Attempt to get a port mapping to the given local port
-  relay-urls  Get the latencies of the different relay url
   help        Print this message or the help of the given subcommand(s)
 
 Options:
