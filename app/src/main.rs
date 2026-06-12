@@ -11,7 +11,6 @@ mod first_run;
 mod identity;
 mod node;
 mod portmap_probe;
-mod relay_probe;
 mod telemetry_pref;
 
 use std::time::{Duration, Instant};
@@ -39,14 +38,6 @@ fn main() {
     let log_dir = log_dir();
     let _log_guard = init_logging(log_dir.as_ref());
 
-    // rustls 0.23 needs a process-global crypto provider when callers
-    // build TLS configs without an explicit provider. iroh's presets set
-    // one per endpoint, but the per-relay probe in `relay_probe.rs`
-    // builds `iroh_relay::client::ClientBuilder` directly and would
-    // otherwise fail with "No rustls crypto provider configured". Ignore
-    // the install error: a duplicate install just means another part of
-    // the process beat us to it.
-    let _ = rustls::crypto::ring::default_provider().install_default();
     dioxus::launch(App);
 }
 
@@ -138,7 +129,7 @@ fn App() -> Element {
     let services_ping_state: Signal<DiagState<Duration>> = use_signal(|| DiagState::Idle);
     let net_state: Signal<DiagState<DiagnosticsReport>> = use_signal(|| DiagState::Idle);
     let net_report_state: Signal<DiagState<NetReportSummary>> = use_signal(|| DiagState::Idle);
-    let relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>> =
+    let relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>> =
         use_signal(|| DiagState::Idle);
     let portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>> =
         use_signal(|| DiagState::Idle);
@@ -493,7 +484,7 @@ fn handle_send_diagnostics(
     event_log: Signal<VecDeque<EventEntry>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
     portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
-    relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
+    relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>>,
     ttfdb: Signal<Option<Duration>>,
     throughput: Signal<Option<node::ThroughputSnapshot>>,
     endpoints_list: Signal<Vec<endpoints::Endpoint>>,
@@ -664,7 +655,7 @@ fn DiagnosticsPage(
     services_ping_state: Signal<DiagState<Duration>>,
     net_state: Signal<DiagState<DiagnosticsReport>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<relay_probe::RelayProbeResult>>>,
+    relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>>,
     portmap_state: Signal<DiagState<portmap_probe::PortMapProbeResult>>,
 ) -> Element {
     rsx! {

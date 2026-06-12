@@ -8,15 +8,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 anyhow = "1"
 iroh = "=1.0.0-rc.1"
-iroh-relay = "=1.0.0-rc.1"
 iroh-services = { version = "=1.0.0-rc.1", default-features = false }
 n0-future = "0.3"
-noq = "=1.0.0-rc.1"
 portmapper = "0.18"
 postcard = { version = "1", features = ["experimental-derive"] }
-rand = "0.10"
-rcgen = "0.14"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "rt", "sync", "time"] }
 tokio-util = "0.7"

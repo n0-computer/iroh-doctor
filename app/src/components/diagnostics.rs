@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 
+use iroh_doctor_core::report::RelayLatencyRow;
+
 use crate::identity;
 use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand, TelemetryState};
 use crate::portmap_probe::PortMapProbeResult;
-use crate::relay_probe::RelayProbeResult;
 use crate::telemetry_pref;
 use crate::NodeHandle;
 
@@ -30,7 +31,7 @@ pub fn DiagnosticsView(
     services_state: Signal<DiagState<Duration>>,
     net_state: Signal<DiagState<DiagnosticsReport>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<RelayProbeResult>>>,
+    relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
     portmap_state: Signal<DiagState<PortMapProbeResult>>,
 ) -> Element {
     let busy = matches!(services_state(), DiagState::Running)
@@ -86,7 +87,7 @@ pub fn DiagnosticsView(
 }
 
 #[component]
-fn RelayLatencyPanel(relays_state: Signal<DiagState<Vec<RelayProbeResult>>>) -> Element {
+fn RelayLatencyPanel(relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>) -> Element {
     let state = relays_state();
     rsx! {
         section { class: "settings-section",
@@ -351,13 +352,13 @@ fn render_net_report_rows(state: &DiagState<NetReportSummary>) -> Element {
     }
 }
 
-fn render_relay_rows(state: &DiagState<Vec<RelayProbeResult>>) -> Element {
+fn render_relay_rows(state: &DiagState<Vec<RelayLatencyRow>>) -> Element {
     match state {
         DiagState::Idle => rsx! {
             div { class: "diag-idle", "not probed yet - hit Refresh" }
         },
         DiagState::Running => rsx! {
-            div { class: "diag-running", "probing relays..." }
+            div { class: "diag-running", "reading net report..." }
         },
         DiagState::Err(e) => rsx! {
             div { class: "diag-err", "error: {e}" }
@@ -373,19 +374,15 @@ fn render_relay_rows(state: &DiagState<Vec<RelayProbeResult>>) -> Element {
                     thead {
                         tr {
                             th { "Relay" }
-                            th { class: "ping-rtt-col", "Connect" }
-                            th { class: "ping-rtt-col", "Ping" }
-                            th { "Status" }
+                            th { class: "ping-rtt-col", "Latency" }
                         }
                     }
                     tbody {
                         for r in rows.iter() {
                             tr {
                                 td { class: "mono transports-addr", title: "{r.url}", "{r.url}" }
-                                td { class: "ping-rtt-col mono", {render_opt_ms(r.connect_ms)} }
-                                td { class: "ping-rtt-col mono", {render_opt_ms(r.ping_ms)} }
-                                td {
-                                    {render_relay_status(r)}
+                                td { class: "ping-rtt-col mono",
+                                    span { class: "diag-ok", "{r.latency_ms:.1} ms" }
                                 }
                             }
                         }
@@ -393,20 +390,6 @@ fn render_relay_rows(state: &DiagState<Vec<RelayProbeResult>>) -> Element {
                 }
             }
         }
-    }
-}
-
-fn render_opt_ms(ms: Option<f64>) -> Element {
-    match ms {
-        Some(v) => rsx! { span { class: "diag-ok", "{v:.1} ms" } },
-        None => rsx! { span { class: "diag-idle", "-" } },
-    }
-}
-
-fn render_relay_status(row: &RelayProbeResult) -> Element {
-    match &row.error {
-        None => rsx! { span { class: "diag-ok", "ok" } },
-        Some(msg) => rsx! { span { class: "diag-err", title: "{msg}", "{msg}" } },
     }
 }
 

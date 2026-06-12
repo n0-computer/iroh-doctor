@@ -59,15 +59,13 @@ pub enum Commands {
     ///
     /// Paints the whole picture in one command: iroh's `NetReport` with a NAT
     /// classification, which port-mapping protocols (UPnP/PCP/NAT-PMP) the
-    /// local gateway offers, and one round of per-relay connect plus ping
-    /// latency. Prints a set of tables by default, or `--json` for tooling.
+    /// local gateway offers, and the per-relay latencies iroh recorded while
+    /// building the report. Prints a set of tables by default, or `--json`
+    /// for tooling.
     Diagnostics {
         /// Skip the UPnP/PCP/NAT-PMP port-mapping probe.
         #[clap(long, default_value_t = false)]
         no_port_map: bool,
-        /// Skip the per-relay connect and ping latency sweep.
-        #[clap(long, default_value_t = false)]
-        no_relays: bool,
         /// Emit the report as JSON to stdout instead of tables.
         #[clap(long, default_value_t = false)]
         json: bool,
@@ -397,11 +395,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         }
     };
     let cmd_res = match command {
-        Commands::Diagnostics {
-            no_port_map,
-            no_relays,
-            json,
-        } => commands::diagnostics::diagnostics(config, no_port_map, no_relays, json).await,
+        Commands::Diagnostics { no_port_map, json } => {
+            commands::diagnostics::diagnostics(config, no_port_map, json).await
+        }
         Commands::Connect {
             dial,
             secret_key,

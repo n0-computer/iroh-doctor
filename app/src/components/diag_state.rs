@@ -7,9 +7,10 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use tokio::sync::oneshot;
 
+use iroh_doctor_core::report::RelayLatencyRow;
+
 use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand};
 use crate::portmap_probe::PortMapProbeResult;
-use crate::relay_probe::RelayProbeResult;
 use crate::NodeHandle;
 
 #[derive(Clone)]
@@ -58,7 +59,7 @@ pub fn trigger_probe_net_report(
 
 pub fn trigger_probe_relays(
     cmd_handle: Signal<Option<NodeHandle>>,
-    mut relays_state: Signal<DiagState<Vec<RelayProbeResult>>>,
+    mut relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
 ) {
     relays_state.set(DiagState::Running);
     let handle = cmd_handle.read().clone();
@@ -129,7 +130,7 @@ async fn run_probe_net_report(handle: Option<NodeHandle>) -> Result<NetReportSum
     rx.await.unwrap_or_else(|_| Err("reply dropped".into()))
 }
 
-async fn run_probe_relays(handle: Option<NodeHandle>) -> Result<Vec<RelayProbeResult>, String> {
+async fn run_probe_relays(handle: Option<NodeHandle>) -> Result<Vec<RelayLatencyRow>, String> {
     let Some(h) = handle else {
         return Err("not ready".into());
     };

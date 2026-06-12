@@ -2,13 +2,14 @@
 //!
 //! One command that paints the whole picture of the current network: a NAT
 //! classification on top of iroh's `NetReport`, which port-mapping protocols
-//! (UPnP/PCP/NAT-PMP) the local gateway offers, and one round of per-relay
-//! connect plus ping latency. The default output is a set of tables; `--json`
-//! emits the same data as a single structure for piping into another tool.
+//! (UPnP/PCP/NAT-PMP) the local gateway offers, and the per-relay latencies
+//! iroh recorded while building the report. The default output is a set of
+//! tables; `--json` emits the same data as a single structure for piping
+//! into another tool.
 //!
-//! The relay and port-map probes and the NAT classifier live in
-//! `iroh-doctor-core` so the app reports the same numbers; this module only
-//! orchestrates them and renders the tables.
+//! The report projections and the NAT classifier live in `iroh-doctor-core`
+//! so the app reports the same numbers; this module only orchestrates them
+//! and renders the tables.
 
 use anyhow::Context;
 use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher};
@@ -17,7 +18,7 @@ use serde::Serialize;
 use iroh_doctor_core::fmt::{opt_bool, tribool_text};
 use iroh_doctor_core::nat::{classify_net_report, NatType};
 use iroh_doctor_core::portmap::PortMapResult;
-use iroh_doctor_core::relay_probe::RelayProbeResult;
+use iroh_doctor_core::report::{relay_latencies, RelayLatencyRow};
 use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
 use iroh_doctor_core::NET_REPORT_TIMEOUT;
 
@@ -31,7 +32,8 @@ pub struct Report {
     pub net_report: Option<NetReport>,
     pub nat: NatType,
     pub port_map: Option<PortMapResult>,
-    pub relays: Vec<RelayProbeResult>,
+    /// Per-relay latencies recorded by iroh while building the net report.
+    pub relays: Vec<RelayLatencyRow>,
     /// iroh-services checks (ping + server-side net_diagnostics). `None` when
     /// services are opted out via `IROH_SERVICES_API_SECRET=""`.
     pub services: Option<ServicesBlock>,
@@ -46,33 +48,22 @@ pub struct ServicesBlock {
 }
 
 /// Runs every probe and prints the combined report.
-pub async fn diagnostics(
-    config: &NodeConfig,
-    no_port_map: bool,
-    no_relays: bool,
-    json: bool,
-) -> anyhow::Result<()> {
+pub async fn diagnostics(config: &NodeConfig, no_port_map: bool, json: bool) -> anyhow::Result<()> {
     let relay_map = config.relay_map()?.unwrap_or_else(RelayMap::empty);
 
     let endpoint = Endpoint::builder(presets::N0)
-        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .relay_mode(RelayMode::Custom(relay_map))
         .bind()
         .await?;
 
     // Run the actual work inside a helper so endpoint.close() always runs
     // even if one of the steps returns Err.
-    let result = report_inner(&endpoint, &relay_map, no_port_map, no_relays, json).await;
+    let result = report_inner(&endpoint, no_port_map, json).await;
     endpoint.close().await;
     result
 }
 
-async fn report_inner(
-    endpoint: &Endpoint,
-    relay_map: &RelayMap,
-    no_port_map: bool,
-    no_relays: bool,
-    json: bool,
-) -> anyhow::Result<()> {
+async fn report_inner(endpoint: &Endpoint, no_port_map: bool, json: bool) -> anyhow::Result<()> {
     // Wait for the first non-empty report with a hard ceiling. The reporter
     // streams updates indefinitely; without a timeout the command would hang
     // on a network with no DNS or no reachable STUN.
@@ -81,23 +72,19 @@ async fn report_inner(
         .context("net_report did not initialize within timeout")?;
 
     let nat = classify_net_report(&net_report);
+    // The per-relay latencies come out of the report iroh already built;
+    // no separate sweep needed.
+    let relays = relay_latencies(&net_report);
 
-    // The gateway probe, the relay sweep, and the services checks are
-    // independent; run them concurrently so a degraded network costs the
-    // slowest stage's timeout rather than the sum of all three.
-    let (port_map, relays, services) = tokio::join!(
+    // The gateway probe and the services checks are independent; run them
+    // concurrently so a degraded network costs the slower stage's timeout
+    // rather than the sum of both.
+    let (port_map, services) = tokio::join!(
         async {
             if no_port_map {
                 None
             } else {
                 Some(iroh_doctor_core::portmap::probe().await)
-            }
-        },
-        async {
-            if no_relays {
-                Vec::new()
-            } else {
-                iroh_doctor_core::relay_probe::probe_relays(relay_map).await
             }
         },
         run_services(endpoint),
@@ -202,20 +189,10 @@ fn print_tables(r: &Report) {
         let rows: Vec<Vec<String>> = r
             .relays
             .iter()
-            .map(|row| {
-                vec![
-                    row.url.clone(),
-                    fmt_opt_ms(row.connect_ms),
-                    fmt_opt_ms(row.ping_ms),
-                    row.error.clone().unwrap_or_default(),
-                ]
-            })
+            .map(|row| vec![row.url.clone(), fmt_opt_ms(Some(row.latency_ms))])
             .collect();
         println!("Relay latency");
-        print!(
-            "{}",
-            markdown_table(&["Relay", "Connect", "Ping", "Note"], &rows)
-        );
+        print!("{}", markdown_table(&["Relay", "Latency"], &rows));
     }
 
     if let Some(s) = &r.services {

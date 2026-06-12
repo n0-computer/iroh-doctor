@@ -87,11 +87,10 @@ pub enum NodeCommand {
     ProbeNetReport {
         reply: oneshot::Sender<Result<NetReportSummary, String>>,
     },
-    /// Probes every relay in the active relay map once, measuring TLS
-    /// connect time and a single relay-protocol ping. The reply is a row
-    /// per relay, sorted by ping with failures last.
+    /// Reports the per-relay latencies iroh recorded in its net report,
+    /// one row per relay, sorted ascending by latency.
     ProbeRelayLatencies {
-        reply: oneshot::Sender<Result<Vec<crate::relay_probe::RelayProbeResult>, String>>,
+        reply: oneshot::Sender<Result<Vec<iroh_doctor_core::report::RelayLatencyRow>, String>>,
     },
     /// Probes the local gateway directly for UPnP, PCP, and NAT-PMP
     /// support. Reports the same tri-state booleans as the services-
@@ -561,21 +560,32 @@ pub async fn run_node(
                 });
             }
             NodeCommand::ProbeRelayLatencies { reply } => {
-                // Probe every relay in the same map iroh's default relay
-                // mode resolves to. The bound endpoint is built with
-                // `presets::N0` which uses `default_relay_mode()`, so
-                // the two agree by construction. If `bind_endpoint`
-                // ever switches to a custom relay map this code will
-                // probe the wrong set silently; a future change should
-                // plumb the bound RelayMap through `run_node` instead.
-                let relay_map = iroh::endpoint::default_relay_mode().relay_map();
+                // The endpoint's own net report already carries a latency
+                // per relay in the bound relay map; project it out rather
+                // than running a separate sweep.
+                let endpoint = endpoint.clone();
                 tokio::spawn(async move {
-                    let rows = crate::relay_probe::probe(relay_map).await;
-                    if rows.is_empty() {
-                        let _ = reply.send(Err("no relays configured".into()));
-                    } else {
-                        let _ = reply.send(Ok(rows));
-                    }
+                    use iroh::Watcher as _;
+                    let result = match tokio::time::timeout(
+                        NET_REPORT_TIMEOUT,
+                        endpoint.net_report().initialized(),
+                    )
+                    .await
+                    {
+                        Ok(report) => {
+                            let rows = iroh_doctor_core::report::relay_latencies(&report);
+                            if rows.is_empty() {
+                                Err("no relay latencies recorded yet".into())
+                            } else {
+                                Ok(rows)
+                            }
+                        }
+                        Err(_) => Err(format!(
+                            "net_report did not complete within {}s",
+                            NET_REPORT_TIMEOUT.as_secs()
+                        )),
+                    };
+                    let _ = reply.send(result);
                 });
             }
             NodeCommand::ProbePortMap { reply } => {

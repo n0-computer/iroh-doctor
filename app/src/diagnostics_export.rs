@@ -19,11 +19,12 @@ use iroh_doctor_core::fmt::opt_bool;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+use iroh_doctor_core::report::RelayLatencyRow;
+
 use crate::components::{DiagState, EventEntry};
 use crate::endpoints::{self, Endpoint};
 use crate::node::{NetReportSummary, PathInfo, ThroughputSnapshot};
 use crate::portmap_probe::PortMapProbeResult;
-use crate::relay_probe::RelayProbeResult;
 
 /// Everything the export needs, cloned out of the App-level signals at
 /// the moment the user clicks Send diagnostics.
@@ -37,7 +38,7 @@ pub struct Snapshot {
     pub net_report: Option<NetReportSummary>,
     pub portmap: Option<PortMapProbeResult>,
     pub portmap_err: Option<String>,
-    pub relays: Vec<RelayProbeResult>,
+    pub relays: Vec<RelayLatencyRow>,
     pub relays_err: Option<String>,
     pub ttfdb: Option<Duration>,
     pub throughput: Option<ThroughputSnapshot>,
@@ -234,19 +235,13 @@ fn portmap_section(s: &Snapshot) -> String {
 }
 
 fn relays_csv(s: &Snapshot) -> String {
-    let mut out = String::from("url,connect_ms,ping_ms,error\n");
+    let mut out = String::from("url,latency_ms,error\n");
     if let Some(err) = &s.relays_err {
-        out.push_str(&format!(",,,{}\n", csv_escape(err)));
+        out.push_str(&format!(",,{}\n", csv_escape(err)));
         return out;
     }
     for r in &s.relays {
-        out.push_str(&format!(
-            "{},{},{},{}\n",
-            csv_escape(&r.url),
-            r.connect_ms.map(|v| v.to_string()).unwrap_or_default(),
-            r.ping_ms.map(|v| v.to_string()).unwrap_or_default(),
-            csv_escape(r.error.as_deref().unwrap_or("")),
-        ));
+        out.push_str(&format!("{},{},\n", csv_escape(&r.url), r.latency_ms));
     }
     out
 }
