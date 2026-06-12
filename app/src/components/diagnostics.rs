@@ -449,7 +449,6 @@ fn nat_kind_class(nat: iroh_doctor_core::nat::NatType) -> &'static str {
     use iroh_doctor_core::nat::NatType;
     match nat {
         NatType::Easy => "easy",
-        NatType::Medium => "medium",
         NatType::Hard => "hard",
         NatType::Unknown => "unknown",
     }

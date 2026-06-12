@@ -158,7 +158,7 @@ pub struct NetReportSummary {
 impl From<&iroh::NetReport> for NetReportSummary {
     fn from(r: &iroh::NetReport) -> Self {
         Self {
-            nat: iroh_doctor_core::nat::classify_base_report(r),
+            nat: iroh_doctor_core::nat::classify_net_report(r),
             global_v4: r.global_v4.map(|a| a.to_string()),
             global_v6: r.global_v6.map(|a| a.to_string()),
             udp_v4: r.udp_v4,
