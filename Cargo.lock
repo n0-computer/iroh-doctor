@@ -4041,15 +4041,10 @@ name = "iroh-doctor-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "blake3",
- "bytes",
  "dioxus",
  "dirs 5.0.1",
  "iroh",
  "iroh-doctor-core",
- "iroh-gossip",
- "iroh-services",
- "n0-future",
  "objc2-foundation",
  "objc2-ui-kit",
  "rfd 0.15.4",
@@ -4069,7 +4064,10 @@ name = "iroh-doctor-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
+ "bytes",
  "iroh",
+ "iroh-gossip",
  "iroh-services",
  "n0-future",
  "postcard",

@@ -35,6 +35,14 @@ use tracing::warn;
 // deployment does not hard-fail.
 pub const ALPN: &[u8] = b"iroh-pong-probe/0";
 
+/// Application close code a responder sends when it rejects a probe
+/// connection because it is already serving its maximum number of peers.
+/// Clients see it in the connection error and can surface the reason.
+pub const AT_CAPACITY_CLOSE_CODE: u32 = 1;
+
+/// Close reason paired with [`AT_CAPACITY_CLOSE_CODE`].
+pub const AT_CAPACITY_CLOSE_REASON: &[u8] = b"probe responder at capacity";
+
 /// Upper bound on `UploadStart::bytes` the responder will accept. Anything
 /// larger fails immediately so a peer cannot make us drain forever.
 const MAX_UPLOAD_BYTES: u64 = 16 * 1024 * 1024;

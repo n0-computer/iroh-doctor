@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{short_id, AppError};
-use crate::node::{looks_like_endpoint_id, ConnectionState, GossipEventUi, NodeCommand};
+use crate::node::{looks_like_endpoint_id, ConnectionState, GossipEvent, NodeCommand};
 use crate::NodeHandle;
 
 const MESSAGE_LOG_LEN: usize = 200;
@@ -127,7 +127,7 @@ fn JoinSection(
                             }
                         }
 
-                        let (events_tx, mut events_rx) = mpsc::channel::<GossipEventUi>(EVENTS_CAPACITY);
+                        let (events_tx, mut events_rx) = mpsc::channel::<GossipEvent>(EVENTS_CAPACITY);
                         let (reply_tx, reply_rx) = oneshot::channel();
 
                         let send_handle = handle.clone();
@@ -278,19 +278,19 @@ fn ComposeSection(
 }
 
 fn apply_event(
-    event: GossipEventUi,
+    event: GossipEvent,
     mut neighbors: Signal<HashSet<String>>,
     messages: Signal<VecDeque<MessageEntry>>,
     started_at: std::time::Instant,
 ) {
     match event {
-        GossipEventUi::NeighborUp { peer } => {
+        GossipEvent::NeighborUp { peer } => {
             neighbors.write().insert(peer);
         }
-        GossipEventUi::NeighborDown { peer } => {
+        GossipEvent::NeighborDown { peer } => {
             neighbors.write().remove(&peer);
         }
-        GossipEventUi::Message { from, body } => {
+        GossipEvent::Message { from, body } => {
             let elapsed = started_at.elapsed().as_secs_f64();
             let elapsed_label = if elapsed >= 60.0 {
                 format!("{:.0}s", elapsed)
@@ -306,7 +306,7 @@ fn apply_event(
                 },
             );
         }
-        GossipEventUi::Lagged => {
+        GossipEvent::Lagged => {
             // Surface lag as a system message so the user knows we missed events.
             push_message(
                 messages,

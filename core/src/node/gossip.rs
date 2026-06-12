@@ -10,7 +10,16 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{instrument, warn};
 
-use super::*;
+/// Subset of [`iroh_gossip::api::Event`] reshaped for a front end. Message
+/// bodies are decoded as UTF-8 lossily so a UI can render them without a
+/// separate decode step.
+#[derive(Debug, Clone)]
+pub enum GossipEvent {
+    NeighborUp { peer: String },
+    NeighborDown { peer: String },
+    Message { from: String, body: String },
+    Lagged,
+}
 
 #[instrument(
     skip(gossip, recv_handle, sender_slot, events_tx, bootstrap),
@@ -22,7 +31,7 @@ pub(crate) async fn join_gossip(
     sender_slot: Arc<Mutex<Option<iroh_gossip::api::GossipSender>>>,
     topic_input: String,
     bootstrap: Vec<String>,
-    events_tx: mpsc::Sender<GossipEventUi>,
+    events_tx: mpsc::Sender<GossipEvent>,
 ) -> Result<String, String> {
     use n0_future::StreamExt;
 
@@ -71,17 +80,17 @@ pub(crate) async fn join_gossip(
                 }
             };
             let ui = match event {
-                Event::NeighborUp(peer) => GossipEventUi::NeighborUp {
+                Event::NeighborUp(peer) => GossipEvent::NeighborUp {
                     peer: peer.to_string(),
                 },
-                Event::NeighborDown(peer) => GossipEventUi::NeighborDown {
+                Event::NeighborDown(peer) => GossipEvent::NeighborDown {
                     peer: peer.to_string(),
                 },
-                Event::Received(msg) => GossipEventUi::Message {
+                Event::Received(msg) => GossipEvent::Message {
                     from: msg.delivered_from.to_string(),
                     body: String::from_utf8_lossy(&msg.content).into_owned(),
                 },
-                Event::Lagged => GossipEventUi::Lagged,
+                Event::Lagged => GossipEvent::Lagged,
             };
             if events_tx.try_send(ui).is_err() {
                 warn!("gossip events_tx full, dropping event");

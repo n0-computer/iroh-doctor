@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 
-use crate::node::{ConnectionState, PathInfo, PathKind, ThroughputSnapshot};
+use crate::node::{ConnectionState, PathKind, PathSnapshot, ThroughputSnapshot};
 
 /// One row in the connection-event log shown on the Diagnostics tab. `elapsed` is
 /// measured from session start; the UI formats it as `+MM:SS`.
@@ -26,7 +26,7 @@ pub struct EventEntry {
 #[component]
 pub fn ConnectView(
     conn_state: Signal<ConnectionState>,
-    paths: Signal<Vec<PathInfo>>,
+    paths: Signal<Vec<PathSnapshot>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     ttfdb: Signal<Option<Duration>>,
@@ -104,11 +104,11 @@ pub enum ConnectionStateLabel {
 /// like nothing happened.
 fn derive_connection_state(
     conn_state: &ConnectionState,
-    paths: &[PathInfo],
+    paths: &[PathSnapshot],
 ) -> ConnectionStateLabel {
     if let Some(p) = paths.iter().find(|p| p.selected) {
         return match p.kind {
-            PathKind::Ip => ConnectionStateLabel::Direct,
+            PathKind::Direct => ConnectionStateLabel::Direct,
             PathKind::Relay => ConnectionStateLabel::Relay,
             PathKind::Custom => ConnectionStateLabel::Custom,
         };
@@ -218,10 +218,13 @@ fn format_ttfdb(d: Duration) -> String {
 }
 
 #[component]
-fn LiveLatency(paths: Signal<Vec<PathInfo>>, rtt_history: Signal<VecDeque<f64>>) -> Element {
+fn LiveLatency(paths: Signal<Vec<PathSnapshot>>, rtt_history: Signal<VecDeque<f64>>) -> Element {
     let snapshot = paths();
     let history = rtt_history();
-    let selected_rtt = snapshot.iter().find(|p| p.selected).map(|p| p.rtt_ms);
+    let selected_rtt = snapshot
+        .iter()
+        .find(|p| p.selected)
+        .map(|p| p.rtt.as_secs_f64() * 1000.0);
 
     let header = match selected_rtt {
         Some(rtt) => rsx! { span { class: "diag-ok", "{rtt:.1} ms" } },
@@ -249,7 +252,7 @@ fn LiveLatency(paths: Signal<Vec<PathInfo>>, rtt_history: Signal<VecDeque<f64>>)
 }
 
 #[component]
-fn PathsTable(paths: Signal<Vec<PathInfo>>) -> Element {
+fn PathsTable(paths: Signal<Vec<PathSnapshot>>) -> Element {
     let snapshot = paths();
     if snapshot.is_empty() {
         return rsx! {
@@ -279,7 +282,9 @@ fn PathsTable(paths: Signal<Vec<PathInfo>>) -> Element {
                             }
                             td { class: "mono transports-addr", title: "{p.addr}", "{p.addr}" }
                             td { class: "paths-sel", if p.selected { "*" } else { "" } }
-                            td { class: "ping-rtt-col mono", "{p.rtt_ms:.1} ms" }
+                            td { class: "ping-rtt-col mono",
+                                "{p.rtt.as_secs_f64() * 1000.0:.1} ms"
+                            }
                         }
                     }
                 }
@@ -351,7 +356,7 @@ fn format_elapsed(elapsed: Duration) -> String {
 
 fn kind_label(kind: PathKind) -> &'static str {
     match kind {
-        PathKind::Ip => "QUIC / IP",
+        PathKind::Direct => "QUIC / IP",
         PathKind::Relay => "Relay",
         PathKind::Custom => "Custom",
     }
@@ -359,7 +364,7 @@ fn kind_label(kind: PathKind) -> &'static str {
 
 fn kind_class(kind: PathKind) -> &'static str {
     match kind {
-        PathKind::Ip => "ip",
+        PathKind::Direct => "ip",
         PathKind::Relay => "relay",
         PathKind::Custom => "custom",
     }
@@ -452,24 +457,24 @@ mod tests {
 
     #[test]
     fn kind_label_maps_each_variant() {
-        assert_eq!(kind_label(PathKind::Ip), "QUIC / IP");
+        assert_eq!(kind_label(PathKind::Direct), "QUIC / IP");
         assert_eq!(kind_label(PathKind::Relay), "Relay");
         assert_eq!(kind_label(PathKind::Custom), "Custom");
     }
 
     #[test]
     fn kind_class_matches_css_selector_suffix() {
-        assert_eq!(kind_class(PathKind::Ip), "ip");
+        assert_eq!(kind_class(PathKind::Direct), "ip");
         assert_eq!(kind_class(PathKind::Relay), "relay");
         assert_eq!(kind_class(PathKind::Custom), "custom");
     }
 
-    fn path(addr: &str, kind: PathKind, selected: bool) -> PathInfo {
-        PathInfo {
+    fn path(addr: &str, kind: PathKind, selected: bool) -> PathSnapshot {
+        PathSnapshot {
             addr: addr.into(),
             kind,
             selected,
-            rtt_ms: 0.0,
+            rtt: Duration::ZERO,
         }
     }
 
@@ -516,7 +521,7 @@ mod tests {
 
     #[test]
     fn derive_connection_state_direct() {
-        let paths = [path("ip:1.2.3.4:5", PathKind::Ip, true)];
+        let paths = [path("ip:1.2.3.4:5", PathKind::Direct, true)];
         assert_eq!(
             derive_connection_state(
                 &ConnectionState::Connected {
@@ -549,7 +554,7 @@ mod tests {
         // Both an IP and a relay path exist, but the relay is selected.
         // The header must reflect the selected path, not the first one.
         let paths = [
-            path("ip:1.2.3.4:5", PathKind::Ip, false),
+            path("ip:1.2.3.4:5", PathKind::Direct, false),
             path("relay:https://a/", PathKind::Relay, true),
         ];
         assert_eq!(

@@ -23,7 +23,7 @@ use iroh_doctor_core::report::RelayLatencyRow;
 
 use crate::components::{DiagState, EventEntry};
 use crate::endpoints::{self, Endpoint};
-use crate::node::{NetReportSummary, PathInfo, ThroughputSnapshot};
+use crate::node::{NetReportSummary, PathSnapshot, ThroughputSnapshot};
 
 /// Everything the export needs, cloned out of the App-level signals at
 /// the moment the user clicks Send diagnostics.
@@ -31,7 +31,7 @@ pub struct Snapshot {
     pub error_message: String,
     pub endpoint_id: String,
     pub conn_state_label: String,
-    pub paths: Vec<PathInfo>,
+    pub paths: Vec<PathSnapshot>,
     pub rtt_history: VecDeque<f64>,
     pub events: VecDeque<EventEntry>,
     pub net_report: Option<NetReportSummary>,
@@ -163,7 +163,7 @@ fn paths_section(s: &Snapshot) -> String {
             "{}        {:8} {:>7.1}    {}\n",
             if p.selected { "*" } else { " " },
             format!("{:?}", p.kind).to_lowercase(),
-            p.rtt_ms,
+            p.rtt.as_secs_f64() * 1000.0,
             p.addr,
         ));
     }

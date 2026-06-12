@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
-use std::sync::Arc;
 
 use dioxus::prelude::*;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 mod components;
 mod diagnostics_export;
@@ -19,7 +18,7 @@ use components::{
     FirstRunNote, GossipView,
 };
 use node::{
-    ConnectionState, DiagnosticsReport, NetReportSummary, NodeCallbacks, NodeCommand, PathInfo,
+    ConnectionState, DiagnosticsReport, NetReportSummary, NodeCommand, NodeEvent, PathSnapshot,
     TelemetryState,
 };
 
@@ -130,7 +129,7 @@ fn App() -> Element {
     let net_report_state: Signal<DiagState<NetReportSummary>> = use_signal(|| DiagState::Idle);
     let relays_state: Signal<DiagState<Vec<iroh_doctor_core::report::RelayLatencyRow>>> =
         use_signal(|| DiagState::Idle);
-    let paths: Signal<Vec<PathInfo>> = use_signal(Vec::new);
+    let paths: Signal<Vec<PathSnapshot>> = use_signal(Vec::new);
     let ttfdb: Signal<Option<Duration>> = use_signal(|| None);
     let throughput: Signal<Option<node::ThroughputSnapshot>> = use_signal(|| None);
     let rtt_history: Signal<VecDeque<f64>> =
@@ -161,88 +160,24 @@ fn App() -> Element {
                 return;
             }
         };
-        let api_override = identity::load_api_secret_override();
-        let telemetry_disabled = telemetry_pref::telemetry_disabled();
+        let options = node::NodeOptions {
+            secret_key,
+            api_secret_override: identity::load_api_secret_override(),
+            telemetry_disabled: telemetry_pref::telemetry_disabled(),
+        };
 
-        let (cmd_tx_inner, cmd_rx) = mpsc::channel::<NodeCommand>(64);
-        let (id_tx, mut id_rx) = watch::channel::<String>(String::new());
-        let (state_tx, mut state_rx) = watch::channel(ConnectionState::Idle);
-        let (telemetry_tx, mut telemetry_rx) = watch::channel(TelemetryState::Off);
-        let (paths_tx, mut paths_rx) = watch::channel(Vec::<PathInfo>::new());
-        let (ttfdb_tx, mut ttfdb_rx) = watch::channel::<Option<Duration>>(None);
-        let (throughput_tx, mut throughput_rx) =
-            watch::channel::<Option<node::ThroughputSnapshot>>(None);
-        let (latency_tx, mut latency_rx) = watch::channel::<Option<Duration>>(None);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<NodeCommand>(64);
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NodeEvent>();
+        cmd_handle.clone().set(Some(NodeHandle { tx: cmd_tx }));
+        tokio::spawn(async move {
+            let _ = node::run_node(options, cmd_rx, event_tx).await;
+        });
 
-        cmd_handle
-            .clone()
-            .set(Some(NodeHandle { tx: cmd_tx_inner }));
-
-        let id_tx = Arc::new(id_tx);
-        let state_tx = Arc::new(state_tx);
-        let telemetry_tx = Arc::new(telemetry_tx);
-        let paths_tx = Arc::new(paths_tx);
-        let ttfdb_tx = Arc::new(ttfdb_tx);
-        let throughput_tx = Arc::new(throughput_tx);
-        let latency_tx = Arc::new(latency_tx);
-
-        {
-            let id_tx = id_tx.clone();
-            let state_tx = state_tx.clone();
-            let telemetry_tx = telemetry_tx.clone();
-            let paths_tx = paths_tx.clone();
-            let ttfdb_tx = ttfdb_tx.clone();
-            let throughput_tx = throughput_tx.clone();
-            let latency_tx = latency_tx.clone();
-            tokio::spawn(async move {
-                let _ = node::run_node(
-                    secret_key,
-                    api_override,
-                    telemetry_disabled,
-                    cmd_rx,
-                    NodeCallbacks {
-                        on_endpoint_id: Box::new(move |s| {
-                            let _ = id_tx.send(s);
-                        }),
-                        on_state: Box::new(move |s| {
-                            let _ = state_tx.send(s);
-                        }),
-                        on_telemetry: Box::new(move |t| {
-                            let _ = telemetry_tx.send(t);
-                        }),
-                        on_paths: Box::new(move |p| {
-                            let _ = paths_tx.send(p);
-                        }),
-                        on_ttfdb: Box::new(move |d| {
-                            let _ = ttfdb_tx.send(d);
-                        }),
-                        on_throughput: Box::new(move |t| {
-                            let _ = throughput_tx.send(Some(t));
-                        }),
-                        on_latency: Box::new(move |d| {
-                            let _ = latency_tx.send(Some(d));
-                        }),
-                    },
-                )
-                .await;
-            });
-        }
-
-        let _keep_senders = (
-            id_tx,
-            state_tx,
-            telemetry_tx,
-            paths_tx,
-            ttfdb_tx,
-            throughput_tx,
-            latency_tx,
-        );
-
-        loop {
-            tokio::select! {
-                Ok(()) = id_rx.changed() => endpoint_id.clone().set(id_rx.borrow().clone()),
-                Ok(()) = state_rx.changed() => {
-                    let new_state = state_rx.borrow().clone();
+        // Fold the node's event stream into the Dioxus signals.
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                NodeEvent::EndpointId(id) => endpoint_id.clone().set(id),
+                NodeEvent::ConnectionState(new_state) => {
                     record_event(event_log, start_instant, &new_state);
                     match &new_state {
                         // A fresh dial or an incoming probe takes over the
@@ -258,23 +193,13 @@ fn App() -> Element {
                     }
                     conn_state.clone().set(new_state);
                 }
-                Ok(()) = telemetry_rx.changed() => telemetry.clone().set(telemetry_rx.borrow().clone()),
-                Ok(()) = paths_rx.changed() => {
-                    let snapshot = paths_rx.borrow().clone();
-                    paths.clone().set(snapshot);
+                NodeEvent::Telemetry(state) => telemetry.clone().set(state),
+                NodeEvent::Paths(snapshot) => paths.clone().set(snapshot),
+                NodeEvent::Latency(sample) => {
+                    push_rtt_sample(rtt_history, sample.as_secs_f64() * 1000.0);
                 }
-                Ok(()) = latency_rx.changed() => {
-                    if let Some(sample) = *latency_rx.borrow() {
-                        push_rtt_sample(rtt_history, sample.as_secs_f64() * 1000.0);
-                    }
-                }
-                Ok(()) = ttfdb_rx.changed() => {
-                    ttfdb.clone().set(*ttfdb_rx.borrow());
-                }
-                Ok(()) = throughput_rx.changed() => {
-                    throughput.clone().set(throughput_rx.borrow().clone());
-                }
-                else => break,
+                NodeEvent::Ttfdb(elapsed) => ttfdb.clone().set(elapsed),
+                NodeEvent::Throughput(snapshot) => throughput.clone().set(Some(snapshot)),
             }
         }
     });
@@ -467,7 +392,7 @@ fn handle_send_diagnostics(
     err: AppError,
     endpoint_id: Signal<String>,
     conn_state: Signal<ConnectionState>,
-    paths: Signal<Vec<node::PathInfo>>,
+    paths: Signal<Vec<PathSnapshot>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
@@ -608,7 +533,7 @@ fn ConnectPage(
     conn_state: Signal<ConnectionState>,
     cmd_handle: Signal<Option<NodeHandle>>,
     peer_id_input: Signal<String>,
-    paths: Signal<Vec<PathInfo>>,
+    paths: Signal<Vec<PathSnapshot>>,
     rtt_history: Signal<VecDeque<f64>>,
     event_log: Signal<VecDeque<EventEntry>>,
     ttfdb: Signal<Option<Duration>>,

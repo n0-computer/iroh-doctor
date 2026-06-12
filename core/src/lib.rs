@@ -11,6 +11,9 @@
 //!   `iroh::NetReport` onto it.
 //! - [`monitor`]: helpers for the live connection monitor (path snapshots,
 //!   state derivation, time-to-first-direct-byte).
+//! - [`node`]: the headless doctor node behind the app: an actor that binds
+//!   the endpoint, routes incoming protocols, and answers commands with
+//!   events. No UI framework involved.
 //! - [`probe`]: the peer probe protocol (`iroh-pong-probe/0`): a passive
 //!   responder plus a client that measures latency over time and upload
 //!   throughput against a peer.
@@ -30,6 +33,7 @@ pub const NET_REPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 
 pub mod monitor;
 pub mod nat;
+pub mod node;
 pub mod probe;
 pub mod report;
 pub mod services;
