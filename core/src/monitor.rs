@@ -29,7 +29,7 @@ pub enum PathKind {
 }
 
 /// Snapshot of one path of an iroh connection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PathSnapshot {
     /// `Display` form of the remote address.
     pub addr: String,

@@ -1,26 +1,23 @@
 //! `iroh-doctor diagnostics` command.
 //!
 //! One command that paints the whole picture of the current network: a NAT
-//! classification on top of iroh's `NetReport`, which port-mapping protocols
-//! (UPnP/PCP/NAT-PMP) the local gateway offers, and one round of per-relay
-//! connect plus ping latency. The default output is a set of tables; `--json`
-//! emits the same data as a single structure for piping into another tool.
+//! classification on top of iroh's `NetReport`, the per-relay latencies iroh
+//! recorded while building the report, and the iroh-services checks (whose
+//! net_diagnostics covers the UPnP/PCP/NAT-PMP gateway protocols). The
+//! default output is a set of tables; `--json` emits the same data as a
+//! single structure for piping into another tool.
 //!
-//! The relay and port-map probes and the NAT classifier live in
-//! `iroh-doctor-core` so the app reports the same numbers; this module only
-//! orchestrates them and renders the tables.
-
-use std::net::SocketAddr;
+//! The report projections and the NAT classifier live in `iroh-doctor-core`
+//! so the app reports the same numbers; this module only orchestrates them
+//! and renders the tables.
 
 use anyhow::Context;
 use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher};
 use serde::Serialize;
 
 use iroh_doctor_core::fmt::{opt_bool, tribool_text};
-use iroh_doctor_core::nat::{classify_nat_type, ExtendedNetworkReport, NatType};
-use iroh_doctor_core::port_variation::{ExpectedExternal, PortVariationReport};
-use iroh_doctor_core::portmap::PortMapResult;
-use iroh_doctor_core::relay_probe::RelayProbeResult;
+use iroh_doctor_core::nat::{classify_net_report, NatType};
+use iroh_doctor_core::report::{relay_latencies, RelayLatencyRow};
 use iroh_doctor_core::services::DiagnosticsReport as ServicesDiagnostics;
 use iroh_doctor_core::NET_REPORT_TIMEOUT;
 
@@ -33,11 +30,8 @@ use crate::config::NodeConfig;
 pub struct Report {
     pub net_report: Option<NetReport>,
     pub nat: NatType,
-    /// Per-destination-port mapping probe against `--nat-probe` helpers.
-    /// `None` when no helpers were given.
-    pub port_variation: Option<PortVariationReport>,
-    pub port_map: Option<PortMapResult>,
-    pub relays: Vec<RelayProbeResult>,
+    /// Per-relay latencies recorded by iroh while building the net report.
+    pub relays: Vec<RelayLatencyRow>,
     /// iroh-services checks (ping + server-side net_diagnostics). `None` when
     /// services are opted out via `IROH_SERVICES_API_SECRET=""`.
     pub services: Option<ServicesBlock>,
@@ -52,43 +46,22 @@ pub struct ServicesBlock {
 }
 
 /// Runs every probe and prints the combined report.
-pub async fn diagnostics(
-    config: &NodeConfig,
-    no_port_map: bool,
-    no_relays: bool,
-    nat_probe: &[String],
-    json: bool,
-) -> anyhow::Result<()> {
+pub async fn diagnostics(config: &NodeConfig, json: bool) -> anyhow::Result<()> {
     let relay_map = config.relay_map()?.unwrap_or_else(RelayMap::empty);
 
     let endpoint = Endpoint::builder(presets::N0)
-        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .relay_mode(RelayMode::Custom(relay_map))
         .bind()
         .await?;
 
     // Run the actual work inside a helper so endpoint.close() always runs
     // even if one of the steps returns Err.
-    let result = report_inner(
-        &endpoint,
-        &relay_map,
-        no_port_map,
-        no_relays,
-        nat_probe,
-        json,
-    )
-    .await;
+    let result = report_inner(&endpoint, json).await;
     endpoint.close().await;
     result
 }
 
-async fn report_inner(
-    endpoint: &Endpoint,
-    relay_map: &RelayMap,
-    no_port_map: bool,
-    no_relays: bool,
-    nat_probe: &[String],
-    json: bool,
-) -> anyhow::Result<()> {
+async fn report_inner(endpoint: &Endpoint, json: bool) -> anyhow::Result<()> {
     // Wait for the first non-empty report with a hard ceiling. The reporter
     // streams updates indefinitely; without a timeout the command would hang
     // on a network with no DNS or no reachable STUN.
@@ -96,59 +69,16 @@ async fn report_inner(
         .await
         .context("net_report did not initialize within timeout")?;
 
-    // A NAT probe failure (bad hostname, DNS down, no helper) must not sink
-    // the rest of the report: this is a diagnostics tool, often run on a
-    // broken network, and the net_report already in hand is the point. Warn
-    // and continue with no port-variation data.
-    let port_variation = if nat_probe.is_empty() {
-        None
-    } else {
-        let expected = ExpectedExternal {
-            ipv4: net_report.global_v4.map(|a| *a.ip()),
-            ipv6: net_report.global_v6.map(|a| *a.ip()),
-        };
-        match run_nat_probe(nat_probe, expected).await {
-            Ok(pv) => Some(pv),
-            Err(e) => {
-                eprintln!("warning: NAT port probe skipped: {e:#}");
-                None
-            }
-        }
-    };
+    let nat = classify_net_report(&net_report);
+    // The per-relay latencies come out of the report iroh already built;
+    // no separate sweep needed.
+    let relays = relay_latencies(&net_report);
 
-    let mut extended = ExtendedNetworkReport::from_base_report(Some(net_report.clone()));
-    if let Some(pv) = &port_variation {
-        extended.mapping_varies_by_dest_port_ipv4 = pv.varies_ipv4;
-        extended.mapping_varies_by_dest_port_ipv6 = pv.varies_ipv6;
-    }
-    let nat = classify_nat_type(&extended);
-
-    // The gateway probe, the relay sweep, and the services checks are
-    // independent; run them concurrently so a degraded network costs the
-    // slowest stage's timeout rather than the sum of all three.
-    let (port_map, relays, services) = tokio::join!(
-        async {
-            if no_port_map {
-                None
-            } else {
-                Some(iroh_doctor_core::portmap::probe().await)
-            }
-        },
-        async {
-            if no_relays {
-                Vec::new()
-            } else {
-                iroh_doctor_core::relay_probe::probe_relays(relay_map).await
-            }
-        },
-        run_services(endpoint),
-    );
+    let services = run_services(endpoint).await;
 
     let report = Report {
         net_report: Some(net_report),
         nat,
-        port_variation,
-        port_map,
         relays,
         services,
     };
@@ -213,14 +143,6 @@ fn print_tables(r: &Report) {
             opt_bool(nr.and_then(|n| n.mapping_varies_by_dest())),
         ),
         kv(
-            "Mapping varies by port",
-            opt_bool(
-                r.port_variation
-                    .as_ref()
-                    .and_then(|pv| pv.varies_ipv4.or(pv.varies_ipv6)),
-            ),
-        ),
-        kv(
             "Captive portal",
             opt_bool(nr.and_then(|n| n.captive_portal)),
         ),
@@ -234,66 +156,14 @@ fn print_tables(r: &Report) {
     println!("{} - {}", r.nat, r.nat.description());
     println!();
 
-    if let Some(pv) = &r.port_variation {
-        let rows: Vec<Vec<String>> = pv
-            .observations
-            .iter()
-            .map(|o| {
-                vec![
-                    o.target.to_string(),
-                    opt_addr(o.observed),
-                    o.error.clone().unwrap_or_default(),
-                ]
-            })
-            .collect();
-        println!("NAT helper probes");
-        print!(
-            "{}",
-            markdown_table(&["Helper", "Observed mapping", "Note"], &rows)
-        );
-        if pv.varies_ipv4.is_none() && pv.varies_ipv6.is_none() {
-            println!(
-                "warning: port-variation verdict is unknown. Each helper must \
-                 sit outside this NAT and observe the public address above, \
-                 and two must share a host on different ports. A helper on \
-                 this network sees a private address and cannot measure it."
-            );
-        }
-        println!();
-    }
-
-    if let Some(pm) = &r.port_map {
-        let rows = vec![
-            kv("UPnP", tribool_text(pm.upnp)),
-            kv("PCP", tribool_text(pm.pcp)),
-            kv("NAT-PMP", tribool_text(pm.nat_pmp)),
-        ];
-        println!("Port mapping");
-        print!("{}", markdown_table(&["Protocol", "Available"], &rows));
-        if let Some(err) = &pm.error {
-            println!("warning: {err}");
-        }
-        println!();
-    }
-
     if !r.relays.is_empty() {
         let rows: Vec<Vec<String>> = r
             .relays
             .iter()
-            .map(|row| {
-                vec![
-                    row.url.clone(),
-                    fmt_opt_ms(row.connect_ms),
-                    fmt_opt_ms(row.ping_ms),
-                    row.error.clone().unwrap_or_default(),
-                ]
-            })
+            .map(|row| vec![row.url.clone(), fmt_opt_ms(Some(row.latency_ms))])
             .collect();
         println!("Relay latency");
-        print!(
-            "{}",
-            markdown_table(&["Relay", "Connect", "Ping", "Note"], &rows)
-        );
+        print!("{}", markdown_table(&["Relay", "Latency"], &rows));
     }
 
     if let Some(s) = &r.services {
@@ -313,75 +183,6 @@ fn print_tables(r: &Report) {
             println!("warning: {err}");
         }
     }
-}
-
-/// Resolves the `--nat-probe` helper addresses and runs the port-variation
-/// probe against them.
-async fn run_nat_probe(
-    entries: &[String],
-    expected: ExpectedExternal,
-) -> anyhow::Result<PortVariationReport> {
-    let targets = resolve_nat_probe_targets(entries).await?;
-    iroh_doctor_core::port_variation::probe_port_variation(&targets, expected).await
-}
-
-/// Resolves `--nat-probe` entries (`host:port`) to socket addresses.
-///
-/// A hostname is resolved once and the chosen address reused for every entry
-/// naming it, so two ports on one host stay comparable even when DNS would
-/// rotate between several addresses. IPv4 is preferred because the
-/// `nat-helper` default bind is IPv4, and DNS ordering (RFC 6724) often puts
-/// IPv6 first, which would point the probe at a port the helper does not
-/// serve.
-async fn resolve_nat_probe_targets(entries: &[String]) -> anyhow::Result<Vec<SocketAddr>> {
-    use std::collections::HashMap;
-    use std::net::IpAddr;
-
-    let mut resolved_hosts: HashMap<String, IpAddr> = HashMap::new();
-    let mut targets = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if let Ok(addr) = entry.parse::<SocketAddr>() {
-            targets.push(addr);
-            continue;
-        }
-        let (host, port) = split_host_port(entry)
-            .with_context(|| format!("invalid --nat-probe entry {entry:?}, expected host:port"))?;
-        let ip = match resolved_hosts.get(host) {
-            Some(ip) => *ip,
-            None => {
-                let candidates: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
-                    .await
-                    .with_context(|| format!("resolving {host:?}"))?
-                    .collect();
-                let ip = prefer_ipv4(&candidates)
-                    .with_context(|| format!("no addresses for {host:?}"))?;
-                resolved_hosts.insert(host.to_string(), ip);
-                ip
-            }
-        };
-        targets.push(SocketAddr::new(ip, port));
-    }
-    Ok(targets)
-}
-
-/// Picks one resolved address, preferring IPv4 over IPv6. Returns `None`
-/// only when `candidates` is empty.
-fn prefer_ipv4(candidates: &[SocketAddr]) -> Option<std::net::IpAddr> {
-    candidates
-        .iter()
-        .find(|a| a.is_ipv4())
-        .or_else(|| candidates.first())
-        .map(SocketAddr::ip)
-}
-
-/// Splits a `host:port` string on the last colon. IPv6 literals must use
-/// the bracketed form, which `SocketAddr::parse` already accepts upstream.
-fn split_host_port(entry: &str) -> Option<(&str, u16)> {
-    let (host, port) = entry.rsplit_once(':')?;
-    if host.is_empty() || host.contains(':') {
-        return None;
-    }
-    Some((host, port.parse().ok()?))
 }
 
 /// Builds a two-cell key/value row for the summary table.
@@ -438,64 +239,6 @@ fn fmt_opt_ms(ms: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn prefer_ipv4_picks_v4_then_falls_back() {
-        use std::net::IpAddr;
-        let v6: SocketAddr = "[2001:db8::1]:1".parse().unwrap();
-        let v4: SocketAddr = "203.0.113.1:1".parse().unwrap();
-        // v4 chosen even when listed after v6 (DNS often returns AAAA first).
-        assert_eq!(
-            prefer_ipv4(&[v6, v4]),
-            Some("203.0.113.1".parse::<IpAddr>().unwrap())
-        );
-        // Only v6 available: fall back to it rather than failing.
-        assert_eq!(
-            prefer_ipv4(&[v6]),
-            Some("2001:db8::1".parse::<IpAddr>().unwrap())
-        );
-        assert_eq!(prefer_ipv4(&[]), None);
-    }
-
-    #[tokio::test]
-    async fn resolve_targets_passes_ip_literals_through_unchanged() {
-        let targets = resolve_nat_probe_targets(&[
-            "203.0.113.7:3478".to_string(),
-            "203.0.113.7:3479".to_string(),
-        ])
-        .await
-        .unwrap();
-        assert_eq!(
-            targets,
-            vec![
-                "203.0.113.7:3478".parse().unwrap(),
-                "203.0.113.7:3479".parse().unwrap(),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn resolve_targets_rejects_malformed_entry() {
-        let err = resolve_nat_probe_targets(&["no-port-here".to_string()])
-            .await
-            .unwrap_err();
-        assert!(format!("{err:#}").contains("expected host:port"));
-    }
-
-    #[test]
-    fn split_host_port_handles_names_and_rejects_garbage() {
-        assert_eq!(
-            split_host_port("helper.example:3478"),
-            Some(("helper.example", 3478))
-        );
-        assert_eq!(split_host_port("localhost:1"), Some(("localhost", 1)));
-        // No port, empty host, bare IPv6 (must be bracketed, which the
-        // SocketAddr fast path upstream handles), bad port.
-        assert_eq!(split_host_port("helper.example"), None);
-        assert_eq!(split_host_port(":3478"), None);
-        assert_eq!(split_host_port("2001:db8::1:3478"), None);
-        assert_eq!(split_host_port("host:notaport"), None);
-    }
 
     #[test]
     fn fmt_opt_ms_formats_to_one_decimal_or_dash() {

@@ -1,43 +1,66 @@
 //! The Diagnostics tab: the local network environment, independent of any
-//! peer. Renders the net_report/NAT summary, the direct port-map probe, the
-//! per-relay latency panel, and the iroh-services diagnostics.
+//! peer. Renders the net_report/NAT summary, the per-relay latency panel,
+//! and the iroh-services diagnostics.
 
 use std::time::Duration;
 
 use dioxus::prelude::*;
 
+use iroh_doctor_core::report::RelayLatencyRow;
+
 use crate::identity;
 use crate::node::{DiagnosticsReport, NetReportSummary, NodeCommand, TelemetryState};
-use crate::portmap_probe::PortMapProbeResult;
-use crate::relay_probe::RelayProbeResult;
 use crate::telemetry_pref;
 use crate::NodeHandle;
 
 use super::diag_state::{
-    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
-    trigger_probe_relays, DiagState,
+    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_relays,
+    DiagState,
 };
 
-/// The network-environment report: a local net_report with a NAT
-/// classification, the direct port-map probe, per-relay latency, and the
-/// iroh-services diagnostics. These probe the local endpoint, the relays, and
-/// iroh-services rather than the connected peer, so they stay available even
-/// when disconnected (the same picture `iroh-doctor diagnostics` prints).
 #[component]
-pub fn DiagnosticsView(
+pub fn DiagnosticsPage(
+    cmd_handle: Signal<Option<NodeHandle>>,
+    telemetry: Signal<TelemetryState>,
+    services_ping_state: Signal<DiagState<Duration>>,
+    net_state: Signal<DiagState<DiagnosticsReport>>,
+    net_report_state: Signal<DiagState<NetReportSummary>>,
+    relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
+) -> Element {
+    rsx! {
+        div { class: "page",
+            h2 { class: "page-title", "Diagnostics" }
+            DiagnosticsView {
+                cmd_handle,
+                telemetry,
+                services_state: services_ping_state,
+                net_state,
+                net_report_state,
+                relays_state,
+            }
+        }
+    }
+}
+
+/// The network-environment report: a local net_report with a NAT
+/// classification, per-relay latency, and the iroh-services diagnostics
+/// (which include the UPnP/PCP/NAT-PMP gateway picture). These probe the
+/// local endpoint, the relays, and iroh-services rather than the connected
+/// peer, so they stay available even when disconnected (the same picture
+/// `iroh-doctor diagnostics` prints).
+#[component]
+fn DiagnosticsView(
     cmd_handle: Signal<Option<NodeHandle>>,
     telemetry: Signal<TelemetryState>,
     services_state: Signal<DiagState<Duration>>,
     net_state: Signal<DiagState<DiagnosticsReport>>,
     net_report_state: Signal<DiagState<NetReportSummary>>,
-    relays_state: Signal<DiagState<Vec<RelayProbeResult>>>,
-    portmap_state: Signal<DiagState<PortMapProbeResult>>,
+    relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
 ) -> Element {
     let busy = matches!(services_state(), DiagState::Running)
         || matches!(net_state(), DiagState::Running)
         || matches!(net_report_state(), DiagState::Running)
-        || matches!(relays_state(), DiagState::Running)
-        || matches!(portmap_state(), DiagState::Running);
+        || matches!(relays_state(), DiagState::Running);
 
     rsx! {
         div { class: "diagnostics",
@@ -52,20 +75,12 @@ pub fn DiagnosticsView(
                             trigger_net_diagnostics(cmd_handle, net_state);
                             trigger_probe_net_report(cmd_handle, net_report_state);
                             trigger_probe_relays(cmd_handle, relays_state);
-                            trigger_probe_portmap(cmd_handle, portmap_state);
                         },
                         "Refresh"
                     }
                 }
                 dl { class: "diag-table",
                     {render_net_report_rows(&net_report_state())}
-                }
-            }
-
-            section { class: "settings-section",
-                label { class: "label", "Direct port-map probe" }
-                dl { class: "diag-table",
-                    {render_portmap_rows(&portmap_state())}
                 }
             }
 
@@ -86,7 +101,7 @@ pub fn DiagnosticsView(
 }
 
 #[component]
-fn RelayLatencyPanel(relays_state: Signal<DiagState<Vec<RelayProbeResult>>>) -> Element {
+fn RelayLatencyPanel(relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>) -> Element {
     let state = relays_state();
     rsx! {
         section { class: "settings-section",
@@ -144,7 +159,6 @@ fn IrohServicesSection(
                         enabled.clone().set(next);
                         if let Some(handle) = cmd_handle.read().clone() {
                             let _ = handle
-                                .tx
                                 .try_send(NodeCommand::SetTelemetryEnabled { enabled: next });
                         }
                     },
@@ -182,7 +196,7 @@ fn IrohServicesSection(
                             saved_override.clone().set(trimmed.clone());
                         }
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::SaveApiSecret {
+                            let _ = handle.try_send(NodeCommand::SaveApiSecret {
                                 secret: trimmed,
                             });
                         }
@@ -197,7 +211,7 @@ fn IrohServicesSection(
                         let _ = identity::save_api_secret_override("");
                         saved_override.clone().set(String::new());
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.tx.try_send(NodeCommand::SaveApiSecret {
+                            let _ = handle.try_send(NodeCommand::SaveApiSecret {
                                 secret: String::new(),
                             });
                         }
@@ -351,13 +365,13 @@ fn render_net_report_rows(state: &DiagState<NetReportSummary>) -> Element {
     }
 }
 
-fn render_relay_rows(state: &DiagState<Vec<RelayProbeResult>>) -> Element {
+fn render_relay_rows(state: &DiagState<Vec<RelayLatencyRow>>) -> Element {
     match state {
         DiagState::Idle => rsx! {
             div { class: "diag-idle", "not probed yet - hit Refresh" }
         },
         DiagState::Running => rsx! {
-            div { class: "diag-running", "probing relays..." }
+            div { class: "diag-running", "reading net report..." }
         },
         DiagState::Err(e) => rsx! {
             div { class: "diag-err", "error: {e}" }
@@ -373,19 +387,15 @@ fn render_relay_rows(state: &DiagState<Vec<RelayProbeResult>>) -> Element {
                     thead {
                         tr {
                             th { "Relay" }
-                            th { class: "ping-rtt-col", "Connect" }
-                            th { class: "ping-rtt-col", "Ping" }
-                            th { "Status" }
+                            th { class: "ping-rtt-col", "Latency" }
                         }
                     }
                     tbody {
                         for r in rows.iter() {
                             tr {
                                 td { class: "mono transports-addr", title: "{r.url}", "{r.url}" }
-                                td { class: "ping-rtt-col mono", {render_opt_ms(r.connect_ms)} }
-                                td { class: "ping-rtt-col mono", {render_opt_ms(r.ping_ms)} }
-                                td {
-                                    {render_relay_status(r)}
+                                td { class: "ping-rtt-col mono",
+                                    span { class: "diag-ok", "{r.latency_ms:.1} ms" }
                                 }
                             }
                         }
@@ -396,60 +406,10 @@ fn render_relay_rows(state: &DiagState<Vec<RelayProbeResult>>) -> Element {
     }
 }
 
-fn render_opt_ms(ms: Option<f64>) -> Element {
-    match ms {
-        Some(v) => rsx! { span { class: "diag-ok", "{v:.1} ms" } },
-        None => rsx! { span { class: "diag-idle", "-" } },
-    }
-}
-
-fn render_relay_status(row: &RelayProbeResult) -> Element {
-    match &row.error {
-        None => rsx! { span { class: "diag-ok", "ok" } },
-        Some(msg) => rsx! { span { class: "diag-err", title: "{msg}", "{msg}" } },
-    }
-}
-
-fn render_portmap_rows(state: &DiagState<PortMapProbeResult>) -> Element {
-    match state {
-        DiagState::Idle => rsx! {
-            dt { "status" }
-            dd { class: "diag-idle", "not probed yet" }
-        },
-        DiagState::Running => rsx! {
-            dt { "status" }
-            dd { class: "diag-running", "probing..." }
-        },
-        DiagState::Err(e) => rsx! {
-            dt { "status" }
-            dd { class: "diag-err", "error: {e}" }
-        },
-        DiagState::Ok(r) => {
-            let mut rows = rsx! {
-                dt { "UPnP" }
-                dd { "{tribool(r.upnp)}" }
-                dt { "PCP" }
-                dd { "{tribool(r.pcp)}" }
-                dt { "NAT-PMP" }
-                dd { "{tribool(r.nat_pmp)}" }
-            };
-            if let Some(err) = &r.error {
-                rows = rsx! {
-                    {rows}
-                    dt { "warning" }
-                    dd { class: "diag-err", "{err}" }
-                };
-            }
-            rows
-        }
-    }
-}
-
 fn nat_kind_class(nat: iroh_doctor_core::nat::NatType) -> &'static str {
     use iroh_doctor_core::nat::NatType;
     match nat {
         NatType::Easy => "easy",
-        NatType::Medium => "medium",
         NatType::Hard => "hard",
         NatType::Unknown => "unknown",
     }

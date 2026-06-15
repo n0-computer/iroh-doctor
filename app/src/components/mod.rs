@@ -1,3 +1,4 @@
+mod connect_page;
 mod connection;
 mod diag_state;
 mod diagnostics;
@@ -5,17 +6,22 @@ mod endpoints;
 mod error_dialog;
 mod first_run_note;
 mod gossip;
+mod nav;
+mod status;
 
+pub use connect_page::ConnectPage;
 pub use connection::{ConnectView, EventEntry};
 pub use diag_state::{
-    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_portmap,
-    trigger_probe_relays, DiagState,
+    trigger_net_diagnostics, trigger_pings, trigger_probe_net_report, trigger_probe_relays,
+    DiagState,
 };
-pub use diagnostics::DiagnosticsView;
+pub use diagnostics::DiagnosticsPage;
 pub use endpoints::EndpointsView;
 pub use error_dialog::{AppError, ErrorDialog};
 pub use first_run_note::FirstRunNote;
 pub use gossip::GossipView;
+pub use nav::{Nav, Tab};
+pub use status::{short_event_label, status_kind, status_line};
 
 /// Truncates a long hex identifier (endpoint id, topic id, blob hash) to
 /// `head` + `...` + `tail` characters. Operates on `chars()` so it never

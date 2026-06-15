@@ -1,4 +1,5 @@
-//! Builds the diagnostics-bundle zip the error dialog hands to the user.
+//! Builds and saves the diagnostics-bundle zip the error dialog hands to
+//! the user.
 //!
 //! The bundle includes everything we can gather without a round-trip
 //! to disk-mounted secrets: the active error, the endpoint id, the
@@ -15,42 +16,40 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use dioxus::prelude::*;
 use iroh_doctor_core::fmt::opt_bool;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::components::{DiagState, EventEntry};
+use iroh_doctor_core::report::RelayLatencyRow;
+
+use crate::components::{short_event_label, AppError, DiagState, EventEntry};
 use crate::endpoints::{self, Endpoint};
-use crate::node::{NetReportSummary, PathInfo, ThroughputSnapshot};
-use crate::portmap_probe::PortMapProbeResult;
-use crate::relay_probe::RelayProbeResult;
+use crate::logging::log_dir;
+use crate::node::{ConnectionState, NetReportSummary, PathSnapshot, ThroughputSnapshot};
 
 /// Everything the export needs, cloned out of the App-level signals at
 /// the moment the user clicks Send diagnostics.
-pub struct Snapshot {
-    pub error_message: String,
-    pub endpoint_id: String,
-    pub conn_state_label: String,
-    pub paths: Vec<PathInfo>,
-    pub rtt_history: VecDeque<f64>,
-    pub events: VecDeque<EventEntry>,
-    pub net_report: Option<NetReportSummary>,
-    pub portmap: Option<PortMapProbeResult>,
-    pub portmap_err: Option<String>,
-    pub relays: Vec<RelayProbeResult>,
-    pub relays_err: Option<String>,
-    pub ttfdb: Option<Duration>,
-    pub throughput: Option<ThroughputSnapshot>,
-    pub endpoints: Vec<Endpoint>,
-    pub log_dir: Option<PathBuf>,
+struct Snapshot {
+    error_message: String,
+    endpoint_id: String,
+    conn_state_label: String,
+    paths: Vec<PathSnapshot>,
+    rtt_history: VecDeque<f64>,
+    events: VecDeque<EventEntry>,
+    net_report: Option<NetReportSummary>,
+    relays: Vec<RelayLatencyRow>,
+    relays_err: Option<String>,
+    ttfdb: Option<Duration>,
+    throughput: Option<ThroughputSnapshot>,
+    endpoints: Vec<Endpoint>,
+    log_dir: Option<PathBuf>,
 }
 
 /// Helper that lets the caller pull whichever pieces of state it has at
 /// hand without forcing every field to be populated.
 impl Snapshot {
-    pub fn extract_diag_state<T: Clone + 'static>(
-        state: &DiagState<T>,
-    ) -> (Option<T>, Option<String>) {
+    fn extract_diag_state<T: Clone + 'static>(state: &DiagState<T>) -> (Option<T>, Option<String>) {
         match state {
             DiagState::Ok(v) => (Some(v.clone()), None),
             DiagState::Err(e) => (None, Some(e.clone())),
@@ -59,8 +58,98 @@ impl Snapshot {
     }
 }
 
+/// Glue for the error dialog's "Send diagnostics" action: snapshot every
+/// relevant App-level signal, build the zip off the render path, and hand
+/// it to the platform save dialog. A failure feeds back into the error
+/// modal via `error_sink`.
+#[allow(clippy::too_many_arguments)]
+pub fn send(
+    err: AppError,
+    endpoint_id: Signal<String>,
+    conn_state: Signal<ConnectionState>,
+    paths: Signal<Vec<PathSnapshot>>,
+    rtt_history: Signal<VecDeque<f64>>,
+    event_log: Signal<VecDeque<EventEntry>>,
+    net_report_state: Signal<DiagState<NetReportSummary>>,
+    relays_state: Signal<DiagState<Vec<RelayLatencyRow>>>,
+    ttfdb: Signal<Option<Duration>>,
+    throughput: Signal<Option<ThroughputSnapshot>>,
+    endpoints_list: Signal<Vec<Endpoint>>,
+    mut error_sink: Signal<Option<AppError>>,
+) {
+    let (net_report, _) = Snapshot::extract_diag_state(&net_report_state());
+    let (relays, relays_err) = Snapshot::extract_diag_state(&relays_state());
+
+    let snapshot = Snapshot {
+        error_message: format!("[{}] {}", err.source, err.message),
+        endpoint_id: endpoint_id(),
+        conn_state_label: short_event_label(&conn_state()),
+        paths: paths(),
+        rtt_history: rtt_history(),
+        events: event_log(),
+        net_report,
+        relays: relays.unwrap_or_default(),
+        relays_err,
+        ttfdb: ttfdb(),
+        throughput: throughput(),
+        endpoints: endpoints_list(),
+        log_dir: log_dir(),
+    };
+    spawn(async move {
+        let result = async {
+            let bytes = build_zip(&snapshot).context("building diagnostics zip")?;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let filename = format!("iroh-doctor-app-diagnostics-{now}.zip");
+            save_zip(&filename, &bytes).await
+        }
+        .await;
+        if let Err(e) = result {
+            let msg = format!("{e:#}");
+            tracing::error!(err = %msg, "diagnostics export failed");
+            error_sink.set(Some(AppError::new("diagnostics export", msg)));
+        }
+    });
+}
+
+/// Desktop path: open a native save dialog via rfd and write the bytes
+/// to whichever location the user picks. Cancelling the dialog is `Ok`;
+/// only a failed write is an error worth surfacing.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+async fn save_zip(filename: &str, bytes: &[u8]) -> Result<()> {
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_file_name(filename)
+        .set_title("Save iroh-doctor-app diagnostics");
+    let Some(handle) = dialog.save_file().await else {
+        return Ok(());
+    };
+    handle
+        .write(bytes)
+        .await
+        .context("writing diagnostics zip")?;
+    Ok(())
+}
+
+/// Mobile path (iOS + Android): rfd has no usable backend, so write to the
+/// app's sandbox documents directory where the platform's Files browser
+/// exposes it. The user can share the file from there. Logs the resulting
+/// path so a developer inspecting the log file can find it without guessing.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+async fn save_zip(filename: &str, bytes: &[u8]) -> Result<()> {
+    let dir = dirs::document_dir()
+        .or_else(dirs::data_local_dir)
+        .context("no documents directory on this device")?;
+    let path = dir.join(filename);
+    std::fs::write(&path, bytes)
+        .with_context(|| format!("writing diagnostics zip to {}", path.display()))?;
+    tracing::info!(path = %path.display(), "wrote diagnostics zip");
+    Ok(())
+}
+
 /// Returns the zip bytes that the caller can write to disk.
-pub fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
+fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     {
         let mut zip = ZipWriter::new(&mut buf);
@@ -86,9 +175,6 @@ pub fn build_zip(snapshot: &Snapshot) -> Result<Vec<u8>> {
 
         zip.start_file("net_report.txt", opts)?;
         zip.write_all(net_report_section(snapshot).as_bytes())?;
-
-        zip.start_file("portmap.txt", opts)?;
-        zip.write_all(portmap_section(snapshot).as_bytes())?;
 
         zip.start_file("relays.csv", opts)?;
         zip.write_all(relays_csv(snapshot).as_bytes())?;
@@ -168,7 +254,7 @@ fn paths_section(s: &Snapshot) -> String {
             "{}        {:8} {:>7.1}    {}\n",
             if p.selected { "*" } else { " " },
             format!("{:?}", p.kind).to_lowercase(),
-            p.rtt_ms,
+            p.rtt.as_secs_f64() * 1000.0,
             p.addr,
         ));
     }
@@ -216,37 +302,14 @@ fn net_report_section(s: &Snapshot) -> String {
     out
 }
 
-fn portmap_section(s: &Snapshot) -> String {
-    if let Some(err) = &s.portmap_err {
-        return format!("error: {err}\n");
-    }
-    let Some(p) = &s.portmap else {
-        return "(portmap probe not run)\n".to_string();
-    };
-    let mut out = String::new();
-    out.push_str(&format!("upnp: {}\n", opt_bool(p.upnp)));
-    out.push_str(&format!("pcp: {}\n", opt_bool(p.pcp)));
-    out.push_str(&format!("nat_pmp: {}\n", opt_bool(p.nat_pmp)));
-    if let Some(err) = &p.error {
-        out.push_str(&format!("warning: {err}\n"));
-    }
-    out
-}
-
 fn relays_csv(s: &Snapshot) -> String {
-    let mut out = String::from("url,connect_ms,ping_ms,error\n");
+    let mut out = String::from("url,latency_ms,error\n");
     if let Some(err) = &s.relays_err {
-        out.push_str(&format!(",,,{}\n", csv_escape(err)));
+        out.push_str(&format!(",,{}\n", csv_escape(err)));
         return out;
     }
     for r in &s.relays {
-        out.push_str(&format!(
-            "{},{},{},{}\n",
-            csv_escape(&r.url),
-            r.connect_ms.map(|v| v.to_string()).unwrap_or_default(),
-            r.ping_ms.map(|v| v.to_string()).unwrap_or_default(),
-            csv_escape(r.error.as_deref().unwrap_or("")),
-        ));
+        out.push_str(&format!("{},{},\n", csv_escape(&r.url), r.latency_ms));
     }
     out
 }

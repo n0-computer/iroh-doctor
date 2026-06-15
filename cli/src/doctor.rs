@@ -3,7 +3,6 @@
 
 use std::{
     net::SocketAddr,
-    num::NonZeroU16,
     time::{Duration, Instant},
 };
 
@@ -58,44 +57,14 @@ pub enum Commands {
     /// Report on the current network environment.
     ///
     /// Paints the whole picture in one command: iroh's `NetReport` with a NAT
-    /// classification, which port-mapping protocols (UPnP/PCP/NAT-PMP) the
-    /// local gateway offers, and one round of per-relay connect plus ping
-    /// latency. Prints a set of tables by default, or `--json` for tooling.
+    /// classification, the per-relay latencies iroh recorded while building
+    /// the report, and the iroh-services checks (whose net_diagnostics covers
+    /// the UPnP/PCP/NAT-PMP gateway protocols). Prints a set of tables by
+    /// default, or `--json` for tooling.
     Diagnostics {
-        /// Skip the UPnP/PCP/NAT-PMP port-mapping probe.
-        #[clap(long, default_value_t = false)]
-        no_port_map: bool,
-        /// Skip the per-relay connect and ping latency sweep.
-        #[clap(long, default_value_t = false)]
-        no_relays: bool,
-        /// Probe these QAD helpers (host:port, comma separated) to measure
-        /// whether the NAT mapping varies by destination port.
-        ///
-        /// Two entries on the same host with different ports unlock the
-        /// `Easy` NAT classification. Run `iroh-doctor nat-helper` on a
-        /// reachable machine to get them.
-        #[clap(long, value_delimiter = ',')]
-        nat_probe: Vec<String>,
         /// Emit the report as JSON to stdout instead of tables.
         #[clap(long, default_value_t = false)]
         json: bool,
-    },
-    /// Serve two QUIC address discovery endpoints for `diagnostics
-    /// --nat-probe`.
-    ///
-    /// A NAT's mapping behavior across destination ports can only be
-    /// measured against one host listening on two ports, which the public
-    /// iroh relays do not offer. Run this on a machine the machine under
-    /// test can reach directly, then run `diagnostics --nat-probe` on the
-    /// machine under test.
-    NatHelper {
-        /// Address to bind both helpers to.
-        #[clap(long, default_value = "0.0.0.0")]
-        bind: std::net::IpAddr,
-        /// The two UDP ports to serve on, comma separated. 0 picks a free
-        /// port.
-        #[clap(long, value_delimiter = ',', default_value = "0,0")]
-        ports: Vec<u16>,
     },
     /// Wait for incoming connections and monitor each one live (latency,
     /// paths, throughput), the accepting side of `iroh-doctor connect`.
@@ -169,25 +138,6 @@ pub enum Commands {
         /// Default is `None`, which means the endpoint will bind to a random port.
         #[clap(long)]
         socket_addr: Option<SocketAddr>,
-    },
-    /// Attempt to get a port mapping to the given local port.
-    PortMap {
-        /// Protocol to use for port mapping. One of ["upnp", "nat_pmp", "pcp"].
-        protocol: String,
-        /// Local port to get a mapping.
-        local_port: NonZeroU16,
-        /// How long to wait for an external port to be ready in seconds.
-        #[clap(long, default_value_t = 10)]
-        timeout_secs: u64,
-    },
-    /// Get the latencies of the different relay url
-    ///
-    /// Tests the latencies of the default relay url and nodes. To test custom urls or nodes,
-    /// adjust the `Config`.
-    RelayUrls {
-        /// How often to execute.
-        #[clap(long, default_value_t = 5)]
-        count: usize,
     },
 }
 
@@ -422,24 +372,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         }
     };
     let cmd_res = match command {
-        Commands::Diagnostics {
-            no_port_map,
-            no_relays,
-            nat_probe,
-            json,
-        } => {
-            commands::diagnostics::diagnostics(config, no_port_map, no_relays, &nat_probe, json)
-                .await
-        }
-        Commands::NatHelper { bind, ports } => {
-            let [port_a, port_b] = ports[..] else {
-                anyhow::bail!(
-                    "--ports takes exactly two comma-separated ports, got {:?}",
-                    ports
-                );
-            };
-            commands::nat_helper::nat_helper(bind, (port_a, port_b)).await
-        }
+        Commands::Diagnostics { json } => commands::diagnostics::diagnostics(config, json).await,
         Commands::Connect {
             dial,
             secret_key,
@@ -509,15 +442,6 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             Ok(())
         }
-        Commands::PortMap {
-            protocol,
-            local_port,
-            timeout_secs,
-        } => {
-            commands::port_map::port_map(&protocol, local_port, Duration::from_secs(timeout_secs))
-                .await
-        }
-        Commands::RelayUrls { count } => commands::relay_urls::relay_urls(count, config).await,
     };
     if let Some(server) = metrics_server {
         server.shutdown().await;

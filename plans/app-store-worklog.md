@@ -101,3 +101,16 @@ upload succeeded: build 1 (0.1.0), delivery 52ee7635-a13e-4305-8b41-ad05e9df89fc
 Next: TestFlight smoke test on the iPhone once processing finishes, listing
 entry (copy in plans/app-store-listing-copy.md), privacy nutrition label
 (answers in plans/app-store-data-safety-forms.md), submit.
+
+## 2026-06-11 — iOS build 2 uploaded (clipboard fix)
+
+Build 1 on TestFlight showed the Copy button writing an empty clipboard when
+the iOS build runs on an Apple silicon Mac: WebKit's
+navigator.clipboard.writeText resolves ok but only the private
+com.apple.WebKit.custom-pasteboard-data type crosses the UIPasteboard ->
+NSPasteboard bridge; the text/plain payload is dropped. Fixed by writing
+through UIPasteboard directly on iOS (commit 0ddd764). Build 2 (0.1.0)
+packaged with the unchanged bundle-mobile.sh + package-ios-ipa.sh pipeline,
+VERIFY SUCCEEDED, upload succeeded: delivery
+f1c7549f-2b03-424d-a139-a77d0da20bfa. Verify on the Mac TestFlight install
+once processing finishes: click Copy, paste into another app.
