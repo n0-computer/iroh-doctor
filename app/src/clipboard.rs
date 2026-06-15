@@ -1,4 +1,27 @@
-//! Platform clipboard access for the Copy buttons.
+//! Platform clipboard access for the Copy and Paste buttons.
+
+/// Reads the system clipboard for the Paste button. Android's WebView never
+/// surfaces the long-press paste item, so we read the clipboard natively
+/// there; every other backend's Clipboard API works from JS. `None` when the
+/// clipboard is empty or access is denied.
+pub async fn read_clipboard() -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::android::clipboard_text()
+    }
+    #[cfg(all(not(target_os = "android"), any(feature = "desktop", feature = "mobile")))]
+    {
+        let mut eval = dioxus::prelude::document::eval(
+            "navigator.clipboard.readText().then(t => dioxus.send(t)).catch(() => dioxus.send(\"\"));",
+        );
+        let text = eval.recv::<String>().await.ok()?;
+        (!text.is_empty()).then_some(text)
+    }
+    #[cfg(all(not(target_os = "android"), not(any(feature = "desktop", feature = "mobile"))))]
+    {
+        None
+    }
+}
 
 pub fn copy_to_clipboard(_text: &str) {
     // On iOS, write through UIPasteboard instead of the JS Clipboard API.

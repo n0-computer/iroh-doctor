@@ -57,11 +57,26 @@ pub fn init(log_dir: Option<&PathBuf>) -> Option<tracing_appender::non_blocking:
     #[cfg(not(target_os = "ios"))]
     let oslog_layer: Option<tracing_subscriber::layer::Identity> = None;
 
+    // On Android stdout goes to /dev/null, so the stdout layer above is
+    // invisible. Mirror it into logcat (tag `iroh-doctor-app`), where
+    // `adb logcat -s iroh-doctor-app` and `dx`'s log stream pick it up.
+    #[cfg(target_os = "android")]
+    let logcat_layer = Some(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(paranoid_android::AndroidLogMakeWriter::new(
+                "iroh-doctor-app".to_owned(),
+            )),
+    );
+    #[cfg(not(target_os = "android"))]
+    let logcat_layer: Option<tracing_subscriber::layer::Identity> = None;
+
     tracing_subscriber::registry()
         .with(env_filter)
         .with(stdout_layer)
         .with(file_layer)
         .with(oslog_layer)
+        .with(logcat_layer)
         .init();
     guard
 }

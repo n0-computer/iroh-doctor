@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use dioxus::prelude::*;
 use tokio::sync::mpsc;
 
+#[cfg(target_os = "android")]
+mod android;
 mod clipboard;
 mod components;
 mod diagnostics_export;

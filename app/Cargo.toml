@@ -42,6 +42,17 @@ tracing-oslog = "0.3"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "UIPasteboard"] }
 
+# Android has no XDG home, so dirs::config_dir() returns None. We pull the app's
+# files dir off the Android Context over JNI instead (see identity::config_dir).
+# Versions match the ones tao/wry already pull in, so nothing extra is built.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+# An app's stdout/stderr is sent to /dev/null on Android, so the fmt stdout
+# layer is invisible. paranoid-android is a tracing MakeWriter that writes to
+# logcat instead, where `adb logcat` / `dx` can see it. See init_logging.
+paranoid-android = "0.2"
+
 [features]
 default = ["desktop"]
 web = ["dioxus/web"]

@@ -65,23 +65,31 @@ min_sdk = 24
 target_sdk = 35
 compile_sdk = 35
 
-# No [android.permissions] entries: the app needs only INTERNET, and dx 0.7.9's
-# AndroidManifest.xml template hardcodes that as a default (dioxus-cli
-# assets/android/gen/app/src/main/AndroidManifest.xml.hbs). Everything the app
-# does on Android - QUIC to peers/relays, DNS/pkarr address lookup, relay HTTPS
-# probes, the UPnP/NAT-PMP port-map probe (responses arrive unicast) - is
-# covered by INTERNET.
+# INTERNET is hardcoded into dx 0.7.9's AndroidManifest.xml template (dioxus-cli
+# assets/android/gen/app/src/main/AndroidManifest.xml.hbs) and covers the bulk
+# of what the app does: QUIC to peers/relays, DNS/pkarr lookup, relay HTTPS
+# probes, the UPnP/NAT-PMP port-map probe (responses arrive unicast).
 #
+# ACCESS_NETWORK_STATE is needed on top: iroh_dns reads the system DNS config
+# through Android's ConnectivityManager.getActiveNetwork (hickory's resolv
+# lookup), which the OS gates behind this permission. Without it iroh logs
+#   WARN iroh_dns::dns: Failed to read the system's DNS config, using fallback
+#   DNS servers. error=... ACCESS_NETWORK_STATE
+# and falls back to hardcoded resolvers - non-fatal, but we want the device's
+# real DNS. It is a normal (install-time) permission: declaring it here is the
+# whole fix, granted at install with no runtime prompt (requestPermissions only
+# applies to dangerous permissions). An earlier note claimed netwatch's
+# getifaddrs/ip route reading avoided ConnectivityManager - true for netwatch,
+# but the DNS-config read is a separate path that does hit it.
+[android.permissions]
+"android.permission.ACCESS_NETWORK_STATE" = { description = "Read the active network's DNS configuration." }
+
 # Deliberately omitted, do not cargo-cult them back in (Play flags unused
-# permissions):
-# - ACCESS_WIFI_STATE + CHANGE_WIFI_MULTICAST_STATE + a MulticastLock: only
-#   needed to RECEIVE multicast, i.e. mDNS discovery. The endpoint is built
-#   with iroh presets::N0 (app/src/node/mod.rs bind_endpoint), which does
-#   DNS/pkarr + relay discovery and no mDNS. Add these, plus a runtime
-#   MulticastLock, only if mDNS/local discovery ships later.
-# - ACCESS_NETWORK_STATE: iroh's netwatch reads routes via getifaddrs and
-#   /system/bin/ip on Android, not ConnectivityManager, so nothing calls an
-#   API that requires it.
+# permissions): ACCESS_WIFI_STATE + CHANGE_WIFI_MULTICAST_STATE + a MulticastLock
+# are only needed to RECEIVE multicast, i.e. mDNS discovery. The endpoint is
+# built with iroh presets::N0 (app/src/node/mod.rs bind_endpoint), which does
+# DNS/pkarr + relay discovery and no mDNS. Add these, plus a runtime
+# MulticastLock, only if mDNS/local discovery ships later.
 
 [web.app]
 

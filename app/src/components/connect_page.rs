@@ -8,7 +8,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use iroh::EndpointId;
 
-use crate::clipboard::copy_to_clipboard;
+use crate::clipboard::{copy_to_clipboard, read_clipboard};
 use crate::node::{ConnectionState, NodeCommand, PathSnapshot, ThroughputSnapshot};
 use crate::NodeHandle;
 
@@ -125,8 +125,24 @@ fn ConnectBar(
                     value: "{input_value}",
                     autocapitalize: "off",
                     autocorrect: "off",
+                    autocomplete: "off",
                     spellcheck: "false",
                     oninput: move |evt| { peer_id_input.clone().set(evt.value()); },
+                }
+                button {
+                    class: "btn",
+                    onclick: move |_| {
+                        let mut peer = peer_id_input;
+                        spawn(async move {
+                            if let Some(text) = read_clipboard().await {
+                                let text = text.trim();
+                                if !text.is_empty() {
+                                    peer.set(text.to_string());
+                                }
+                            }
+                        });
+                    },
+                    "Paste"
                 }
                 button {
                     class: "btn btn-primary",
