@@ -1,4 +1,4 @@
-//! NAT type classification from an `iroh::NetReport`.
+//! NAT type classification from an `iroh::unstable_net_report::NetReport`.
 //!
 //! Simplifies NAT behavior into an `Easy / Hard / Unknown` taxonomy based
 //! on expected P2P holepunching difficulty. The only behavioral input is
@@ -42,7 +42,7 @@ impl std::fmt::Display for NatType {
     }
 }
 
-/// Classifies NAT type from an [`iroh::NetReport`].
+/// Classifies NAT type from an [`iroh::unstable_net_report::NetReport`].
 ///
 /// Returns [`NatType::Unknown`] when there is no globally routable address,
 /// no UDP reachability, or no mapping-variation data.
@@ -53,7 +53,7 @@ impl std::fmt::Display for NatType {
 /// family that was not measured is ignored rather than dragging the result
 /// down.
 #[must_use]
-pub fn classify_net_report(report: &iroh::NetReport) -> NatType {
+pub fn classify_net_report(report: &iroh::unstable_net_report::NetReport) -> NatType {
     if report.global_v4.is_none() && report.global_v6.is_none() {
         return NatType::Unknown;
     }
@@ -94,12 +94,12 @@ mod tests {
 
     use super::*;
 
-    fn base_report() -> iroh::NetReport {
-        iroh::NetReport {
-            udp_v4: true,
-            global_v4: Some(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 1), 12345)),
-            ..Default::default()
-        }
+    // NetReport is #[non_exhaustive], so build it via Default and set fields.
+    fn base_report() -> iroh::unstable_net_report::NetReport {
+        let mut report = iroh::unstable_net_report::NetReport::default();
+        report.udp_v4 = true;
+        report.global_v4 = Some(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 1), 12345));
+        report
     }
 
     #[test]
@@ -124,18 +124,16 @@ mod tests {
     #[test]
     fn unknown_on_empty_report() {
         assert_eq!(
-            classify_net_report(&iroh::NetReport::default()),
+            classify_net_report(&iroh::unstable_net_report::NetReport::default()),
             NatType::Unknown
         );
     }
 
     #[test]
     fn unknown_when_no_global_addr() {
-        let report = iroh::NetReport {
-            udp_v4: true,
-            mapping_varies_by_dest_ipv4: Some(false),
-            ..Default::default()
-        };
+        let mut report = iroh::unstable_net_report::NetReport::default();
+        report.udp_v4 = true;
+        report.mapping_varies_by_dest_ipv4 = Some(false);
         assert_eq!(classify_net_report(&report), NatType::Unknown);
     }
 

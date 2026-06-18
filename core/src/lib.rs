@@ -8,7 +8,7 @@
 //!   and the app UI.
 //! - [`identity`]: read-or-create persistence for a raw 32-byte secret key.
 //! - [`nat`]: the NAT classification taxonomy and the function that maps an
-//!   `iroh::NetReport` onto it.
+//!   `iroh::unstable_net_report::NetReport` onto it.
 //! - [`monitor`]: helpers for the live connection monitor (path snapshots,
 //!   state derivation, time-to-first-direct-byte).
 //! - [`node`]: the headless doctor node behind the app: an actor that binds
@@ -17,7 +17,7 @@
 //! - [`probe`]: the peer probe protocol (`iroh-pong-probe/0`): a passive
 //!   responder plus a client that measures latency over time and upload
 //!   throughput against a peer.
-//! - [`report`]: UI-facing projections of `iroh::NetReport` (per-relay
+//! - [`report`]: UI-facing projections of `iroh::unstable_net_report::NetReport` (per-relay
 //!   latency rows).
 //! - [`services`]: iroh-services client setup, API-secret resolution, and the
 //!   ping + net_diagnostics queries.

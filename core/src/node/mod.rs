@@ -382,7 +382,7 @@ impl Node {
     fn spawn_net_report_probe<T: Send + 'static>(
         &self,
         reply: oneshot::Sender<Result<T, String>>,
-        project: impl FnOnce(&iroh::NetReport) -> Result<T, String> + Send + 'static,
+        project: impl FnOnce(&iroh::unstable_net_report::NetReport) -> Result<T, String> + Send + 'static,
     ) {
         let endpoint = self.endpoint.clone();
         tokio::spawn(async move {
@@ -558,7 +558,7 @@ impl Node {
 /// calls. A UI's refresh button therefore shows whatever the iroh-internal
 /// reporter has most recently observed; it does not force a fresh probe.
 /// iroh's reporter updates on its own schedule.
-async fn net_report(endpoint: &Endpoint) -> Result<iroh::NetReport, String> {
+async fn net_report(endpoint: &Endpoint) -> Result<iroh::unstable_net_report::NetReport, String> {
     use iroh::Watcher as _;
     tokio::time::timeout(NET_REPORT_TIMEOUT, endpoint.net_report().initialized())
         .await

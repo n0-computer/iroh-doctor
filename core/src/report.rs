@@ -1,9 +1,9 @@
-//! UI-facing projections of [`iroh::NetReport`] shared by the cli and the
+//! UI-facing projections of [`iroh::unstable_net_report::NetReport`] shared by the cli and the
 //! app, so both render the same numbers iroh measured.
 
 use serde::Serialize;
 
-/// Direct snapshot of `iroh::NetReport`, reshaped for a diagnostics view.
+/// Direct snapshot of `iroh::unstable_net_report::NetReport`, reshaped for a diagnostics view.
 /// Captures the NAT classification, IPv4 and IPv6 visibility, and the
 /// preferred relay so a front end can show a one-glance summary of the
 /// local network environment.
@@ -26,8 +26,8 @@ pub struct NetReportSummary {
     pub relays_seen: usize,
 }
 
-impl From<&iroh::NetReport> for NetReportSummary {
-    fn from(r: &iroh::NetReport) -> Self {
+impl From<&iroh::unstable_net_report::NetReport> for NetReportSummary {
+    fn from(r: &iroh::unstable_net_report::NetReport) -> Self {
         Self {
             nat: crate::nat::classify_net_report(r),
             global_v4: r.global_v4.map(|a| a.to_string()),
@@ -53,13 +53,13 @@ pub struct RelayLatencyRow {
     pub latency_ms: f64,
 }
 
-/// Projects the per-relay latencies out of a [`iroh::NetReport`], one row
+/// Projects the per-relay latencies out of a [`iroh::unstable_net_report::NetReport`], one row
 /// per relay, sorted ascending by latency.
 ///
 /// iroh records a latency per (relay, probe kind); this keeps the lowest
 /// per relay, matching how iroh itself picks `preferred_relay`.
 #[must_use]
-pub fn relay_latencies(report: &iroh::NetReport) -> Vec<RelayLatencyRow> {
+pub fn relay_latencies(report: &iroh::unstable_net_report::NetReport) -> Vec<RelayLatencyRow> {
     let mut lowest: std::collections::BTreeMap<String, f64> = Default::default();
     for (_probe, url, latency) in report.relay_latency.iter() {
         let ms = latency.as_secs_f64() * 1000.0;
@@ -86,6 +86,6 @@ mod tests {
 
     #[test]
     fn empty_report_yields_no_rows() {
-        assert!(relay_latencies(&iroh::NetReport::default()).is_empty());
+        assert!(relay_latencies(&iroh::unstable_net_report::NetReport::default()).is_empty());
     }
 }

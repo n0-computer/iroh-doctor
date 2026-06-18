@@ -12,7 +12,8 @@
 //! and renders the tables.
 
 use anyhow::Context;
-use iroh::{endpoint::presets, Endpoint, NetReport, RelayMap, RelayMode, Watcher};
+use iroh::unstable_net_report::NetReport;
+use iroh::{endpoint::presets, Endpoint, RelayMap, RelayMode, Watcher};
 use serde::Serialize;
 
 use iroh_doctor_core::fmt::{opt_bool, tribool_text};
