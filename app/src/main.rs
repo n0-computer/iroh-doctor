@@ -46,6 +46,23 @@ fn main() {
     let log_dir = logging::log_dir();
     let _log_guard = logging::init(log_dir.as_ref());
 
+    // The desktop window title and taskbar icon are set at runtime: dx's
+    // `[bundle] icon` only generates the packaged .app/.exe icon set, not the
+    // live window chrome. Without this the window is titled "Dioxus app" with
+    // the default Dioxus icon. Mobile/web don't have a desktop window, so they
+    // keep the plain launch.
+    #[cfg(feature = "desktop")]
+    {
+        use dioxus::desktop::{icon_from_memory, tao::window::Icon, Config, WindowBuilder};
+
+        let mut cfg = Config::new().with_window(WindowBuilder::new().with_title("iroh doctor"));
+        if let Ok(icon) = icon_from_memory::<Icon>(include_bytes!("../assets/icon/icon-master.png"))
+        {
+            cfg = cfg.with_icon(icon);
+        }
+        dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
+    }
+    #[cfg(not(feature = "desktop"))]
     dioxus::launch(App);
 }
 
