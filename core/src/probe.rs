@@ -1,39 +1,37 @@
-//! Peer probe protocol (`iroh-pong-probe/0`): latency over time and upload
+//! Peer probe protocol (`iroh-doctor/probe/1`): latency over time and
 //! throughput against a peer.
 //!
-//! One bidi stream carries the whole exchange. The active side (the
-//! [`ProbeClient`]) sends `Ping`s and times the matching `Pong`s, and may
-//! send an `UploadStart` followed by raw bytes to measure upload
-//! throughput. The passive side ([`handle_connection`]) echoes pings and
-//! drains uploads.
+//! One bidi stream *per request*. A request is one of [`ping`], [`upload`], or
+//! [`download`]; the client opens a fresh stream, writes a `u32` length prefix
+//! and a postcard-encoded [`Request`] header, then for a transfer streams raw
+//! bytes. Pings ride a high-priority stream so a liveness ping still completes
+//! promptly while a bulk transfer saturates the path - which only works because
+//! the responder serves every stream on a connection *concurrently* (see
+//! [`handle_connection`]).
 //!
-//! The responder is built for continuous monitoring: it echoes pings
-//! without a count cap (a `Pong` is cheap) and keeps serving after an
-//! upload, so a client can ping for as long as it likes and interleave the
-//! occasional throughput measurement. There are no protocol-level timeouts:
-//! a vanished peer surfaces as a stream error once iroh's connection idle
-//! timeout fires (iroh's default transport config keeps paths alive with
-//! heartbeats and idles dead ones out), and a quiet-but-alive peer is left
-//! alone. The upload size is capped so a peer cannot make the responder
-//! drain an unbounded stream.
+//! There are no protocol-level timeouts: a vanished peer surfaces as a stream
+//! error once iroh's connection idle timeout fires (iroh's default transport
+//! config keeps paths alive with heartbeats and idles dead ones out), and a
+//! quiet-but-alive peer is left alone. Transfer sizes are capped so a peer
+//! cannot make the responder read or write an unbounded stream.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use iroh::endpoint;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::{mpsc, Semaphore};
+use tokio::task::JoinSet;
 use tracing::warn;
 
-/// ALPN for the peer probe. Must stay byte-stable for interop with deployed
-/// peers (the app registers this same ALPN).
-//
-// TODO(version): the trailing `/0` is the wire-format version. Any change
-// to `Frame` (variants, fields, encoding) must bump to `/1` and accept both
-// `/0` and `/1` on the passive side for one release so a mixed-version
-// deployment does not hard-fail.
-pub const ALPN: &[u8] = b"iroh-pong-probe/0";
+/// ALPN for the peer probe. `/1` is the request-per-stream wire format that
+/// replaced the original frame-based `/0`; the two are not interoperable, so a
+/// wire-format change must bump this and the responder must accept both for one
+/// release to avoid hard-failing a mixed-version deployment.
+pub const ALPN: &[u8] = b"iroh-doctor/probe/1";
 
 /// Application close code a responder sends when it rejects a probe
 /// connection because it is already serving its maximum number of peers.
@@ -43,32 +41,39 @@ pub const AT_CAPACITY_CLOSE_CODE: u32 = 1;
 /// Close reason paired with [`AT_CAPACITY_CLOSE_CODE`].
 pub const AT_CAPACITY_CLOSE_REASON: &[u8] = b"probe responder at capacity";
 
-/// Upper bound on `UploadStart::bytes` the responder will accept. Anything
-/// larger fails immediately so a peer cannot make us drain forever.
-const MAX_UPLOAD_BYTES: u64 = 16 * 1024 * 1024;
+/// Upper bound on a single transfer the responder will read or write. Anything
+/// larger fails immediately so a peer cannot make us stream forever.
+pub const MAX_TRANSFER_BYTES: u64 = 256 * 1024 * 1024;
 
-/// Write granularity for the upload payload.
-const UPLOAD_CHUNK: usize = 32 * 1024;
+/// Streaming chunk size for transfer payloads.
+const CHUNK: usize = 64 * 1024;
 
-/// Wire message: ping/pong rounds interleaved with single uploads.
+/// Stream priority for a ping, above the default (0) so a liveness ping is
+/// scheduled ahead of bulk transfer data on the same connection.
+const PING_PRIORITY: i32 = 1;
+
+/// Maximum number of request streams served at once on one connection. The
+/// probe ALPN is unauthenticated, so this bounds how much work and memory a
+/// single peer can pin (each transfer stream can be up to
+/// [`MAX_TRANSFER_BYTES`]).
+const MAX_STREAMS_PER_CONN: usize = 16;
+
+/// One probe request, sent as the postcard header of a fresh bidi stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
-pub enum Frame {
-    /// Active side sends a ping carrying a nonce.
-    Ping(u32),
-    /// Passive side echoes the ping's nonce.
-    Pong(u32),
-    /// Active side announces it is about to upload `bytes` raw bytes.
-    UploadStart {
-        /// Number of bytes that follow. Bounded by [`MAX_UPLOAD_BYTES`].
-        bytes: u64,
-    },
-    /// Passive side acknowledges it received the full upload.
-    UploadDone,
+enum Request {
+    /// Liveness check: the responder replies with a single byte.
+    Ping,
+    /// The client streams `bytes` to the responder, which drains and acks them
+    /// (by closing its send side). Bounded by [`MAX_TRANSFER_BYTES`].
+    Upload { bytes: u64 },
+    /// The responder streams `bytes` to the client. Bounded by
+    /// [`MAX_TRANSFER_BYTES`].
+    Download { bytes: u64 },
 }
 
 /// Observable events emitted by the passive side as it serves a probe
-/// stream. Use [`handle_connection_with`] to receive these from the
-/// responder; the app side surfaces them as throughput readouts.
+/// connection. Use the `events` channel of [`handle_connection`] to receive
+/// these; the app side surfaces them as throughput readouts.
 #[derive(Debug, Clone)]
 pub enum ProbeEvent {
     /// The responder drained an upload of `bytes` bytes in `elapsed` and
@@ -93,7 +98,7 @@ pub struct ClientConfig {
     /// Delay between successive pings.
     pub ping_interval: Duration,
     /// Bytes to upload on each throughput sample. Bounded by
-    /// [`MAX_UPLOAD_BYTES`]; a larger value fails the upload immediately.
+    /// [`MAX_TRANSFER_BYTES`]; a larger value fails the upload immediately.
     pub upload_bytes: u64,
     /// Upload once every this many pings, counting the first (nonce 0). Zero
     /// disables throughput sampling and runs latency only.
@@ -101,8 +106,7 @@ pub struct ClientConfig {
 }
 
 impl Default for ClientConfig {
-    /// One ping per second, a 1 MiB upload every tenth ping. These are the
-    /// values the cli and app monitors used before [`run_client`] existed.
+    /// One ping per second, a 1 MiB upload every tenth ping.
     fn default() -> Self {
         Self {
             ping_interval: Duration::from_secs(1),
@@ -136,47 +140,20 @@ pub struct ClientEnd {
 /// [`ClientSample`] on `samples` per ping and per upload until a ping or
 /// upload fails, the peer goes away, or the sample consumer is dropped.
 ///
-/// This is the shared monitor loop behind both `iroh-doctor connect` and the
-/// app's Connect action, so both report latency and throughput the same way.
-/// Latency and path state are also observable independently via
-/// [`crate::monitor`]; callers that render a graph from QUIC's smoothed RTT
-/// can ignore [`ClientSample::Latency`] and use these samples only to drive
-/// probe traffic and surface throughput.
+/// Each ping and each upload opens its own bidi stream; pings use a
+/// high-priority stream. This is the shared monitor loop behind both
+/// `iroh-doctor connect` and the app's Connect action.
 ///
 /// Returns a [`ClientEnd`] describing why the loop stopped. It does not error:
 /// a dead peer is the normal end of a monitor session, not a failure.
 pub async fn run_client(
     conn: &endpoint::Connection,
     config: ClientConfig,
-    samples: tokio::sync::mpsc::Sender<ClientSample>,
+    samples: mpsc::Sender<ClientSample>,
 ) -> ClientEnd {
-    let (mut send, mut recv) = match conn.open_bi().await {
-        Ok(streams) => streams,
-        Err(cause) => {
-            return ClientEnd {
-                phase: "setup",
-                cause: format!("open probe bidi stream: {cause:#}"),
-            }
-        }
-    };
-    drive_client(&mut send, &mut recv, config, &samples).await
-}
-
-/// The [`run_client`] loop, generic over the stream types so it can run over
-/// an in-memory duplex pair in tests without a QUIC connection.
-async fn drive_client<S, R>(
-    send: &mut S,
-    recv: &mut R,
-    config: ClientConfig,
-    samples: &tokio::sync::mpsc::Sender<ClientSample>,
-) -> ClientEnd
-where
-    S: AsyncWrite + Unpin,
-    R: AsyncRead + Unpin,
-{
     let mut nonce: u32 = 0;
     loop {
-        match ping_once(send, recv, nonce).await {
+        match ping(conn).await {
             Ok(rtt) => {
                 if samples
                     .send(ClientSample::Latency { nonce, rtt })
@@ -195,7 +172,7 @@ where
         }
 
         if config.upload_every != 0 && nonce.is_multiple_of(config.upload_every) {
-            match upload_once(send, recv, config.upload_bytes).await {
+            match upload(conn, config.upload_bytes).await {
                 Ok(elapsed) => {
                     if samples
                         .send(ClientSample::Throughput {
@@ -231,126 +208,185 @@ fn consumer_gone() -> ClientEnd {
     }
 }
 
-/// Serves the passive side of one probe stream until the client closes it
-/// or the connection ends (iroh's idle timeout reaps a vanished peer).
-/// Pass an `events` channel to observe [`ProbeEvent`]s as they happen (the
-/// app surfaces them as throughput readouts); `None` serves silently.
-pub async fn handle_connection(
-    conn: endpoint::Connection,
-    events: Option<tokio::sync::mpsc::Sender<ProbeEvent>>,
-) -> Result<()> {
-    let (send, recv) = conn.accept_bi().await.context("accept probe bidi stream")?;
-    serve_stream(send, recv, events).await
+// --- Client side: each request opens its own bidi stream. ---
+
+/// Sends one ping over a fresh high-priority stream and returns the round-trip
+/// time. The timer starts after the stream is open, so it reflects the round
+/// trip rather than stream setup.
+pub async fn ping(conn: &endpoint::Connection) -> Result<Duration> {
+    let (mut send, mut recv) = conn.open_bi().await.context("open ping stream")?;
+    let _ = send.set_priority(PING_PRIORITY);
+    let started = Instant::now();
+    write_request(&mut send, Request::Ping).await?;
+    send.finish().context("finish ping stream")?;
+    let mut pong = [0u8; 1];
+    recv.read_exact(&mut pong).await.context("read pong")?;
+    Ok(started.elapsed())
 }
 
-async fn serve_stream<S, R>(
-    mut send: S,
-    mut recv: R,
-    events: Option<tokio::sync::mpsc::Sender<ProbeEvent>>,
+/// Uploads `bytes` to the peer and returns the elapsed time, measured until
+/// the responder has drained the whole stream and closed its side.
+pub async fn upload(conn: &endpoint::Connection, bytes: u64) -> Result<Duration> {
+    let (mut send, mut recv) = conn.open_bi().await.context("open upload stream")?;
+    let started = Instant::now();
+    write_request(&mut send, Request::Upload { bytes }).await?;
+    write_payload(&mut send, bytes).await?;
+    send.finish().context("finish upload stream")?;
+    // The responder closes its send side once it has drained the upload.
+    recv.read_to_end(0).await.context("await upload ack")?;
+    Ok(started.elapsed())
+}
+
+/// Downloads `bytes` from the peer and returns the elapsed time.
+pub async fn download(conn: &endpoint::Connection, bytes: u64) -> Result<Duration> {
+    let (mut send, mut recv) = conn.open_bi().await.context("open download stream")?;
+    let started = Instant::now();
+    write_request(&mut send, Request::Download { bytes }).await?;
+    send.finish().context("finish download request")?;
+    let got = drain(&mut recv, bytes).await?;
+    if got != bytes {
+        bail!("short download: got {got} of {bytes}");
+    }
+    Ok(started.elapsed())
+}
+
+// --- Server side: accept and dispatch request streams. ---
+
+/// Serves the passive side of one probe connection until the client stops
+/// opening streams or the connection ends (iroh's idle timeout reaps a
+/// vanished peer). Each accepted stream carries one [`Request`] and is served
+/// concurrently, so a liveness ping is answered while a bulk transfer is still
+/// draining; concurrency is capped at [`MAX_STREAMS_PER_CONN`]. Pass an
+/// `events` channel to observe [`ProbeEvent`]s as they happen (the app
+/// surfaces them as throughput readouts); `None` serves silently.
+pub async fn handle_connection(
+    conn: endpoint::Connection,
+    events: Option<mpsc::Sender<ProbeEvent>>,
+) -> Result<()> {
+    let limit = Arc::new(Semaphore::new(MAX_STREAMS_PER_CONN));
+    // Serve tasks are owned here, so they are aborted the moment this returns
+    // (the connection closed) rather than lingering on dropped streams.
+    let mut streams = JoinSet::new();
+    loop {
+        // Reap finished serve tasks so the set does not grow without bound.
+        while streams.try_join_next().is_some() {}
+        let (mut send, mut recv) = match conn.accept_bi().await {
+            Ok(streams) => streams,
+            // The connection closed; no more requests will arrive.
+            Err(_) => break,
+        };
+        // Block for a slot before serving the next stream, bounding how many an
+        // unauthenticated peer can pin at once.
+        let Ok(permit) = limit.clone().acquire_owned().await else {
+            break;
+        };
+        let events = events.clone();
+        streams.spawn(async move {
+            let _permit = permit;
+            if let Err(e) = serve(&mut send, &mut recv, events.as_ref()).await {
+                warn!(err = %e, "probe: serving request failed");
+            }
+            // Closing our send side acks an upload and ends a ping/download.
+            let _ = send.finish();
+        });
+    }
+    Ok(())
+}
+
+/// Serves one accepted request stream: reads the [`Request`] header and
+/// fulfills it. Generic over the stream types so it can run over an in-memory
+/// duplex pair in tests. The caller finishes `send` afterwards.
+async fn serve<S, R>(
+    send: &mut S,
+    recv: &mut R,
+    events: Option<&mpsc::Sender<ProbeEvent>>,
 ) -> Result<()>
 where
     S: AsyncWrite + Unpin,
     R: AsyncRead + Unpin,
 {
-    loop {
-        let frame = match read_frame(&mut recv).await {
-            Ok(f) => f,
-            // Closed, connection gone, or malformed: the client is done
-            // with us.
-            Err(_) => break,
-        };
-        match frame {
-            Frame::Ping(n) => write_frame(&mut send, &Frame::Pong(n)).await?,
-            Frame::UploadStart { bytes } => {
-                if bytes > MAX_UPLOAD_BYTES {
-                    warn!(bytes, "probe: upload too large, refusing");
-                    break;
-                }
-                let mut remaining = bytes;
-                let mut buf = vec![0u8; UPLOAD_CHUNK];
-                let drain_started = Instant::now();
-                while remaining > 0 {
-                    let take = remaining.min(buf.len() as u64) as usize;
-                    recv.read_exact(&mut buf[..take])
-                        .await
-                        .context("upload drain")?;
-                    remaining -= take as u64;
-                }
-                let elapsed = drain_started.elapsed();
-                write_frame(&mut send, &Frame::UploadDone).await?;
-                if let Some(events) = events.as_ref() {
-                    // Best-effort; drop the event if the consumer is gone.
-                    let _ = events.try_send(ProbeEvent::UploadCompleted { bytes, elapsed });
-                }
+    match read_request(recv).await? {
+        Request::Ping => send.write_all(&[0u8]).await.context("write pong")?,
+        Request::Upload { bytes } => {
+            check_size(bytes)?;
+            let started = Instant::now();
+            let got = drain(recv, bytes).await?;
+            if got != bytes {
+                bail!("short upload: got {got} of {bytes}");
             }
-            Frame::Pong(_) | Frame::UploadDone => {
-                warn!(?frame, "probe: unexpected client frame");
-                break;
+            let elapsed = started.elapsed();
+            if let Some(events) = events {
+                // Best-effort; drop the event if the consumer is gone.
+                let _ = events.try_send(ProbeEvent::UploadCompleted { bytes, elapsed });
             }
         }
+        Request::Download { bytes } => {
+            check_size(bytes)?;
+            write_payload(send, bytes).await?;
+        }
     }
-    let _ = send.shutdown().await;
     Ok(())
 }
 
-async fn ping_once<S, R>(send: &mut S, recv: &mut R, nonce: u32) -> Result<Duration>
-where
-    S: AsyncWrite + Unpin,
-    R: AsyncRead + Unpin,
-{
-    let started = Instant::now();
-    write_frame(send, &Frame::Ping(nonce)).await?;
-    match read_frame(recv).await? {
-        Frame::Pong(n) if n == nonce => Ok(started.elapsed()),
-        other => anyhow::bail!("unexpected reply to ping {nonce}: {other:?}"),
+fn check_size(bytes: u64) -> Result<()> {
+    if bytes > MAX_TRANSFER_BYTES {
+        bail!("transfer too large: {bytes} > {MAX_TRANSFER_BYTES}");
     }
-}
-
-async fn upload_once<S, R>(send: &mut S, recv: &mut R, bytes: u64) -> Result<Duration>
-where
-    S: AsyncWrite + Unpin,
-    R: AsyncRead + Unpin,
-{
-    write_frame(send, &Frame::UploadStart { bytes }).await?;
-    let payload = vec![0u8; UPLOAD_CHUNK];
-    let mut written = 0u64;
-    let started = Instant::now();
-    while written < bytes {
-        let take = (bytes - written).min(payload.len() as u64) as usize;
-        send.write_all(&payload[..take])
-            .await
-            .context("upload write")?;
-        written += take as u64;
-    }
-    match read_frame(recv).await? {
-        Frame::UploadDone => Ok(started.elapsed()),
-        other => anyhow::bail!("unexpected reply to upload: {other:?}"),
-    }
-}
-
-async fn write_frame<W: AsyncWrite + Unpin>(send: &mut W, frame: &Frame) -> Result<()> {
-    let mut buf = [0u8; Frame::POSTCARD_MAX_SIZE];
-    let encoded = postcard::to_slice(frame, &mut buf).context("encode frame")?;
-    let len = encoded.len() as u16;
-    send.write_all(&len.to_le_bytes()).await?;
-    send.write_all(encoded).await?;
     Ok(())
 }
 
-// Not cancel-safe: cancelling mid-read leaves the stream mid-frame. No
-// caller resumes a cancelled read; the stream is dropped instead.
-async fn read_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Frame> {
-    let mut len_buf = [0u8; 2];
-    recv.read_exact(&mut len_buf)
+// --- Framing helpers, generic for testability. ---
+
+async fn write_request<W: AsyncWrite + Unpin>(send: &mut W, request: Request) -> Result<()> {
+    let mut buf = [0u8; Request::POSTCARD_MAX_SIZE];
+    let encoded = postcard::to_slice(&request, &mut buf).context("encode request")?;
+    send.write_u32(encoded.len() as u32)
         .await
-        .context("read frame length")?;
-    let len = u16::from_le_bytes(len_buf) as usize;
-    if len > Frame::POSTCARD_MAX_SIZE {
-        anyhow::bail!("frame too large: {len}");
+        .context("write header len")?;
+    send.write_all(encoded).await.context("write header")?;
+    Ok(())
+}
+
+async fn read_request<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Request> {
+    let len = recv.read_u32().await.context("read header len")? as usize;
+    if len > Request::POSTCARD_MAX_SIZE {
+        bail!("request header too large: {len}");
     }
     let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf).await.context("read frame body")?;
-    postcard::from_bytes(&buf).context("decode frame")
+    recv.read_exact(&mut buf).await.context("read header")?;
+    postcard::from_bytes(&buf).context("decode request")
+}
+
+/// Writes `bytes` zero bytes in [`CHUNK`]-sized pieces.
+async fn write_payload<W: AsyncWrite + Unpin>(send: &mut W, bytes: u64) -> Result<()> {
+    let zeros = [0u8; CHUNK];
+    let mut remaining = bytes;
+    while remaining > 0 {
+        let take = remaining.min(CHUNK as u64) as usize;
+        send.write_all(&zeros[..take])
+            .await
+            .context("write payload")?;
+        remaining -= take as u64;
+    }
+    Ok(())
+}
+
+/// Reads the stream to EOF and returns how many bytes it carried, bailing if it
+/// runs past `limit` (the announced, [`check_size`]-bounded size) so a peer
+/// cannot make us read an unbounded stream off a mis-announced transfer.
+async fn drain<R: AsyncRead + Unpin>(recv: &mut R, limit: u64) -> Result<u64> {
+    let mut buf = [0u8; CHUNK];
+    let mut total = 0u64;
+    loop {
+        let n = recv.read(&mut buf).await.context("drain stream")?;
+        if n == 0 {
+            return Ok(total);
+        }
+        total += n as u64;
+        if total > limit {
+            bail!("transfer exceeded announced {limit} bytes");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -359,32 +395,33 @@ mod tests {
 
     use super::*;
 
-    /// Round-trip every Frame variant through postcard so a future
+    /// Round-trip every Request variant through postcard so a future
     /// serialization-shape change fails loudly here.
     #[test]
-    fn frame_postcard_roundtrip() {
+    fn request_postcard_roundtrip() {
         let cases = [
-            Frame::Ping(0),
-            Frame::Ping(u32::MAX),
-            Frame::Pong(42),
-            Frame::UploadStart { bytes: 0 },
-            Frame::UploadStart {
-                bytes: MAX_UPLOAD_BYTES,
+            Request::Ping,
+            Request::Upload { bytes: 0 },
+            Request::Upload {
+                bytes: MAX_TRANSFER_BYTES,
             },
-            Frame::UploadDone,
+            Request::Download { bytes: 1 << 20 },
         ];
-        let mut buf = [0u8; Frame::POSTCARD_MAX_SIZE];
-        for frame in cases {
-            let encoded = postcard::to_slice(&frame, &mut buf).expect("encode");
-            let decoded: Frame = postcard::from_bytes(encoded).expect("decode");
-            assert_eq!(frame, decoded, "frame did not survive postcard roundtrip");
+        let mut buf = [0u8; Request::POSTCARD_MAX_SIZE];
+        for request in cases {
+            let encoded = postcard::to_slice(&request, &mut buf).expect("encode");
+            let decoded: Request = postcard::from_bytes(encoded).expect("decode");
+            assert_eq!(
+                request, decoded,
+                "request did not survive postcard roundtrip"
+            );
         }
     }
 
     #[test]
-    fn max_upload_bytes_is_bounded() {
-        const _: () = assert!(MAX_UPLOAD_BYTES >= 1024 * 1024);
-        const _: () = assert!(MAX_UPLOAD_BYTES <= 256 * 1024 * 1024);
+    fn max_transfer_bytes_is_bounded() {
+        const _: () = assert!(MAX_TRANSFER_BYTES >= 1024 * 1024);
+        const _: () = assert!(MAX_TRANSFER_BYTES <= 1024 * 1024 * 1024);
     }
 
     #[test]
@@ -395,121 +432,97 @@ mod tests {
         assert!((80.0..90.0).contains(&mbps), "got {mbps}");
     }
 
-    /// Drive the real client functions against the real responder over an
-    /// in-memory duplex pair, exercising ping and upload without QUIC.
+    /// A ping request makes the responder write a single pong byte.
     #[tokio::test]
-    async fn ping_and_upload_roundtrip_over_duplex() {
-        let (mut client_send, server_recv) = duplex(64 * 1024);
-        let (server_send, mut client_recv) = duplex(64 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
-
-        let rtt = ping_once(&mut client_send, &mut client_recv, 7)
+    async fn serve_ping_writes_one_byte() {
+        let (mut client_send, mut server_recv) = duplex(64 * 1024);
+        let (mut server_send, mut client_recv) = duplex(64 * 1024);
+        write_request(&mut client_send, Request::Ping)
             .await
-            .expect("ping");
-        assert!(rtt < Duration::from_secs(1));
-
-        let elapsed = upload_once(&mut client_send, &mut client_recv, 256 * 1024)
+            .unwrap();
+        serve(&mut server_send, &mut server_recv, None)
             .await
-            .expect("upload");
-        assert!(throughput_mbps(256 * 1024, elapsed).unwrap() > 0.0);
-
-        // Closing the client's write half ends the responder loop cleanly.
-        client_send.shutdown().await.unwrap();
-        server.await.unwrap().expect("responder finished cleanly");
+            .unwrap();
+        let mut pong = [0u8; 1];
+        client_recv.read_exact(&mut pong).await.unwrap();
+        assert_eq!(pong, [0u8]);
     }
 
+    /// An upload request drains exactly the announced bytes and reports the
+    /// completion event. Sized to fit the duplex buffer so the writer can
+    /// finish before serve drains it, no second task needed.
     #[tokio::test]
-    async fn responder_refuses_oversized_upload() {
-        let (mut client_send, server_recv) = duplex(64 * 1024);
-        let (server_send, mut client_recv) = duplex(64 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
+    async fn serve_drains_upload_and_reports() {
+        let (mut client_send, mut server_recv) = duplex(64 * 1024);
+        let (mut server_send, _client_recv) = duplex(64 * 1024);
+        let (tx, mut rx) = mpsc::channel(1);
+        write_request(&mut client_send, Request::Upload { bytes: 4096 })
+            .await
+            .unwrap();
+        write_payload(&mut client_send, 4096).await.unwrap();
+        drop(client_send);
+        serve(&mut server_send, &mut server_recv, Some(&tx))
+            .await
+            .unwrap();
+        match rx.recv().await.expect("event") {
+            ProbeEvent::UploadCompleted { bytes, .. } => assert_eq!(bytes, 4096),
+        }
+    }
 
-        // Announce more than the responder will accept: it closes without
-        // acking, so the client's wait for UploadDone fails. The timeout is
-        // test-local insurance against a hang, not protocol behavior.
-        write_frame(
+    /// An upload that overruns its announced size is refused rather than
+    /// drained without bound.
+    #[tokio::test]
+    async fn serve_rejects_upload_overrun() {
+        let (mut client_send, mut server_recv) = duplex(64 * 1024);
+        let (mut server_send, _client_recv) = duplex(64 * 1024);
+        let server =
+            tokio::spawn(async move { serve(&mut server_send, &mut server_recv, None).await });
+        write_request(&mut client_send, Request::Upload { bytes: 1 })
+            .await
+            .unwrap();
+        // Stream far more than announced; serve must bail before reading it all.
+        let _ = write_payload(&mut client_send, 200_000).await;
+        drop(client_send);
+        let err = server.await.unwrap().unwrap_err();
+        assert!(format!("{err:#}").contains("exceeded announced"));
+    }
+
+    /// An oversized announced transfer is refused immediately.
+    #[tokio::test]
+    async fn serve_rejects_oversized_transfer() {
+        let (mut client_send, mut server_recv) = duplex(64 * 1024);
+        let (mut server_send, _client_recv) = duplex(64 * 1024);
+        write_request(
             &mut client_send,
-            &Frame::UploadStart {
-                bytes: MAX_UPLOAD_BYTES + 1,
+            Request::Download {
+                bytes: MAX_TRANSFER_BYTES + 1,
             },
         )
         .await
         .unwrap();
-        let reply = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut client_recv))
+        drop(client_send);
+        let err = serve(&mut server_send, &mut server_recv, None)
             .await
-            .expect("responder must close the stream rather than stall");
-        assert!(reply.is_err());
-        server.await.unwrap().expect("responder finished cleanly");
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("too large"));
     }
 
-    /// The responder must serve a long ping stream (the old one-shot
-    /// version capped pings and closed after a single upload) and keep
-    /// answering pings after an upload.
+    /// A download request makes the responder stream the requested bytes.
     #[tokio::test]
-    async fn responder_serves_continuously() {
-        let (mut client_send, server_recv) = duplex(128 * 1024);
-        let (server_send, mut client_recv) = duplex(128 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
-
-        // Well past the old per-stream ping cap (which was 10).
-        for nonce in 0..15u32 {
-            ping_once(&mut client_send, &mut client_recv, nonce)
+    async fn serve_download_streams_bytes() {
+        let (mut client_send, mut server_recv) = duplex(64 * 1024);
+        let (mut server_send, mut client_recv) = duplex(64 * 1024);
+        let server = tokio::spawn(async move {
+            serve(&mut server_send, &mut server_recv, None)
                 .await
-                .expect("ping");
-        }
-        upload_once(&mut client_send, &mut client_recv, 64 * 1024)
-            .await
-            .expect("upload");
-        // Still answering pings after the upload.
-        ping_once(&mut client_send, &mut client_recv, 99)
-            .await
-            .expect("post-upload ping");
-
-        client_send.shutdown().await.unwrap();
-        server.await.unwrap().expect("responder finished cleanly");
-    }
-
-    /// The shared monitor loop must emit both a latency and a throughput
-    /// sample against the real responder, and stop cleanly once the sample
-    /// consumer is dropped (how the app cancels a monitor on a fresh dial).
-    #[tokio::test]
-    async fn run_client_loop_emits_latency_and_throughput() {
-        let (mut client_send, server_recv) = duplex(256 * 1024);
-        let (server_send, mut client_recv) = duplex(256 * 1024);
-        let server = tokio::spawn(serve_stream(server_send, server_recv, None));
-
-        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-        // Tiny interval and an upload on every other ping so the test sees
-        // both sample kinds quickly without real time passing.
-        let config = ClientConfig {
-            ping_interval: Duration::from_millis(1),
-            upload_bytes: 64 * 1024,
-            upload_every: 2,
-        };
-        let driver = tokio::spawn(async move {
-            drive_client(&mut client_send, &mut client_recv, config, &tx).await
+                .unwrap();
+            drop(server_send);
         });
-
-        let mut latencies = 0;
-        let mut throughputs = 0;
-        for _ in 0..6 {
-            match rx.recv().await.expect("sample") {
-                ClientSample::Latency { .. } => latencies += 1,
-                ClientSample::Throughput { bytes, elapsed } => {
-                    assert_eq!(bytes, 64 * 1024);
-                    assert!(throughput_mbps(bytes, elapsed).unwrap() > 0.0);
-                    throughputs += 1;
-                }
-            }
-        }
-        assert!(latencies >= 1, "expected at least one latency sample");
-        assert!(throughputs >= 1, "expected at least one throughput sample");
-
-        // Dropping the consumer ends the loop with the "closed" phase, and
-        // dropping the client streams (owned by the task) ends the responder.
-        drop(rx);
-        let end = driver.await.unwrap();
-        assert_eq!(end.phase, "closed");
-        server.await.unwrap().expect("responder finished cleanly");
+        write_request(&mut client_send, Request::Download { bytes: 150_000 })
+            .await
+            .unwrap();
+        let got = drain(&mut client_recv, 150_000).await.unwrap();
+        assert_eq!(got, 150_000);
+        server.await.unwrap();
     }
 }
