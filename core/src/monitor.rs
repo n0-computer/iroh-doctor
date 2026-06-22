@@ -15,7 +15,7 @@ use n0_future::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::task::AbortOnDropHandle;
 
-use crate::probe::{run_client, ClientConfig, ClientEnd, ClientSample};
+use crate::client::{Client, ClientConfig, ClientEnd, ClientSample};
 
 /// Transport kind for one path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +214,7 @@ pub fn run(conn: &Connection, config: MonitorConfig, started: Instant) -> Monito
         tasks.push(AbortOnDropHandle::new(tokio::spawn(async move {
             let (sample_tx, mut sample_rx) = mpsc::channel(16);
             let driver =
-                tokio::spawn(async move { run_client(&conn, config.client, sample_tx).await });
+                tokio::spawn(async move { Client::new(conn).run(config.client, sample_tx).await });
             while let Some(sample) = sample_rx.recv().await {
                 let event = match sample {
                     ClientSample::Latency { nonce, rtt } => MonitorEvent::Latency { nonce, rtt },

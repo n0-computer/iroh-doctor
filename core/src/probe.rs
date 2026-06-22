@@ -1,21 +1,21 @@
-//! Peer probe protocol (`iroh-doctor/probe/1`): latency over time and
-//! throughput against a peer.
+//! Peer probe wire protocol (`iroh-doctor/probe/1`): the request-per-stream
+//! framing and the per-stream client/responder primitives.
 //!
 //! One bidi stream *per request*. A request is one of [`ping`], [`upload`], or
 //! [`download`]; the client opens a fresh stream, writes a `u32` length prefix
 //! and a postcard-encoded [`Request`] header, then for a transfer streams raw
 //! bytes. Pings ride a high-priority stream so a liveness ping still completes
 //! promptly while a bulk transfer saturates the path - which only works because
-//! the responder serves every stream on a connection *concurrently* (see
-//! [`handle_connection`]).
+//! the responder ([`crate::server::Server`]) serves every stream on a
+//! connection concurrently.
 //!
-//! There are no protocol-level timeouts: a vanished peer surfaces as a stream
-//! error once iroh's connection idle timeout fires (iroh's default transport
-//! config keeps paths alive with heartbeats and idles dead ones out), and a
+//! This module is the wire layer only: the active measurement loop lives in
+//! [`crate::client`] and the passive connection responder in
+//! [`crate::server`]. There are no protocol-level timeouts: a vanished peer
+//! surfaces as a stream error once iroh's connection idle timeout fires, and a
 //! quiet-but-alive peer is left alone. Transfer sizes are capped so a peer
 //! cannot make the responder read or write an unbounded stream.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -23,9 +23,7 @@ use iroh::endpoint;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{mpsc, Semaphore};
-use tokio::task::JoinSet;
-use tracing::warn;
+use tokio::sync::mpsc;
 
 /// ALPN for the peer probe. `/1` is the request-per-stream wire format that
 /// replaced the original frame-based `/0`; the two are not interoperable, so a
@@ -52,12 +50,6 @@ const CHUNK: usize = 64 * 1024;
 /// scheduled ahead of bulk transfer data on the same connection.
 const PING_PRIORITY: i32 = 1;
 
-/// Maximum number of request streams served at once on one connection. The
-/// probe ALPN is unauthenticated, so this bounds how much work and memory a
-/// single peer can pin (each transfer stream can be up to
-/// [`MAX_TRANSFER_BYTES`]).
-const MAX_STREAMS_PER_CONN: usize = 16;
-
 /// One probe request, sent as the postcard header of a fresh bidi stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
 enum Request {
@@ -72,8 +64,8 @@ enum Request {
 }
 
 /// Observable events emitted by the passive side as it serves a probe
-/// connection. Use the `events` channel of [`handle_connection`] to receive
-/// these; the app side surfaces them as throughput readouts.
+/// connection. Use the `events` channel of [`crate::server::Server::serve`] to
+/// receive these; the app side surfaces them as throughput readouts.
 #[derive(Debug, Clone)]
 pub enum ProbeEvent {
     /// The responder drained an upload of `bytes` bytes in `elapsed` and
@@ -90,122 +82,6 @@ pub fn throughput_mbps(bytes: u64, elapsed: Duration) -> Option<f64> {
         return None;
     }
     Some((bytes as f64 * 8.0) / secs / 1_000_000.0)
-}
-
-/// Pacing for the active probe client loop driven by [`run_client`].
-#[derive(Debug, Clone, Copy)]
-pub struct ClientConfig {
-    /// Delay between successive pings.
-    pub ping_interval: Duration,
-    /// Bytes to upload on each throughput sample. Bounded by
-    /// [`MAX_TRANSFER_BYTES`]; a larger value fails the upload immediately.
-    pub upload_bytes: u64,
-    /// Upload once every this many pings, counting the first (nonce 0). Zero
-    /// disables throughput sampling and runs latency only.
-    pub upload_every: u32,
-}
-
-impl Default for ClientConfig {
-    /// One ping per second, a 1 MiB upload every tenth ping.
-    fn default() -> Self {
-        Self {
-            ping_interval: Duration::from_secs(1),
-            upload_bytes: 1024 * 1024,
-            upload_every: 10,
-        }
-    }
-}
-
-/// A single measurement emitted by [`run_client`].
-#[derive(Debug, Clone)]
-pub enum ClientSample {
-    /// Round-trip time observed for ping `nonce`.
-    Latency { nonce: u32, rtt: Duration },
-    /// A completed upload of `bytes` bytes that the peer acknowledged in
-    /// `elapsed`. Pair with [`throughput_mbps`].
-    Throughput { bytes: u64, elapsed: Duration },
-}
-
-/// Why the active probe client loop stopped.
-#[derive(Debug, Clone)]
-pub struct ClientEnd {
-    /// Which phase ended the loop: `"setup"`, `"latency"`, `"throughput"`,
-    /// or `"closed"` when the sample consumer went away.
-    pub phase: &'static str,
-    /// Human-readable cause, suitable for surfacing in a status line.
-    pub cause: String,
-}
-
-/// Runs the active side of the probe against `conn`, emitting one
-/// [`ClientSample`] on `samples` per ping and per upload until a ping or
-/// upload fails, the peer goes away, or the sample consumer is dropped.
-///
-/// Each ping and each upload opens its own bidi stream; pings use a
-/// high-priority stream. This is the shared monitor loop behind both
-/// `iroh-doctor connect` and the app's Connect action.
-///
-/// Returns a [`ClientEnd`] describing why the loop stopped. It does not error:
-/// a dead peer is the normal end of a monitor session, not a failure.
-pub async fn run_client(
-    conn: &endpoint::Connection,
-    config: ClientConfig,
-    samples: mpsc::Sender<ClientSample>,
-) -> ClientEnd {
-    let mut nonce: u32 = 0;
-    loop {
-        match ping(conn).await {
-            Ok(rtt) => {
-                if samples
-                    .send(ClientSample::Latency { nonce, rtt })
-                    .await
-                    .is_err()
-                {
-                    return consumer_gone();
-                }
-            }
-            Err(cause) => {
-                return ClientEnd {
-                    phase: "latency",
-                    cause: format!("{cause:#}"),
-                }
-            }
-        }
-
-        if config.upload_every != 0 && nonce.is_multiple_of(config.upload_every) {
-            match upload(conn, config.upload_bytes).await {
-                Ok(elapsed) => {
-                    if samples
-                        .send(ClientSample::Throughput {
-                            bytes: config.upload_bytes,
-                            elapsed,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return consumer_gone();
-                    }
-                }
-                Err(cause) => {
-                    return ClientEnd {
-                        phase: "throughput",
-                        cause: format!("{cause:#}"),
-                    }
-                }
-            }
-        }
-
-        nonce = nonce.wrapping_add(1);
-        tokio::time::sleep(config.ping_interval).await;
-    }
-}
-
-/// The loop's end when the [`ClientSample`] consumer is dropped, which the
-/// app does by aborting the monitor task on a fresh dial.
-fn consumer_gone() -> ClientEnd {
-    ClientEnd {
-        phase: "closed",
-        cause: "monitor consumer dropped".to_string(),
-    }
 }
 
 // --- Client side: each request opens its own bidi stream. ---
@@ -250,53 +126,13 @@ pub async fn download(conn: &endpoint::Connection, bytes: u64) -> Result<Duratio
     Ok(started.elapsed())
 }
 
-// --- Server side: accept and dispatch request streams. ---
-
-/// Serves the passive side of one probe connection until the client stops
-/// opening streams or the connection ends (iroh's idle timeout reaps a
-/// vanished peer). Each accepted stream carries one [`Request`] and is served
-/// concurrently, so a liveness ping is answered while a bulk transfer is still
-/// draining; concurrency is capped at [`MAX_STREAMS_PER_CONN`]. Pass an
-/// `events` channel to observe [`ProbeEvent`]s as they happen (the app
-/// surfaces them as throughput readouts); `None` serves silently.
-pub async fn handle_connection(
-    conn: endpoint::Connection,
-    events: Option<mpsc::Sender<ProbeEvent>>,
-) -> Result<()> {
-    let limit = Arc::new(Semaphore::new(MAX_STREAMS_PER_CONN));
-    // Serve tasks are owned here, so they are aborted the moment this returns
-    // (the connection closed) rather than lingering on dropped streams.
-    let mut streams = JoinSet::new();
-    loop {
-        // Reap finished serve tasks so the set does not grow without bound.
-        while streams.try_join_next().is_some() {}
-        let (mut send, mut recv) = match conn.accept_bi().await {
-            Ok(streams) => streams,
-            // The connection closed; no more requests will arrive.
-            Err(_) => break,
-        };
-        // Block for a slot before serving the next stream, bounding how many an
-        // unauthenticated peer can pin at once.
-        let Ok(permit) = limit.clone().acquire_owned().await else {
-            break;
-        };
-        let events = events.clone();
-        streams.spawn(async move {
-            let _permit = permit;
-            if let Err(e) = serve(&mut send, &mut recv, events.as_ref()).await {
-                warn!(err = %e, "probe: serving request failed");
-            }
-            // Closing our send side acks an upload and ends a ping/download.
-            let _ = send.finish();
-        });
-    }
-    Ok(())
-}
+// --- Server side: fulfill one accepted request stream. ---
 
 /// Serves one accepted request stream: reads the [`Request`] header and
 /// fulfills it. Generic over the stream types so it can run over an in-memory
-/// duplex pair in tests. The caller finishes `send` afterwards.
-async fn serve<S, R>(
+/// duplex pair in tests. The caller finishes `send` afterwards. The per-
+/// connection accept loop that drives this lives in [`crate::server`].
+pub(crate) async fn serve_request<S, R>(
     send: &mut S,
     recv: &mut R,
     events: Option<&mpsc::Sender<ProbeEvent>>,
@@ -440,7 +276,7 @@ mod tests {
         write_request(&mut client_send, Request::Ping)
             .await
             .unwrap();
-        serve(&mut server_send, &mut server_recv, None)
+        serve_request(&mut server_send, &mut server_recv, None)
             .await
             .unwrap();
         let mut pong = [0u8; 1];
@@ -461,7 +297,7 @@ mod tests {
             .unwrap();
         write_payload(&mut client_send, 4096).await.unwrap();
         drop(client_send);
-        serve(&mut server_send, &mut server_recv, Some(&tx))
+        serve_request(&mut server_send, &mut server_recv, Some(&tx))
             .await
             .unwrap();
         match rx.recv().await.expect("event") {
@@ -476,7 +312,9 @@ mod tests {
         let (mut client_send, mut server_recv) = duplex(64 * 1024);
         let (mut server_send, _client_recv) = duplex(64 * 1024);
         let server =
-            tokio::spawn(async move { serve(&mut server_send, &mut server_recv, None).await });
+            tokio::spawn(
+                async move { serve_request(&mut server_send, &mut server_recv, None).await },
+            );
         write_request(&mut client_send, Request::Upload { bytes: 1 })
             .await
             .unwrap();
@@ -501,7 +339,7 @@ mod tests {
         .await
         .unwrap();
         drop(client_send);
-        let err = serve(&mut server_send, &mut server_recv, None)
+        let err = serve_request(&mut server_send, &mut server_recv, None)
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("too large"));
@@ -513,7 +351,7 @@ mod tests {
         let (mut client_send, mut server_recv) = duplex(64 * 1024);
         let (mut server_send, mut client_recv) = duplex(64 * 1024);
         let server = tokio::spawn(async move {
-            serve(&mut server_send, &mut server_recv, None)
+            serve_request(&mut server_send, &mut server_recv, None)
                 .await
                 .unwrap();
             drop(server_send);

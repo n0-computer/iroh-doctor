@@ -3,6 +3,7 @@
 
 use iroh::{Endpoint, EndpointAddr};
 
+use crate::client::Client;
 use crate::monitor::{self, MonitorConfig, MonitorEvent};
 use crate::probe;
 
@@ -27,13 +28,14 @@ pub(crate) async fn run_monitor(
     events: Events,
 ) {
     let started = std::time::Instant::now();
-    let conn = match endpoint.connect(addr, probe::ALPN).await {
-        Ok(conn) => conn,
+    let client = match Client::connect(&endpoint, addr).await {
+        Ok(client) => client,
         Err(e) => {
             events.state(ConnectionState::Error(format!("connect failed: {e:#}")));
             return;
         }
     };
+    let conn = client.connection().clone();
     let peer_id = conn.remote_id().to_string();
     let peer_short_id: String = peer_id.chars().take(10).collect();
 

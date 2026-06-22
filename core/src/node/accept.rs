@@ -2,30 +2,25 @@
 //! [`iroh::protocol::Router`]: serve each incoming peer probe, capped at
 //! [`MAX_CONCURRENT_PROBE_SERVERS`] in parallel.
 
-use std::sync::Arc;
-
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::mpsc;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
 use crate::probe;
+use crate::server::Server;
 
 use super::{ConnectionState, Events, SharedConn, ThroughputSnapshot};
 
-/// Maximum number of peer-probe server handlers we will run in parallel.
-/// The probe ALPN has no auth layer; without this cap a peer that learned
-/// our endpoint id could open arbitrarily many parallel probe sessions.
-const MAX_CONCURRENT_PROBE_SERVERS: usize = 4;
-
 /// Handles connections on [`crate::probe::ALPN`]: serves the probe
-/// responder, surfaces the connection through the shared `conn_slot` so the
-/// paths sampler covers incoming probes, and reports state, throughput, and
+/// responder via the core [`Server`] (which caps concurrent connections),
+/// surfaces the connection through the shared `conn_slot` so the paths sampler
+/// covers incoming probes, and reports state, throughput, and
 /// time-to-first-direct-byte through the node's event stream.
 #[derive(Debug, Clone)]
 pub(crate) struct ProbeProtocol {
-    limit: Arc<Semaphore>,
+    server: Server,
     conn_slot: SharedConn,
     events: Events,
 }
@@ -33,7 +28,7 @@ pub(crate) struct ProbeProtocol {
 impl ProbeProtocol {
     pub(crate) fn new(conn_slot: SharedConn, events: Events) -> Self {
         Self {
-            limit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROBE_SERVERS)),
+            server: Server::new(),
             conn_slot,
             events,
         }
@@ -45,12 +40,9 @@ impl ProtocolHandler for ProbeProtocol {
         // At capacity: close with an application error code so the client
         // knows why it was rejected and can show it, rather than seeing an
         // anonymous connection loss.
-        let Ok(_permit) = self.limit.try_acquire() else {
+        let Some(_permit) = self.server.try_admit() else {
             warn!("peer-probe rejected: at capacity");
-            conn.close(
-                probe::AT_CAPACITY_CLOSE_CODE.into(),
-                probe::AT_CAPACITY_CLOSE_REASON,
-            );
+            self.server.reject(&conn);
             return Ok(());
         };
 
@@ -110,7 +102,7 @@ impl ProtocolHandler for ProbeProtocol {
             })
         };
 
-        if let Err(e) = probe::handle_connection(conn, Some(tx)).await {
+        if let Err(e) = Server::serve(conn, Some(tx)).await {
             warn!(err = %e, "peer-probe accept failed");
         }
         // Sender drops when handle_connection returns; the drainer's

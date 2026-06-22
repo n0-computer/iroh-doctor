@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
+use iroh_doctor_core::client::Client;
 use iroh_doctor_core::monitor::{self, MonitorConfig, MonitorEvent};
 
 use crate::commands::monitor_view::{format_path_lines, MonitorView, HISTORY_LEN};
@@ -47,10 +48,10 @@ async fn run(
     eprintln!("dialing {endpoint_id} (monitor)...");
     let dial = tokio::time::timeout(
         Duration::from_secs(30),
-        endpoint.connect(endpoint_addr, iroh_doctor_core::probe::ALPN),
+        Client::connect(&endpoint, endpoint_addr),
     )
     .await;
-    let connection = match dial {
+    let client = match dial {
         Ok(Ok(c)) => c,
         Ok(Err(cause)) => {
             eprintln!("unable to connect to {endpoint_id}: {cause:#}");
@@ -64,6 +65,7 @@ async fn run(
             return Ok(());
         }
     };
+    let connection = client.connection().clone();
     eprintln!("connected; starting monitor...");
 
     let gui = Gui::new(endpoint, endpoint_id);

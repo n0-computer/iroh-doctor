@@ -14,9 +14,12 @@
 //! - [`node`]: the headless doctor node behind the app: an actor that binds
 //!   the endpoint, routes incoming protocols, and answers commands with
 //!   events. No UI framework involved.
-//! - [`probe`]: the peer probe protocol (`iroh-pong-probe/0`): a passive
-//!   responder plus a client that measures latency over time and upload
-//!   throughput against a peer.
+//! - [`probe`]: the peer probe wire protocol (`iroh-doctor/probe/1`): the
+//!   request-per-stream framing and per-stream primitives.
+//! - [`client`]: the active side of the probe - a [`client::Client`] that
+//!   owns a connection and drives the latency + throughput measurement loop.
+//! - [`server`]: the passive side - a [`server::Server`] that serves request
+//!   streams and gates concurrent connections.
 //! - [`report`]: UI-facing projections of `iroh::unstable_net_report::NetReport` (per-relay
 //!   latency rows).
 //! - [`services`]: iroh-services client setup, API-secret resolution, and the
@@ -31,9 +34,11 @@ pub mod identity;
 /// wait would otherwise hang forever.
 pub const NET_REPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+pub mod client;
 pub mod monitor;
 pub mod nat;
 pub mod node;
 pub mod probe;
 pub mod report;
+pub mod server;
 pub mod services;

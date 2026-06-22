@@ -18,7 +18,8 @@ use std::{
 use iroh::{Endpoint, SecretKey};
 use iroh_doctor_core::{
     monitor::{derive_state, snapshot_paths},
-    probe::{handle_connection, ProbeEvent},
+    probe::ProbeEvent,
+    server::Server,
 };
 use n0_future::StreamExt;
 use tokio_util::task::AbortOnDropHandle;
@@ -85,7 +86,7 @@ pub async fn accept(secret_key: SecretKey, endpoint: Endpoint) -> anyhow::Result
                 // flag stuck and silence every later dashboard.
                 let _reset = OnDrop(|| monitor_active.store(false, Ordering::SeqCst));
                 run_probe_monitor(endpoint, connection).await;
-            } else if let Err(cause) = handle_connection(connection, None).await {
+            } else if let Err(cause) = Server::serve(connection, None).await {
                 warn!("probe connection failed: {cause:#}");
             }
         });
@@ -134,7 +135,7 @@ async fn run_probe_monitor(endpoint: Endpoint, connection: iroh::endpoint::Conne
     // Read the close reason after the handler returns: before then the
     // connection is still open and would report `None`.
     let reason_conn = connection.clone();
-    let result = handle_connection(connection, Some(events_tx)).await;
+    let result = Server::serve(connection, Some(events_tx)).await;
     let close_reason = reason_conn
         .close_reason()
         .map(|e| format!(" (reason: {e})"))
