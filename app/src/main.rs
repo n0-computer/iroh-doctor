@@ -106,6 +106,15 @@ fn App() -> Element {
     let app_error: Signal<Option<AppError>> = use_signal(|| None);
     use_context_provider(|| app_error);
 
+    // A deep link (irohdoctor://connect?id=...) scanned from another device's QR
+    // prefills the peer id and jumps to the Connect tab, so the user only has to
+    // press Connect.
+    #[cfg(any(feature = "desktop", feature = "mobile"))]
+    deeplink::use_connect_links(move |id| {
+        peer_id_input.clone().set(id);
+        current_tab.clone().set(Tab::Connect);
+    });
+
     // The node bridge: spawn the headless node, then fold its event
     // stream into the signals above for as long as the app lives.
     use_future(move || async move {

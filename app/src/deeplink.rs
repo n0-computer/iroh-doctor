@@ -40,6 +40,51 @@ pub(crate) fn resolve_peer_id(input: &str) -> String {
     parse_connect_url(input).unwrap_or_else(|| input.trim().to_string())
 }
 
+/// Registers deep-link capture for the life of the app, invoking `on_connect`
+/// with the peer id from each `irohdoctor://connect` link the OS delivers.
+///
+/// iOS (and desktop macOS) receive custom-scheme opens as a tao `Event::Opened`,
+/// which fires live while the app runs and is replayed from tao's pre-launch
+/// queue on a cold start. Android has no such event, so the launch intent is
+/// read once at startup; a scan while the app is already running is delivered
+/// through the `onNewIntent` glue instead (see `scripts/bundle-mobile.sh`).
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+pub(crate) fn use_connect_links(mut on_connect: impl FnMut(String) + 'static) {
+    #[cfg(not(target_os = "android"))]
+    {
+        #[cfg(all(feature = "desktop", not(feature = "mobile")))]
+        use dioxus::desktop::tao::event::Event;
+        #[cfg(all(feature = "desktop", not(feature = "mobile")))]
+        use dioxus::desktop::use_wry_event_handler;
+        #[cfg(feature = "mobile")]
+        use dioxus::mobile::tao::event::Event;
+        #[cfg(feature = "mobile")]
+        use dioxus::mobile::use_wry_event_handler;
+
+        use_wry_event_handler(move |event, _| {
+            if let Event::Opened { urls } = event {
+                for url in urls {
+                    if let Some(id) = parse_connect_url(url.as_str()) {
+                        on_connect(id);
+                    }
+                }
+            }
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        dioxus::prelude::use_effect(move || {
+            if let Some(id) = crate::android::launch_deep_link()
+                .as_deref()
+                .and_then(parse_connect_url)
+            {
+                on_connect(id);
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

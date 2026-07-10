@@ -16,6 +16,14 @@ publisher = "number 0"
 # Source app icon; dx generates the per-platform icon sets from this master.
 icon = ["assets/icon/icon-master.png"]
 
+# Custom URL scheme for QR deep links. dx maps this to the iOS CFBundleURLTypes
+# and an Android <intent-filter> on MainActivity, so scanning an
+# irohdoctor://connect?id=... QR opens the app. Kept in sync with SCHEME in
+# src/deeplink.rs. Verify it lands in the generated Info.plist / AndroidManifest
+# (dx 0.7.9 has silently ignored other config keys; see plans/learnings.md).
+[deep_links]
+schemes = ["irohdoctor"]
+
 [ios]
 # Minimum iOS version. In dx 0.7.9 this key is only read for widget extensions
 # (dioxus-cli src/build/apple.rs uses it solely in compile_widget_extensions);

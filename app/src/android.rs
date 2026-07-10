@@ -35,6 +35,41 @@ pub(crate) fn files_dir() -> Result<PathBuf> {
     })
 }
 
+/// The URL iroh-doctor was launched with via an `irohdoctor://` deep link, or
+/// `None` for a normal launch. The `ndk_context` context is the `WryActivity`,
+/// so `getIntent().getData()` returns the launch intent's URI. Read once at
+/// startup: tao does not forward a fresh intent to a running app (wry #1563),
+/// so a scan while the app is open is handled by the `onNewIntent` glue instead.
+pub(crate) fn launch_deep_link() -> Option<String> {
+    with_env(|env, context| {
+        let intent = env
+            .call_method(context, "getIntent", "()Landroid/content/Intent;", &[])
+            .context("Activity.getIntent")?
+            .l()?;
+        let uri = env
+            .call_method(&intent, "getData", "()Landroid/net/Uri;", &[])
+            .context("Intent.getData")?
+            .l()?;
+        // A normal launch has no data URI; only a deep link sets one.
+        if uri.is_null() {
+            return Ok(None);
+        }
+        let text = env
+            .call_method(&uri, "toString", "()Ljava/lang/String;", &[])
+            .context("Uri.toString")?
+            .l()?;
+        let text: String = env
+            .get_string(&JString::from(text))
+            .context("read uri")?
+            .into();
+        Ok(Some(text))
+    })
+    .unwrap_or_else(|e| {
+        tracing::warn!(err = %e, "reading android launch intent");
+        None
+    })
+}
+
 /// Primary clip coerced to text via `ClipboardManager` -> `ClipData`. `None`
 /// when the clipboard is empty or read access is denied (Android 10+ only
 /// hands it over while the app is focused, which a Paste tap satisfies).
