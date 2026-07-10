@@ -3,9 +3,11 @@
 //! on desktop/iOS are pulled off the Android `Context` by hand here.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result};
 use jni::objects::{JObject, JString};
+use tokio::sync::mpsc;
 
 /// Runs `f` with a JNI env attached to the current thread and the Android
 /// `Context`. UI event handlers and the early path setup both run on the
@@ -114,4 +116,51 @@ pub(crate) fn clipboard_text() -> Option<String> {
         tracing::warn!(err = %e, "reading android clipboard");
         None
     })
+}
+
+/// Channel carrying incoming deep-link URLs to the running app: the cold-start
+/// launch intent (seeded by the reader) and warm-start intents delivered by the
+/// `onNewIntent` JNI callback. The sender is stored globally because that
+/// callback runs with no app context through which to reach a Dioxus signal.
+static DEEP_LINK_TX: OnceLock<mpsc::Sender<String>> = OnceLock::new();
+
+/// Creates the deep-link receiver and publishes its sender for the JNI
+/// callback. Call once from the UI; the receiver then streams every deep link
+/// the app receives while running.
+pub(crate) fn deep_link_channel() -> mpsc::Receiver<String> {
+    // Deep links are user-paced, so no backlog builds; the small bound just
+    // drops (try_send) rather than blocking the Android main thread if the UI
+    // is momentarily behind.
+    let (tx, rx) = mpsc::channel(4);
+    let _ = DEEP_LINK_TX.set(tx);
+    rx
+}
+
+/// Forwards a non-empty deep-link URL to [`deep_link_channel`], if it has been
+/// initialized. Used to seed the cold-start launch intent; the JNI callback
+/// calls it for warm-start intents.
+pub(crate) fn push_deep_link(url: String) {
+    if url.is_empty() {
+        return;
+    }
+    if let Some(tx) = DEEP_LINK_TX.get() {
+        let _ = tx.try_send(url);
+    }
+}
+
+/// JNI entry point for `MainActivity.onNewIntent`, patched into the generated
+/// Kotlin by `scripts/bundle-mobile.sh`. Receives the new intent's data URI (an
+/// empty string when it has none) and forwards it to the running app. Runs on
+/// the Android main thread. tao does not surface new intents itself (wry
+/// #1563), so this callback is how a scan reaches an already-running app.
+#[no_mangle]
+pub extern "system" fn Java_dev_dioxus_main_MainActivity_newDeepLink(
+    mut env: jni::JNIEnv,
+    _this: JObject,
+    url: JString,
+) {
+    match env.get_string(&url) {
+        Ok(url) => push_deep_link(url.into()),
+        Err(e) => tracing::warn!(err = %e, "reading onNewIntent url"),
+    }
 }

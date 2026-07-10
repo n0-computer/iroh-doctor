@@ -153,6 +153,48 @@ echo ">> adding Android 12+ splash theme (brand background; icon comes from the 
 mkdir -p "$RES/values-v31"
 cp "$SPLASH_DIR/android/values-v31/styles.xml" "$RES/values-v31/styles.xml"
 
+echo ">> wiring the irohdoctor:// deep link warm-start path"
+# The intent-filter that registers the scheme comes from Dioxus.toml [deep_links]
+# and is already in the generated manifest; cold-start links work off that alone
+# (android::launch_deep_link reads getIntent at startup). Warm start needs two
+# things dx does not generate: singleTask so the running instance is reused
+# instead of duplicated, and an onNewIntent override, because tao never forwards
+# a new intent (wry #1563). We add both to the freshly generated project; dx
+# regenerates it every build, so each run starts from the pristine template.
+MANIFEST="$PROJ/app/src/main/AndroidManifest.xml"
+MAIN_ACT="$PROJ/app/src/main/kotlin/dev/dioxus/main/MainActivity.kt"
+[[ -f "$MANIFEST" && -f "$MAIN_ACT" ]] \
+  || { echo "generated manifest/MainActivity.kt missing; dx template changed?" >&2; exit 1; }
+
+if ! grep -q 'android:launchMode' "$MANIFEST"; then
+  sed -i '' 's|<activity android:configChanges=|<activity android:launchMode="singleTask" android:configChanges=|' "$MANIFEST"
+fi
+grep -q 'android:launchMode="singleTask"' "$MANIFEST" \
+  || { echo "launchMode injection failed; dx manifest template changed?" >&2; exit 1; }
+
+# Preserve dx's generated typealias line (it carries the bundle identifier).
+TYPEALIAS="$(grep '^typealias BuildConfig' "$MAIN_ACT" || true)"
+cat > "$MAIN_ACT" <<KOTLIN
+package dev.dioxus.main
+
+import android.content.Intent
+
+$TYPEALIAS
+
+class MainActivity : WryActivity() {
+    // Forward a deep link that arrives while the app is already running. tao
+    // does not surface onNewIntent (wry #1563), so bridge it to Rust, which
+    // routes it to the UI (see android::Java_..._newDeepLink).
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        newDeepLink(intent.dataString ?: "")
+    }
+
+    external fun newDeepLink(url: String)
+}
+KOTLIN
+
 if [[ -n "$BUILD_NUMBER" ]]; then
   echo ">> setting versionCode = $BUILD_NUMBER"
   # dx 0.7.9 hardcodes versionCode = 1 in its template; rewrite the

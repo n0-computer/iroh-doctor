@@ -40,16 +40,36 @@ pub(crate) fn resolve_peer_id(input: &str) -> String {
     parse_connect_url(input).unwrap_or_else(|| input.trim().to_string())
 }
 
-/// Registers deep-link capture for the life of the app, invoking `on_connect`
-/// with the peer id from each `irohdoctor://connect` link the OS delivers.
+/// Applies a captured deep-link id: prefills the peer-id box and switches to the
+/// Connect tab so the user only has to press Connect.
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+fn apply_connect(
+    mut peer_id_input: dioxus::prelude::Signal<String>,
+    mut current_tab: dioxus::prelude::Signal<crate::components::Tab>,
+    id: String,
+) {
+    use dioxus::prelude::WritableExt;
+
+    peer_id_input.set(id);
+    current_tab.set(crate::components::Tab::Connect);
+}
+
+/// Registers deep-link capture for the life of the app: an incoming
+/// `irohdoctor://connect` link prefills `peer_id_input` and switches
+/// `current_tab` to Connect.
 ///
 /// iOS (and desktop macOS) receive custom-scheme opens as a tao `Event::Opened`,
 /// which fires live while the app runs and is replayed from tao's pre-launch
 /// queue on a cold start. Android has no such event, so the launch intent is
-/// read once at startup; a scan while the app is already running is delivered
-/// through the `onNewIntent` glue instead (see `scripts/bundle-mobile.sh`).
+/// read once at startup and warm-start intents arrive through the `onNewIntent`
+/// glue (see `scripts/bundle-mobile.sh`); both are bridged over a channel.
+///
+/// The signals are `Copy`, so each capture path takes its own copy.
 #[cfg(any(feature = "desktop", feature = "mobile"))]
-pub(crate) fn use_connect_links(mut on_connect: impl FnMut(String) + 'static) {
+pub(crate) fn use_connect_links(
+    peer_id_input: dioxus::prelude::Signal<String>,
+    current_tab: dioxus::prelude::Signal<crate::components::Tab>,
+) {
     #[cfg(not(target_os = "android"))]
     {
         #[cfg(all(feature = "desktop", not(feature = "mobile")))]
@@ -65,7 +85,7 @@ pub(crate) fn use_connect_links(mut on_connect: impl FnMut(String) + 'static) {
             if let Event::Opened { urls } = event {
                 for url in urls {
                     if let Some(id) = parse_connect_url(url.as_str()) {
-                        on_connect(id);
+                        apply_connect(peer_id_input, current_tab, id);
                     }
                 }
             }
@@ -74,12 +94,19 @@ pub(crate) fn use_connect_links(mut on_connect: impl FnMut(String) + 'static) {
 
     #[cfg(target_os = "android")]
     {
-        dioxus::prelude::use_effect(move || {
-            if let Some(id) = crate::android::launch_deep_link()
-                .as_deref()
-                .and_then(parse_connect_url)
-            {
-                on_connect(id);
+        dioxus::prelude::use_future(move || async move {
+            // One consumer for both delivery paths: the cold-start launch intent
+            // (seeded below) and warm-start intents pushed by the onNewIntent
+            // JNI callback. tao forwards neither on Android, so we bridge them
+            // through a channel ourselves.
+            let mut rx = crate::android::deep_link_channel();
+            if let Some(url) = crate::android::launch_deep_link() {
+                crate::android::push_deep_link(url);
+            }
+            while let Some(url) = rx.recv().await {
+                if let Some(id) = parse_connect_url(&url) {
+                    apply_connect(peer_id_input, current_tab, id);
+                }
             }
         });
     }

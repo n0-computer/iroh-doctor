@@ -110,10 +110,7 @@ fn App() -> Element {
     // prefills the peer id and jumps to the Connect tab, so the user only has to
     // press Connect.
     #[cfg(any(feature = "desktop", feature = "mobile"))]
-    deeplink::use_connect_links(move |id| {
-        peer_id_input.clone().set(id);
-        current_tab.clone().set(Tab::Connect);
-    });
+    deeplink::use_connect_links(peer_id_input, current_tab);
 
     // The node bridge: spawn the headless node, then fold its event
     // stream into the signals above for as long as the app lives.
