@@ -3,7 +3,7 @@
 //! on desktop/iOS are pulled off the Android `Context` by hand here.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use anyhow::{Context as _, Result};
 use jni::objects::{JObject, JString};
@@ -118,32 +118,33 @@ pub(crate) fn clipboard_text() -> Option<String> {
     })
 }
 
-/// Channel carrying incoming deep-link URLs to the running app: the cold-start
-/// launch intent (seeded by the reader) and warm-start intents delivered by the
-/// `onNewIntent` JNI callback. The sender is stored globally because that
-/// callback runs with no app context through which to reach a Dioxus signal.
-static DEEP_LINK_TX: OnceLock<mpsc::Sender<String>> = OnceLock::new();
+/// Sender for the deep-link channel, replaced every time [`deep_link_channel`]
+/// hands out a fresh receiver so that a remount of the UI re-registers a live
+/// sender rather than orphaning its new receiver. Held in a global because the
+/// JNI callback runs with no app context through which to reach a Dioxus signal.
+static DEEP_LINK_TX: Mutex<Option<mpsc::Sender<String>>> = Mutex::new(None);
 
-/// Creates the deep-link receiver and publishes its sender for the JNI
-/// callback. Call once from the UI; the receiver then streams every deep link
-/// the app receives while running.
+/// Creates the deep-link receiver and registers its sender for the JNI
+/// callback, replacing any previous sender. The receiver streams every deep
+/// link the app receives while running.
 pub(crate) fn deep_link_channel() -> mpsc::Receiver<String> {
     // Deep links are user-paced, so no backlog builds; the small bound just
     // drops (try_send) rather than blocking the Android main thread if the UI
     // is momentarily behind.
     let (tx, rx) = mpsc::channel(4);
-    let _ = DEEP_LINK_TX.set(tx);
+    *DEEP_LINK_TX.lock().expect("poisoned") = Some(tx);
     rx
 }
 
-/// Forwards a non-empty deep-link URL to [`deep_link_channel`], if it has been
-/// initialized. Used to seed the cold-start launch intent; the JNI callback
-/// calls it for warm-start intents.
+/// Forwards a non-empty deep-link URL to the current [`deep_link_channel`]
+/// receiver, if one is registered. Used to seed the cold-start launch intent;
+/// the JNI callback calls it for warm-start intents.
 pub(crate) fn push_deep_link(url: String) {
     if url.is_empty() {
         return;
     }
-    if let Some(tx) = DEEP_LINK_TX.get() {
+    let tx = DEEP_LINK_TX.lock().expect("poisoned").clone();
+    if let Some(tx) = tx {
         let _ = tx.try_send(url);
     }
 }
@@ -159,8 +160,13 @@ pub extern "system" fn Java_dev_dioxus_main_MainActivity_newDeepLink(
     _this: JObject,
     url: JString,
 ) {
-    match env.get_string(&url) {
-        Ok(url) => push_deep_link(url.into()),
-        Err(e) => tracing::warn!(err = %e, "reading onNewIntent url"),
-    }
+    // A panic must not unwind across the JNI boundary. Nothing here panics
+    // today, but the guard keeps a future dependency change from turning a
+    // deep link into a process abort.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        match env.get_string(&url) {
+            Ok(url) => push_deep_link(url.into()),
+            Err(e) => tracing::warn!(err = %e, "reading onNewIntent url"),
+        }
+    }));
 }
