@@ -148,9 +148,12 @@ fn ConnectBar(
     }
 
     let input_value = peer_id_input();
-    // Validate with the same parse the node runs on Connect, so the button
-    // enables exactly when the dial can actually start.
-    let connect_disabled = EndpointId::from_str(input_value.trim()).is_err();
+    // Accept either a bare endpoint id or a full irohdoctor://connect deep link,
+    // so an id scanned as plain text by a generic QR reader and pasted in still
+    // connects. Validate the resolved id with the same parse the node runs on
+    // Connect, so the button enables exactly when the dial can actually start.
+    let resolved = crate::deeplink::resolve_peer_id(&input_value);
+    let connect_disabled = EndpointId::from_str(&resolved).is_err();
     // The Connect button stays disabled on malformed input; without a
     // hint a first-time user pasting a truncated id only sees a button
     // that will not press. Explain what a valid id looks like.
@@ -189,9 +192,9 @@ fn ConnectBar(
                     class: "btn btn-primary",
                     disabled: connect_disabled,
                     onclick: move |_| {
-                        let id = peer_id_input();
+                        let hex_id = crate::deeplink::resolve_peer_id(&peer_id_input());
                         if let Some(handle) = cmd_handle.read().clone() {
-                            let _ = handle.try_send(NodeCommand::Connect { hex_id: id });
+                            let _ = handle.try_send(NodeCommand::Connect { hex_id });
                         }
                     },
                     "Connect"
