@@ -215,6 +215,23 @@ html, body {
     border-color: transparent;
 }
 
+/* QR code panel under the endpoint id. White background regardless of theme so
+   the dark modules keep the contrast a scanner needs. */
+.qr-panel {
+    display: flex;
+    justify-content: center;
+    margin-top: 8px;
+    padding: 12px;
+    background: #ffffff;
+    border: 1px solid rgba(127, 127, 127, 0.35);
+    border-radius: 8px;
+}
+.qr-panel svg {
+    width: 200px;
+    height: 200px;
+    max-width: 100%;
+}
+
 /* Connect bar */
 .connect-bar-wrap { display: flex; flex-direction: column; gap: 6px; }
 .connect-bar { display: flex; gap: 8px; align-items: center; }

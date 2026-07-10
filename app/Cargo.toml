@@ -20,6 +20,9 @@ serde_json = "1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# svg-only: the default `image` feature pulls the heavy image crate we do not
+# need, since the QR is rendered as an inline SVG string.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # rfd has no usable backend on the mobile targets: iOS has no xdg-portal /
 # NSSavePanel / UIDocumentPicker wrapper, and on Android the xdg-portal backend

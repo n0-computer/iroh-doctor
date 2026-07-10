@@ -45,16 +45,28 @@ pub fn ConnectPage(
     }
 }
 
-/// The device's own endpoint id with a Copy button.
+/// The device's own endpoint id, with buttons to copy it or show it as a QR
+/// code. The QR encodes an `irohdoctor://connect` deep link, so another device
+/// can scan it with the system camera and open straight into a connect instead
+/// of copy-pasting the id.
 #[component]
 fn Header(endpoint_id: Signal<String>) -> Element {
+    let show_qr = use_signal(|| false);
+
     let id = endpoint_id();
     let display = if id.is_empty() {
         "...".to_string()
     } else {
         id.clone()
     };
-    let copy_disabled = id.is_empty();
+    let controls_disabled = id.is_empty();
+
+    // Build the QR only while shown, and re-derive it from the current id every
+    // render: it is a deep link to this id, so a stale code must never linger
+    // past an id change.
+    let qr = (show_qr() && !id.is_empty())
+        .then(|| render_qr_svg(&crate::deeplink::connect_url(&id)))
+        .flatten();
 
     rsx! {
         div { class: "header",
@@ -62,7 +74,16 @@ fn Header(endpoint_id: Signal<String>) -> Element {
             span { class: "endpoint-id", title: "{id}", "{display}" }
             button {
                 class: "btn",
-                disabled: copy_disabled,
+                disabled: controls_disabled,
+                onclick: move |_| {
+                    let next = !show_qr();
+                    show_qr.clone().set(next);
+                },
+                if show_qr() { "Hide QR" } else { "QR" }
+            }
+            button {
+                class: "btn",
+                disabled: controls_disabled,
                 onclick: move |_| {
                     let id = endpoint_id();
                     if !id.is_empty() {
@@ -72,7 +93,27 @@ fn Header(endpoint_id: Signal<String>) -> Element {
                 "Copy"
             }
         }
+        {qr.map(|svg| rsx! {
+            div { class: "qr-panel", dangerous_inner_html: "{svg}" }
+        })}
     }
+}
+
+/// Renders `data` as an SVG QR code document. Returns `None` only when `data`
+/// exceeds QR capacity, which an endpoint-id deep link never does; the encoder
+/// is fallible, so the caller degrades to showing nothing rather than panicking.
+fn render_qr_svg(data: &str) -> Option<String> {
+    use qrcode::render::svg;
+    use qrcode::QrCode;
+
+    let code = QrCode::new(data).ok()?;
+    Some(
+        code.render::<svg::Color>()
+            .min_dimensions(200, 200)
+            .dark_color(svg::Color("#000000"))
+            .light_color(svg::Color("#ffffff"))
+            .build(),
+    )
 }
 
 #[component]
@@ -163,5 +204,19 @@ fn ConnectBar(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_qr_svg_encodes_a_connect_deep_link() {
+        // A full endpoint-id deep link is the longest payload the QR carries;
+        // it must still fit and render a real SVG document.
+        let url = crate::deeplink::connect_url(&"a".repeat(64));
+        let svg = render_qr_svg(&url).expect("an endpoint id deep link fits in a QR code");
+        assert!(svg.contains("<svg"));
     }
 }

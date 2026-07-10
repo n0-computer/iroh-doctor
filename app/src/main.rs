@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 mod android;
 mod clipboard;
 mod components;
+mod deeplink;
 mod diagnostics_export;
 mod endpoints;
 mod first_run;
