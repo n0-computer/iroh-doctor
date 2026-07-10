@@ -23,6 +23,27 @@ agent should know before touching this code. Append as you discover.
 - dx regenerates the whole native project from templates each build, so
   editing anything under `target/dx/.../{ios,android}` by hand does not
   survive. All branding goes through the wrapper.
+- **`[deep_links] schemes = [...]` in `Dioxus.toml` IS honored by dx 0.7.9**
+  (unlike `[application] name` and `[ios] deployment_target`). Verified in the
+  generated `AndroidManifest.xml` (a VIEW/DEFAULT/BROWSABLE `<intent-filter>`
+  with `<data android:scheme=...>` on MainActivity) and the iOS `Info.plist`
+  (`CFBundleURLTypes` -> `CFBundleURLSchemes`). It survives `bundle-mobile.sh`,
+  which touches neither. So cold-start deep links need no post-build patch.
+- **tao does not forward Android `onNewIntent`** (wry #1563), so a warm-start
+  deep link (app already running) needs glue: `launchMode="singleTask"` on the
+  activity plus an `onNewIntent`/`setIntent` override in `MainActivity.kt` that
+  calls a JNI `external fun` into Rust. `bundle-mobile.sh` patches both after
+  `dx build` (dx regenerates them each build). iOS needs none of this: tao
+  delivers custom-scheme opens as `Event::Opened`, live and on cold start.
+- **To compile-check the android target on the host** (no full `dx build`):
+  the rust targets are installed, but a C dep (`ring`) needs the NDK clang. Set
+  `ANDROID_NDK_HOME`, then `CC_aarch64_linux_android`,
+  `AR_aarch64_linux_android` (llvm-ar), and
+  `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` to the NDK toolchain
+  (`.../ndk/<ver>/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang`),
+  then `cargo check -p iroh-doctor-app --no-default-features --features mobile
+  --target aarch64-linux-android`. This exercises the `target_os = "android"`
+  code paths that plain host builds skip.
 
 ## NAT classification
 
