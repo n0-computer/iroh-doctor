@@ -9,7 +9,10 @@ pub async fn read_clipboard() -> Option<String> {
     {
         crate::android::clipboard_text()
     }
-    #[cfg(all(not(target_os = "android"), any(feature = "desktop", feature = "mobile")))]
+    #[cfg(all(
+        not(target_os = "android"),
+        any(feature = "desktop", feature = "mobile")
+    ))]
     {
         let mut eval = dioxus::prelude::document::eval(
             "navigator.clipboard.readText().then(t => dioxus.send(t)).catch(() => dioxus.send(\"\"));",
@@ -17,7 +20,10 @@ pub async fn read_clipboard() -> Option<String> {
         let text = eval.recv::<String>().await.ok()?;
         (!text.is_empty()).then_some(text)
     }
-    #[cfg(all(not(target_os = "android"), not(any(feature = "desktop", feature = "mobile"))))]
+    #[cfg(all(
+        not(target_os = "android"),
+        not(any(feature = "desktop", feature = "mobile"))
+    ))]
     {
         None
     }

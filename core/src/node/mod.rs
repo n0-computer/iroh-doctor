@@ -382,7 +382,9 @@ impl Node {
     fn spawn_net_report_probe<T: Send + 'static>(
         &self,
         reply: oneshot::Sender<Result<T, String>>,
-        project: impl FnOnce(&iroh::unstable_net_report::NetReport) -> Result<T, String> + Send + 'static,
+        project: impl FnOnce(&iroh::unstable_net_report::NetReport) -> Result<T, String>
+            + Send
+            + 'static,
     ) {
         let endpoint = self.endpoint.clone();
         tokio::spawn(async move {

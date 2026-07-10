@@ -32,7 +32,10 @@ pub(crate) fn files_dir() -> Result<PathBuf> {
             .call_method(&dir, "getAbsolutePath", "()Ljava/lang/String;", &[])
             .context("File.getAbsolutePath")?
             .l()?;
-        let path: String = env.get_string(&JString::from(path)).context("read path")?.into();
+        let path: String = env
+            .get_string(&JString::from(path))
+            .context("read path")?
+            .into();
         Ok(PathBuf::from(path))
     })
 }
@@ -87,13 +90,23 @@ pub(crate) fn clipboard_text() -> Option<String> {
             )?
             .l()?;
         let clip = env
-            .call_method(&clipboard, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?
+            .call_method(
+                &clipboard,
+                "getPrimaryClip",
+                "()Landroid/content/ClipData;",
+                &[],
+            )?
             .l()?;
         if clip.is_null() {
             return Ok(None);
         }
         let item = env
-            .call_method(&clip, "getItemAt", "(I)Landroid/content/ClipData$Item;", &[0i32.into()])?
+            .call_method(
+                &clip,
+                "getItemAt",
+                "(I)Landroid/content/ClipData$Item;",
+                &[0i32.into()],
+            )?
             .l()?;
         let text = env
             .call_method(
