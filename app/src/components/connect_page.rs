@@ -102,6 +102,7 @@ fn Header(endpoint_id: Signal<String>) -> Element {
 /// Renders `data` as an SVG QR code document. Returns `None` only when `data`
 /// exceeds QR capacity, which an endpoint-id deep link never does; the encoder
 /// is fallible, so the caller degrades to showing nothing rather than panicking.
+#[must_use]
 fn render_qr_svg(data: &str) -> Option<String> {
     use qrcode::render::svg;
     use qrcode::QrCode;

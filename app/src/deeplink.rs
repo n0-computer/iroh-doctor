@@ -16,6 +16,7 @@ const SCHEME: &str = "irohdoctor";
 /// iroh-doctor with `id` prefilled as the peer to connect to.
 ///
 /// The id is a 64-character hex endpoint id, so it needs no percent-encoding.
+#[must_use]
 pub(crate) fn connect_url(id: &str) -> String {
     format!("{SCHEME}://connect?id={id}")
 }
@@ -23,19 +24,21 @@ pub(crate) fn connect_url(id: &str) -> String {
 /// Extracts the endpoint id from a connect deep link, or `None` when `input` is
 /// not an `irohdoctor://connect?id=...` URL. Both ends of the exchange are ours,
 /// so the id needs no percent-decoding; extra query params are tolerated in case
-/// the link ever grows.
+/// the link ever grows, and the first non-empty `id` wins. Matching is
+/// case-sensitive, which is fine because our own QR always emits lowercase.
+#[must_use]
 pub(crate) fn parse_connect_url(input: &str) -> Option<String> {
     let query = input.trim().strip_prefix(&format!("{SCHEME}://connect?"))?;
     query
         .split('&')
-        .find_map(|pair| pair.strip_prefix("id="))
-        .filter(|id| !id.is_empty())
+        .find_map(|pair| pair.strip_prefix("id=").filter(|id| !id.is_empty()))
         .map(str::to_string)
 }
 
 /// Resolves what the user put in the peer-id box to a bare endpoint id: the id
 /// from a connect deep link if it is one (pasted, or scanned as plain text by a
 /// generic QR reader), otherwise the trimmed input unchanged.
+#[must_use]
 pub(crate) fn resolve_peer_id(input: &str) -> String {
     parse_connect_url(input).unwrap_or_else(|| input.trim().to_string())
 }
@@ -143,6 +146,22 @@ mod tests {
         assert_eq!(parse_connect_url("0123abcd"), None);
         assert_eq!(parse_connect_url("https://example.com/?id=abc"), None);
         assert_eq!(parse_connect_url("irohdoctor://connect?id="), None);
+    }
+
+    #[test]
+    fn parse_connect_url_takes_the_first_non_empty_id() {
+        assert_eq!(
+            parse_connect_url("irohdoctor://connect?id=&id=abc").as_deref(),
+            Some("abc")
+        );
+    }
+
+    #[test]
+    fn parse_connect_url_trims_surrounding_whitespace() {
+        assert_eq!(
+            parse_connect_url("  irohdoctor://connect?id=abcd  ").as_deref(),
+            Some("abcd")
+        );
     }
 
     #[test]
