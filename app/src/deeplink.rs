@@ -43,23 +43,43 @@ pub(crate) fn resolve_peer_id(input: &str) -> String {
     parse_connect_url(input).unwrap_or_else(|| input.trim().to_string())
 }
 
-/// Applies a captured deep-link id: prefills the peer-id box and switches to the
-/// Connect tab so the user only has to press Connect.
+/// Applies a captured deep-link id: prefills the peer-id box, switches to the
+/// Connect tab, and dials the peer immediately. A session that is already
+/// active is dropped first, so scanning a QR while connected re-targets to the
+/// scanned peer.
 #[cfg(any(feature = "desktop", feature = "mobile"))]
 fn apply_connect(
     mut peer_id_input: dioxus::prelude::Signal<String>,
     mut current_tab: dioxus::prelude::Signal<crate::components::Tab>,
+    cmd_handle: dioxus::prelude::Signal<Option<crate::NodeHandle>>,
+    conn_state: dioxus::prelude::Signal<crate::node::ConnectionState>,
     id: String,
 ) {
-    use dioxus::prelude::WritableExt;
+    use dioxus::prelude::*;
 
-    peer_id_input.set(id);
+    use crate::node::{ConnectionState, NodeCommand};
+
+    peer_id_input.set(id.clone());
     current_tab.set(crate::components::Tab::Connect);
+
+    let Some(handle) = cmd_handle.read().clone() else {
+        return;
+    };
+    // Cancel an in-flight dial or tear down a live session before dialing the
+    // scanned peer; the node processes the two commands in order.
+    let active = matches!(
+        *conn_state.read(),
+        ConnectionState::Connecting | ConnectionState::Connected { .. }
+    );
+    if active {
+        let _ = handle.try_send(NodeCommand::Disconnect);
+    }
+    let _ = handle.try_send(NodeCommand::Connect { hex_id: id });
 }
 
 /// Registers deep-link capture for the life of the app: an incoming
-/// `irohdoctor://connect` link prefills `peer_id_input` and switches
-/// `current_tab` to Connect.
+/// `irohdoctor://connect` link prefills `peer_id_input`, switches `current_tab`
+/// to Connect, and dials the peer (see [`apply_connect`]).
 ///
 /// iOS (and desktop macOS) receive custom-scheme opens as a tao `Event::Opened`,
 /// which fires live while the app runs and is replayed from tao's pre-launch
@@ -72,6 +92,8 @@ fn apply_connect(
 pub(crate) fn use_connect_links(
     peer_id_input: dioxus::prelude::Signal<String>,
     current_tab: dioxus::prelude::Signal<crate::components::Tab>,
+    cmd_handle: dioxus::prelude::Signal<Option<crate::NodeHandle>>,
+    conn_state: dioxus::prelude::Signal<crate::node::ConnectionState>,
 ) {
     #[cfg(not(target_os = "android"))]
     {
@@ -88,7 +110,7 @@ pub(crate) fn use_connect_links(
             if let Event::Opened { urls } = event {
                 for url in urls {
                     if let Some(id) = parse_connect_url(url.as_str()) {
-                        apply_connect(peer_id_input, current_tab, id);
+                        apply_connect(peer_id_input, current_tab, cmd_handle, conn_state, id);
                     }
                 }
             }
@@ -108,7 +130,7 @@ pub(crate) fn use_connect_links(
             }
             while let Some(url) = rx.recv().await {
                 if let Some(id) = parse_connect_url(&url) {
-                    apply_connect(peer_id_input, current_tab, id);
+                    apply_connect(peer_id_input, current_tab, cmd_handle, conn_state, id);
                 }
             }
         });

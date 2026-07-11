@@ -107,10 +107,10 @@ fn App() -> Element {
     use_context_provider(|| app_error);
 
     // A deep link (irohdoctor://connect?id=...) scanned from another device's QR
-    // prefills the peer id and jumps to the Connect tab, so the user only has to
-    // press Connect.
+    // prefills the peer id, jumps to the Connect tab, and dials the peer,
+    // dropping any active session first.
     #[cfg(any(feature = "desktop", feature = "mobile"))]
-    deeplink::use_connect_links(peer_id_input, current_tab);
+    deeplink::use_connect_links(peer_id_input, current_tab, cmd_handle, conn_state);
 
     // The node bridge: spawn the headless node, then fold its event
     // stream into the signals above for as long as the app lives.
