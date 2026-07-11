@@ -75,62 +75,6 @@ pub(crate) fn launch_deep_link() -> Option<String> {
     })
 }
 
-/// Primary clip coerced to text via `ClipboardManager` -> `ClipData`. `None`
-/// when the clipboard is empty or read access is denied (Android 10+ only
-/// hands it over while the app is focused, which a Paste tap satisfies).
-pub(crate) fn clipboard_text() -> Option<String> {
-    with_env(|env, context| {
-        let name = env.new_string("clipboard")?;
-        let clipboard = env
-            .call_method(
-                context,
-                "getSystemService",
-                "(Ljava/lang/String;)Ljava/lang/Object;",
-                &[(&name).into()],
-            )?
-            .l()?;
-        let clip = env
-            .call_method(
-                &clipboard,
-                "getPrimaryClip",
-                "()Landroid/content/ClipData;",
-                &[],
-            )?
-            .l()?;
-        if clip.is_null() {
-            return Ok(None);
-        }
-        let item = env
-            .call_method(
-                &clip,
-                "getItemAt",
-                "(I)Landroid/content/ClipData$Item;",
-                &[0i32.into()],
-            )?
-            .l()?;
-        let text = env
-            .call_method(
-                &item,
-                "coerceToText",
-                "(Landroid/content/Context;)Ljava/lang/CharSequence;",
-                &[context.into()],
-            )?
-            .l()?;
-        if text.is_null() {
-            return Ok(None);
-        }
-        let text = env
-            .call_method(&text, "toString", "()Ljava/lang/String;", &[])?
-            .l()?;
-        let text: String = env.get_string(&JString::from(text))?.into();
-        Ok(Some(text))
-    })
-    .unwrap_or_else(|e| {
-        tracing::warn!(err = %e, "reading android clipboard");
-        None
-    })
-}
-
 /// Sender for the deep-link channel, replaced every time [`deep_link_channel`]
 /// hands out a fresh receiver so that a remount of the UI re-registers a live
 /// sender rather than orphaning its new receiver. Held in a global because the
