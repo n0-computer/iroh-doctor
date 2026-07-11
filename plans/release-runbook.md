@@ -70,10 +70,15 @@ One-time setup, in order:
    release .app with the Apple Distribution cert using entitlements extracted
    from the provisioning profile, emits `target/iroh-doctor-<n>.ipa`).
 5. **Upload**:
-   `xcrun altool --upload-app -f target/iroh-doctor-<n>.ipa -t ios --apiKey
-   9S6KRR582J --apiIssuer <ISSUER_ID>` (Issuer ID is on the ASC API page).
-   Validate first with `--validate-app` (same flags). GUI fallback: the
-   **Transporter** app.
+   `xcrun altool --upload-app -f target/iroh-doctor-<n>.ipa -t ios --apple-id
+   6778962927 --apiKey 9S6KRR582J --apiIssuer <ISSUER_ID>` (Issuer ID is on the
+   ASC API page; the numeric `--apple-id` is the app's Apple ID from its App
+   Information page). Validate first with `--validate-app` (same flags). Two
+   gotchas seen on the build-3 upload: without `--apple-id`, altool fails with
+   "Cannot determine the Apple ID from Bundle ID ... (19)"; and a pending ASC
+   legal agreement fails the request with 403 REQUIRED_AGREEMENTS_MISSING until
+   the account holder accepts it under App Store Connect -> Business. GUI
+   fallback: the **Transporter** app.
 6. **TestFlight**: the build appears in App Store Connect → TestFlight after
    processing (~15 min). Add yourself as an internal tester, install on the
    iPhone, verify: launch, icon, display name, local-network prompt, a real
@@ -151,6 +156,7 @@ new one).
 |---|------|---------|-----------|-------|
 | 1 | 2026-06-10 | 0.1.0 | ios+android | iOS: uploaded to ASC (delivery 52ee7635). Android AAB built, awaiting Play verification |
 | 2 | 2026-06-11 | 0.1.0 | ios | Clipboard fix (UIPasteboard on iOS, commit 0ddd764). Uploaded to ASC (delivery f1c7549f) |
+| 3 | 2026-07-11 | 0.1.0 | ios | QR share + irohdoctor:// deep-link connect (branch rae/doctor-app). Uploaded to ASC (delivery ed51e75b). Needed `--apple-id 6778962927` to bypass altool bundle-id inference, and the account's pending ASC agreement had to be accepted first |
 
-Next upload: `BUILD_NUMBER=3` (never reuse, never decrease; shared counter
+Next upload: `BUILD_NUMBER=4` (never reuse, never decrease; shared counter
 across both stores).
