@@ -31,7 +31,7 @@ pub fn ConnectPage(
         div { class: "page",
             h2 { class: "page-title", "Connect" }
             FirstRunNote {}
-            Header { endpoint_id }
+            Header { endpoint_id, conn_state }
             ConnectBar { cmd_handle, peer_id_input, conn_state }
             ConnectView {
                 conn_state,
@@ -45,13 +45,17 @@ pub fn ConnectPage(
     }
 }
 
-/// The device's own endpoint id, with buttons to copy it or show it as a QR
-/// code. The QR encodes an `irohdoctor://connect` deep link, so another device
-/// can scan it with the system camera and open straight into a connect instead
-/// of copy-pasting the id.
+/// The device's own endpoint id, its QR code, and a Copy button, shown while
+/// disconnected so a peer can grab the id. The QR (always visible) encodes an
+/// `irohdoctor://connect` deep link, so another device can scan it with the
+/// system camera and open straight into a connect. All of it hides once
+/// connected, when the id has served its purpose, and returns on disconnect.
 #[component]
-fn Header(endpoint_id: Signal<String>) -> Element {
-    let show_qr = use_signal(|| false);
+fn Header(endpoint_id: Signal<String>, conn_state: Signal<ConnectionState>) -> Element {
+    // Nothing left to share once a connection is up; disconnecting brings it back.
+    if matches!(conn_state(), ConnectionState::Connected { .. }) {
+        return rsx! {};
+    }
 
     let id = endpoint_id();
     let display = if id.is_empty() {
@@ -61,10 +65,9 @@ fn Header(endpoint_id: Signal<String>) -> Element {
     };
     let controls_disabled = id.is_empty();
 
-    // Build the QR only while shown, and re-derive it from the current id every
-    // render: it is a deep link to this id, so a stale code must never linger
-    // past an id change.
-    let qr = (show_qr() && !id.is_empty())
+    // Re-derive the QR from the current id every render: it is a deep link to
+    // this id, so a stale code must never linger past an id change.
+    let qr = (!id.is_empty())
         .then(|| render_qr_svg(&crate::deeplink::connect_url(&id)))
         .flatten();
 
@@ -72,15 +75,6 @@ fn Header(endpoint_id: Signal<String>) -> Element {
         div { class: "header",
             span { class: "label", "My id:" }
             span { class: "endpoint-id", title: "{id}", "{display}" }
-            button {
-                class: "btn",
-                disabled: controls_disabled,
-                onclick: move |_| {
-                    let next = !show_qr();
-                    show_qr.clone().set(next);
-                },
-                if show_qr() { "Hide QR" } else { "QR" }
-            }
             button {
                 class: "btn",
                 disabled: controls_disabled,
