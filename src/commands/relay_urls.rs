@@ -6,7 +6,10 @@ use std::{
 };
 
 use iroh::{dns::DnsResolver, RelayUrl, SecretKey};
-use iroh_relay::protos::relay::{ClientToRelayMsg, RelayToClientMsg};
+use iroh_relay::{
+    protos::relay::{ClientToRelayMsg, RelayToClientMsg},
+    tls::{default_provider, CaTlsConfig},
+};
 use n0_future::{SinkExt, StreamExt};
 
 use crate::config::NodeConfig;
@@ -19,6 +22,7 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
     }
 
     let dns_resolver = DnsResolver::new();
+    let tls_config = CaTlsConfig::default().client_config(default_provider())?;
     let mut client_builders = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
@@ -26,7 +30,8 @@ pub async fn relay_urls(count: usize, config: &NodeConfig) -> anyhow::Result<()>
             node.url.clone(),
             secret_key,
             dns_resolver.clone(),
-        );
+        )
+        .tls_client_config(tls_config.clone());
 
         client_builders.insert(node.url.clone(), client_builder);
     }
